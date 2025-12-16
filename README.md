@@ -1,4 +1,4 @@
-# 📚 ReadKnows (读士私人书库)
+ # 📚 ReadKnows (读士私人书库)
 
 <div align="center">
 
@@ -1020,6 +1020,13 @@ docker build -t ttbye/readknows-frontend:latest .
 - **数据库**: SQLite
 
 ---
+
+## 截图
+<img width="2634" height="2434" alt="image" src="https://github.com/user-attachments/assets/b097653e-546d-4541-a233-b328ec977956" />
+<img width="2628" height="2382" alt="image" src="https://github.com/user-attachments/assets/a75f07ab-188f-4d38-bac3-13a7269bee5a" />
+<img width="856" height="1858" alt="image" src="https://github.com/user-attachments/assets/8118a411-1eed-4367-a7fa-2aa47ec671ee" />
+<img width="856" height="1862" alt="image" src="https://github.com/user-attachments/assets/1015994a-67e1-4ed2-b883-87c0516097da" />
+
 
 ## 🐛 常见问题
 
