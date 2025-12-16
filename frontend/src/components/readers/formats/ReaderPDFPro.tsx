@@ -348,20 +348,29 @@ export default function ReaderPDFPro({
   }, []);
 
   // 获取文件URL
-  const getFileUrl = async (): Promise<string> => {
+  const getFileUrl = async (): Promise<{ url: string; blob?: Blob }> => {
     const ext = book.file_name?.split('.').pop()?.toLowerCase() || 'pdf';
     const serverUrl = `/books/${book.id}.${ext}`;
     
     try {
       const cachedBlob = await offlineStorage.getBook(book.id);
       if (cachedBlob) {
-        return offlineStorage.createBlobURL(cachedBlob);
+        // 检查缓存的文件大小
+        if (cachedBlob.size === 0) {
+          throw new Error('缓存的PDF文件为空，请重新下载');
+        }
+        return { url: offlineStorage.createBlobURL(cachedBlob), blob: cachedBlob };
       }
       const blob = await offlineStorage.downloadBook(book.id, ext, serverUrl);
-      return offlineStorage.createBlobURL(blob);
+      // 检查下载的文件大小
+      if (blob.size === 0) {
+        throw new Error('下载的PDF文件为空，请检查服务器上的文件');
+      }
+      return { url: offlineStorage.createBlobURL(blob), blob };
     } catch (error) {
       console.error('离线存储失败，使用服务器URL', error);
-      return serverUrl;
+      // 如果离线存储失败，返回服务器URL，但无法检查文件大小
+      return { url: serverUrl };
     }
   };
 
@@ -374,7 +383,26 @@ export default function ReaderPDFPro({
         setLoading(true);
 
         const pdfjsLib = await loadPdfJs();
-        const bookUrl = await getFileUrl();
+        const { url: bookUrl, blob } = await getFileUrl();
+        
+        // 如果已经获取到blob，检查文件大小
+        if (blob && blob.size === 0) {
+          throw new Error('PDF文件为空（0字节），请检查文件是否完整上传');
+        }
+        
+        // 如果是服务器URL，尝试先检查文件大小（通过HEAD请求）
+        if (!blob && bookUrl.startsWith('/')) {
+          try {
+            const response = await fetch(bookUrl, { method: 'HEAD' });
+            const contentLength = response.headers.get('content-length');
+            if (contentLength && parseInt(contentLength) === 0) {
+              throw new Error('服务器上的PDF文件为空（0字节），请检查文件是否完整上传');
+            }
+          } catch (fetchError: any) {
+            // HEAD请求失败不影响，继续尝试加载PDF
+            console.warn('无法检查文件大小:', fetchError.message);
+          }
+        }
         
         const loadingTask = pdfjsLib.getDocument({
           url: bookUrl,
@@ -418,7 +446,29 @@ export default function ReaderPDFPro({
         setLoading(false);
       } catch (error: any) {
         console.error('加载PDF失败', error);
-        toast.error(`加载失败: ${error.message || '未知错误'}`);
+        
+        // 根据错误类型提供更友好的提示
+        let errorMessage = '加载PDF失败';
+        
+        if (error.name === 'InvalidPDFException') {
+          if (error.message?.includes('empty') || error.message?.includes('zero bytes')) {
+            errorMessage = 'PDF文件为空或损坏，请检查文件是否完整上传';
+          } else if (error.message?.includes('corrupted') || error.message?.includes('invalid')) {
+            errorMessage = 'PDF文件已损坏或格式无效，请重新上传';
+          } else {
+            errorMessage = `PDF文件无效: ${error.message || '未知错误'}`;
+          }
+        } else if (error.message?.includes('404') || error.message?.includes('Not Found')) {
+          errorMessage = 'PDF文件未找到，请检查文件是否存在';
+        } else if (error.message?.includes('Network') || error.message?.includes('fetch')) {
+          errorMessage = '网络错误，无法加载PDF文件，请检查网络连接';
+        } else if (error.message) {
+          errorMessage = `加载失败: ${error.message}`;
+        }
+        
+        toast.error(errorMessage, {
+          duration: 5000, // 显示5秒
+        });
         setLoading(false);
       }
     };

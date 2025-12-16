@@ -217,6 +217,18 @@ router.post('/upload', authenticateToken, upload.single('file'), async (req: Aut
     console.log('[文件上传] 原始文件名:', req.file.originalname);
     console.log('[文件上传] 修复后文件名:', fileName);
     let fileSize = req.file.size;
+    
+    // 检查文件大小，拒绝空文件
+    if (fileSize === 0) {
+      // 删除空文件
+      try {
+        fs.unlinkSync(filePath);
+      } catch (e) {
+        console.error('删除空文件失败:', e);
+      }
+      return res.status(400).json({ error: '上传的文件为空（0字节），请检查文件是否完整' });
+    }
+    
     let fileExt = path.extname(fileName).toLowerCase();
     let metadata: any = {};
 
@@ -230,6 +242,12 @@ router.post('/upload', authenticateToken, upload.single('file'), async (req: Aut
       // 更新文件路径和元数据
       filePath = epubPath;
       fileSize = fs.statSync(epubPath).size;
+      
+      // 检查转换后的文件大小
+      if (fileSize === 0) {
+        return res.status(400).json({ error: 'TXT转EPUB后文件为空，转换可能失败' });
+      }
+      
       fileExt = '.epub';
       metadata = { title, author };
     } else if (fileExt === '.txt') {
