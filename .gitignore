@@ -66,6 +66,7 @@ bak/
 
 # 缓存
 .cache/
+cache/
 cache/calibre/
 
 # 测试覆盖率
