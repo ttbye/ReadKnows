@@ -571,11 +571,45 @@ export default function ReadingSettingsPanel({
                   </div>
                 </div>
 
+                {/* 自适应屏幕 */}
+                <div className="mb-4">
+                  <div className="flex items-center justify-between px-3 py-2.5 rounded-lg border" style={{ 
+                    borderColor: themeStyles.border,
+                    background: (settings.pdfAutoFit ?? false)
+                      ? (settings.theme === 'dark' 
+                          ? 'linear-gradient(135deg, rgba(74, 158, 255, 0.12) 0%, rgba(37, 99, 235, 0.08) 100%)'
+                          : 'linear-gradient(135deg, rgba(24, 144, 255, 0.08) 0%, rgba(13, 95, 191, 0.05) 100%)')
+                      : (settings.theme === 'dark' ? 'rgba(255,255,255,0.02)' : 'rgba(0,0,0,0.01)')
+                  }}>
+                    <div>
+                      <label className="text-sm font-semibold block">自适应屏幕</label>
+                      <div className="text-[10px] mt-0.5" style={{ opacity: 0.6 }}>
+                        自动调整PDF页面大小以完全适合屏幕显示
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => updateSetting('pdfAutoFit', !(settings.pdfAutoFit ?? false))}
+                      className={`relative inline-flex h-6 w-11 items-center rounded-full transition-all shadow-md ${
+                        (settings.pdfAutoFit ?? false)
+                          ? 'bg-gradient-to-r from-blue-500 to-blue-600' 
+                          : 'bg-gray-300 dark:bg-gray-600'
+                      }`}
+                      aria-label="切换自适应屏幕"
+                    >
+                      <span
+                        className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-sm transition-transform ${
+                          (settings.pdfAutoFit ?? false) ? 'translate-x-6' : 'translate-x-1'
+                        }`}
+                      />
+                    </button>
+                  </div>
+                </div>
+
                 {/* 自动裁剪白边 */}
                 <div className="mb-4">
                   <div className="flex items-center justify-between px-3 py-2.5 rounded-lg border" style={{ 
                     borderColor: themeStyles.border,
-                    background: (settings.pdfAutoCropMargins ?? true)
+                    background: (settings.pdfAutoCropMargins ?? false)
                       ? (settings.theme === 'dark' 
                           ? 'linear-gradient(135deg, rgba(74, 158, 255, 0.12) 0%, rgba(37, 99, 235, 0.08) 100%)'
                           : 'linear-gradient(135deg, rgba(24, 144, 255, 0.08) 0%, rgba(13, 95, 191, 0.05) 100%)')
@@ -588,9 +622,9 @@ export default function ReadingSettingsPanel({
                       </div>
                     </div>
                     <button
-                      onClick={() => updateSetting('pdfAutoCropMargins', !(settings.pdfAutoCropMargins ?? true))}
+                      onClick={() => updateSetting('pdfAutoCropMargins', !(settings.pdfAutoCropMargins ?? false))}
                       className={`relative inline-flex h-6 w-11 items-center rounded-full transition-all shadow-md ${
-                        (settings.pdfAutoCropMargins ?? true)
+                        (settings.pdfAutoCropMargins ?? false)
                           ? 'bg-gradient-to-r from-blue-500 to-blue-600' 
                           : 'bg-gray-300 dark:bg-gray-600'
                       }`}
@@ -598,7 +632,7 @@ export default function ReadingSettingsPanel({
                     >
                       <span
                         className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-sm transition-transform ${
-                          (settings.pdfAutoCropMargins ?? true) ? 'translate-x-6' : 'translate-x-1'
+                          (settings.pdfAutoCropMargins ?? false) ? 'translate-x-6' : 'translate-x-1'
                         }`}
                       />
                     </button>
@@ -612,7 +646,7 @@ export default function ReadingSettingsPanel({
                     选择更高的质量可以获得更清晰的显示效果，但会消耗更多性能
                   </div>
                   <select
-                    value={settings.pdfRenderQuality ?? 'high'}
+                    value={settings.pdfRenderQuality ?? 'ultra'}
                     onChange={(e) => updateSetting('pdfRenderQuality', e.target.value as 'standard' | 'high' | 'ultra')}
                     className="w-full px-3 py-2.5 rounded-lg border transition-all"
                     style={{

@@ -231,16 +231,39 @@ export default function ReaderPDFPro({
   const [totalPages, setTotalPages] = useState(0);
   const [isTurningPage, setIsTurningPage] = useState(false);
   
-  // 缩放状态
-  const [scale, setScale] = useState(1.5);
+  // 缩放状态 - 从 settings.fontSize 初始化（fontSize 存储为 10 倍值，例如 15 表示 1.5x）
+  const initialScale = settings.fontSize ? settings.fontSize / 10 : 1.5;
+  const [scale, setScale] = useState(initialScale);
   const [isFullscreen, setIsFullscreen] = useState(false);
   
-  // 白边裁剪状态（从settings中读取，如果没有则使用默认值true）
-  const autoCropMargins = settings.pdfAutoCropMargins ?? true;
+  // 双指捏合缩放相关状态
+  const pinchStartRef = useRef<{ 
+    distance: number; 
+    scale: number;
+    initialDistance: number; // 初始距离，用于计算阈值
+    lastUpdateTime: number; // 上次更新时间，用于节流
+  } | null>(null);
+  const isPinchingRef = useRef(false);
+  const scaleRef = useRef(scale);
+  
+  // 缩放灵敏度设置
+  const PINCH_THRESHOLD = 0.05; // 最小缩放变化阈值（5%），只有超过这个值才开始缩放
+  const PINCH_THROTTLE = 16; // 节流间隔（毫秒），约 60fps
+  
+  // 保持 scaleRef 与 scale 同步
+  useEffect(() => {
+    scaleRef.current = scale;
+  }, [scale]);
+  
+  // 白边裁剪状态（从settings中读取，如果没有则使用默认值false）
+  const autoCropMargins = settings.pdfAutoCropMargins ?? false;
   const [contentBounds, setContentBounds] = useState<{left: number, top: number, right: number, bottom: number} | null>(null);
   
-  // 渲染质量设置（从settings中读取，如果没有则使用默认值'high'）
-  const renderQuality = settings.pdfRenderQuality ?? 'high';
+  // 渲染质量设置（从settings中读取，如果没有则使用默认值'ultra'）
+  const renderQuality = settings.pdfRenderQuality ?? 'ultra';
+  
+  // 自适应屏幕设置（从settings中读取，如果没有则使用默认值false）
+  const autoFit = settings.pdfAutoFit ?? false;
   
   // UI 状态
   const [showBottomBar, setShowBottomBar] = useState(false);
@@ -615,11 +638,30 @@ export default function ReaderPDFPro({
       // 先计算显示尺寸（基于effectiveScale）
       const displayViewport = page.getViewport({ scale: effectiveScale });
       
-      // 如果页面宽度超过容器，自动调整缩放
+      // 如果启用自适应屏幕，计算适合容器的缩放比例（保持纵横比）
       let displayScale = effectiveScale;
-      if (displayViewport.width > containerWidth - settings.margin * 2) {
-        displayScale = ((containerWidth - settings.margin * 2) / page.view[2]) * effectiveScale;
+      if (autoFit && targetScale === undefined) {
+        // 自适应屏幕：计算使页面完全适合容器的缩放比例
+        // 只在初始渲染时应用，如果用户手动设置了缩放（targetScale），则使用用户设置的值
+        const availableWidth = containerWidth - settings.margin * 2;
+        const availableHeight = containerHeight - settings.margin * 2;
+        const pageWidth = page.view[2]; // PDF 页面宽度（单位：点）
+        const pageHeight = page.view[3]; // PDF 页面高度（单位：点）
+        
+        // 计算宽度和高度的缩放比例，取较小值以确保页面完全显示（保持纵横比）
+        const scaleX = availableWidth / pageWidth;
+        const scaleY = availableHeight / pageHeight;
+        displayScale = Math.min(scaleX, scaleY);
+      } else {
+        // 如果页面宽度超过容器，自动调整缩放（保持原有逻辑，但保持纵横比）
+        if (displayViewport.width > containerWidth - settings.margin * 2) {
+          // 保持纵横比：只根据宽度调整，高度会自动按比例缩放
+          displayScale = ((containerWidth - settings.margin * 2) / page.view[2]);
+        }
       }
+      
+      // 确保使用 PDF.js 的 viewport 来保持纵横比
+      // getViewport 会自动根据 scale 和页面原始尺寸计算正确的宽高比
       
       // 根据渲染质量，使用更高的分辨率渲染，但显示尺寸保持不变
       const renderScale = displayScale * qualityMultiplier;
@@ -657,7 +699,19 @@ export default function ReaderPDFPro({
       console.error('渲染PDF页面失败', error);
       toast.error(`渲染页面失败: ${error.message || '未知错误'}`);
     }
-  }, [scale, containerSize, settings.margin, autoCropMargins, renderQuality]);
+  }, [scale, containerSize, settings.margin, autoCropMargins, renderQuality, autoFit]);
+
+  // 同步 settings.fontSize 到 scale state
+  // 使用 useRef 来避免循环依赖
+  const lastFontSizeRef = useRef(settings.fontSize);
+  useEffect(() => {
+    // 只有当 fontSize 真正变化时才更新 scale
+    if (lastFontSizeRef.current !== settings.fontSize) {
+      lastFontSizeRef.current = settings.fontSize;
+      const newScale = settings.fontSize ? settings.fontSize / 10 : 1.5;
+      setScale(newScale);
+    }
+  }, [settings.fontSize]);
 
   // 当页面或缩放变化时重新渲染
   useEffect(() => {
@@ -771,15 +825,28 @@ export default function ReaderPDFPro({
   }, [jumpToPage]);
 
   // 缩放处理
-  const handleZoom = useCallback((direction: 'in' | 'out' | 'reset') => {
-    if (direction === 'in') {
-      setScale(prev => Math.min(3, prev + 0.25));
-    } else if (direction === 'out') {
-      setScale(prev => Math.max(0.5, prev - 0.25));
-    } else {
-      setScale(1.5);
-    }
-  }, []);
+  const handleZoom = useCallback((direction: 'in' | 'out' | 'reset', newScale?: number) => {
+    setScale(prevScale => {
+      let targetScale: number;
+      if (newScale !== undefined) {
+        targetScale = Math.max(0.5, Math.min(3, newScale));
+      } else if (direction === 'in') {
+        targetScale = Math.min(3, prevScale + 0.25);
+      } else if (direction === 'out') {
+        targetScale = Math.max(0.5, prevScale - 0.25);
+      } else {
+        targetScale = 1.5;
+      }
+      
+      // 同步更新 settings（fontSize 存储为 10 倍值）
+      onSettingsChange({
+        ...settings,
+        fontSize: Math.round(targetScale * 10),
+      });
+      
+      return targetScale;
+    });
+  }, [settings, onSettingsChange]);
 
   // 全屏切换
   const toggleFullscreen = useCallback(async () => {
@@ -861,8 +928,34 @@ export default function ReaderPDFPro({
     }, 500);
   }, [currentPage, totalPages, onProgressChange]);
 
+  // 计算两点之间的距离
+  const getTouchDistance = (touch1: Touch, touch2: Touch): number => {
+    const dx = touch1.clientX - touch2.clientX;
+    const dy = touch1.clientY - touch2.clientY;
+    return Math.sqrt(dx * dx + dy * dy);
+  };
+
   // 触摸事件处理
   const handleTouchStart = useCallback((e: React.TouchEvent) => {
+    // 双指捏合检测
+    if (e.touches.length === 2) {
+      const distance = getTouchDistance(e.touches[0], e.touches[1]);
+      pinchStartRef.current = {
+        distance,
+        scale: scaleRef.current,
+        initialDistance: distance, // 保存初始距离
+        lastUpdateTime: Date.now(), // 记录开始时间
+      };
+      isPinchingRef.current = true;
+      // 取消长按定时器
+      if (longPressTimerRef.current) {
+        clearTimeout(longPressTimerRef.current);
+        longPressTimerRef.current = null;
+      }
+      return;
+    }
+
+    // 单指触摸处理
     const touch = e.touches[0];
     const rect = e.currentTarget.getBoundingClientRect();
     const x = touch.clientX - rect.left;
@@ -898,6 +991,42 @@ export default function ReaderPDFPro({
   }, [isMobile, isPWA, showBars]);
 
   const handleTouchMove = useCallback((e: React.TouchEvent) => {
+    // 双指捏合缩放处理
+    if (e.touches.length === 2 && pinchStartRef.current) {
+      e.preventDefault();
+      const currentTime = Date.now();
+      const currentDistance = getTouchDistance(e.touches[0], e.touches[1]);
+      
+      // 节流：限制更新频率
+      if (currentTime - pinchStartRef.current.lastUpdateTime < PINCH_THROTTLE) {
+        return;
+      }
+      
+      // 计算距离变化比例（相对于初始距离）
+      const distanceChange = Math.abs(currentDistance - pinchStartRef.current.initialDistance);
+      const distanceChangeRatio = distanceChange / pinchStartRef.current.initialDistance;
+      
+      // 只有当距离变化超过阈值时才开始缩放（避免误触）
+      if (distanceChangeRatio < PINCH_THRESHOLD) {
+        return;
+      }
+      
+      // 计算缩放变化（相对于上次记录的距离）
+      const scaleChange = currentDistance / pinchStartRef.current.distance;
+      
+      // 计算新的缩放值，保持纵横比一致
+      const newScale = Math.max(0.5, Math.min(3, pinchStartRef.current.scale * scaleChange));
+      
+      // 直接更新 scale，不立即更新 settings（在 touchEnd 时统一更新）
+      setScale(newScale);
+      // 更新 pinchStartRef 的 scale、distance 和更新时间，以便连续缩放时保持正确的比例
+      pinchStartRef.current.scale = newScale;
+      pinchStartRef.current.distance = currentDistance;
+      pinchStartRef.current.lastUpdateTime = currentTime;
+      return;
+    }
+
+    // 单指触摸处理
     if (!touchStartRef.current || e.touches.length !== 1) {
       // 如果开始移动，取消长按定时器
       if (longPressTimerRef.current) {
@@ -925,9 +1054,34 @@ export default function ReaderPDFPro({
       e.preventDefault();
       setTouchOffset(Math.max(-100, Math.min(100, deltaX)));
     }
-  }, [settings.pageTurnMethod]);
+  }, [settings.pageTurnMethod, handleZoom]);
 
   const handleTouchEnd = useCallback((e: React.TouchEvent) => {
+    // 结束双指捏合
+    if (isPinchingRef.current) {
+      isPinchingRef.current = false;
+      // 在双指捏合结束时，同步更新 settings
+      if (pinchStartRef.current) {
+        const finalScale = pinchStartRef.current.scale;
+        onSettingsChange({
+          ...settings,
+          fontSize: Math.round(finalScale * 10),
+        });
+      }
+      pinchStartRef.current = null;
+      // 如果只有一根手指抬起，继续处理单指逻辑
+      if (e.touches.length === 1) {
+        const touch = e.touches[0];
+        touchStartRef.current = {
+          x: touch.clientX,
+          y: touch.clientY,
+          time: Date.now(),
+          distance: 0,
+        };
+        return;
+      }
+    }
+
     // 清除长按定时器
     if (longPressTimerRef.current) {
       clearTimeout(longPressTimerRef.current);
@@ -1112,7 +1266,7 @@ export default function ReaderPDFPro({
         turnPage('next');
       }
     }
-  }, [settings, turnPage]);
+  }, [settings, turnPage, onSettingsChange]);
 
   // 键盘快捷键
   useEffect(() => {
