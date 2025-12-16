@@ -245,12 +245,12 @@ export default function Profile() {
               <div className="flex justify-between">
                 <span className="text-gray-600 dark:text-gray-400">GitHub</span>
                 <a
-                  href="https://ttbye.github.com"
+                  href="https://github.com/ttbye/ReadKnows"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="text-blue-600 dark:text-blue-400 hover:underline"
                 >
-                  ttbye.github.com
+                  github.com/ttbye/ReadKnows
                 </a>
               </div>
               <div className="flex justify-between items-center">
