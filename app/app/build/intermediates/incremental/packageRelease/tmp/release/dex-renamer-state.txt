@@ -1,0 +1,4 @@
+#Tue Dec 16 10:07:02 CST 2025
+base.0=/Users/ttbye/MyCODE/ReadKnow/app/app/build/intermediates/dex/release/mergeDexRelease/classes.dex
+renamed.0=classes.dex
+path.0=classes.dex

@@ -1,0 +1,145 @@
+# 后端 Dockerfile (基于Debian，支持Calibre)
+# 如果Alpine版本安装Calibre失败，可以使用此版本
+# 使用方法: docker build -f Dockerfile.debian -t ttbye/readknows-backend:latest .
+
+FROM node:20-slim AS builder
+
+# 安装构建依赖
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 \
+    make \
+    g++ \
+    libcairo2-dev \
+    libjpeg-dev \
+    libpango1.0-dev \
+    libgif-dev \
+    librsvg2-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# 设置 npm 镜像源（可选，如果在中国使用）
+RUN npm config set registry https://registry.npmmirror.com
+
+# 复制package文件
+COPY package*.json ./
+COPY tsconfig.json ./
+
+# 安装依赖
+RUN if [ -f package-lock.json ]; then npm ci --production=false; else npm install; fi
+
+# 复制源代码
+COPY src ./src
+COPY scripts ./scripts
+
+# 构建TypeScript
+RUN npm run build
+
+# 生产环境镜像
+FROM node:20-slim
+
+# 安装运行时依赖（canvas需要）
+# 同时安装Calibre用于MOBI转EPUB转换
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libcairo2 \
+    libjpeg62-turbo \
+    libpango-1.0-0 \
+    libpangocairo-1.0-0 \
+    libgif7 \
+    librsvg2-2 \
+    fontconfig \
+    fonts-dejavu-core \
+    fonts-liberation \
+    wget \
+    xdg-utils \
+    python3 \
+    ca-certificates \
+    curl \
+    xz-utils \
+    && echo "=== 开始安装 Calibre ===" && \
+    (INSTALLER="/tmp/calibre-installer.sh" && \
+     echo "下载 Calibre 安装脚本..." && \
+     (wget --no-check-certificate -nv --timeout=300 --tries=3 -O "$INSTALLER" https://download.calibre-ebook.com/linux-installer.sh 2>&1 || \
+      curl -k -fsSL --connect-timeout 300 --max-time 600 -o "$INSTALLER" https://download.calibre-ebook.com/linux-installer.sh 2>&1 || \
+      wget -nv --timeout=300 --tries=3 -O "$INSTALLER" https://download.calibre-ebook.com/linux-installer.sh 2>&1) && \
+     chmod +x "$INSTALLER" && \
+     echo "执行 Calibre 安装..." && \
+     bash "$INSTALLER" install_dir=/opt/calibre 2>&1 && \
+     rm -f "$INSTALLER" && \
+     echo "检查安装结果..." && \
+     if [ -f /opt/calibre/calibre/ebook-convert ]; then \
+       REAL_PATH="/opt/calibre/calibre"; \
+     elif [ -f /opt/calibre/ebook-convert ]; then \
+       REAL_PATH="/opt/calibre"; \
+     else \
+       echo "❌ Calibre 安装失败: ebook-convert 文件不存在" && exit 1; \
+     fi && \
+     ln -sf "$REAL_PATH/ebook-convert" /opt/calibre/ebook-convert 2>/dev/null || true && \
+     ln -sf "$REAL_PATH/ebook-convert" /usr/local/bin/ebook-convert && \
+     ln -sf "$REAL_PATH/ebook-meta" /usr/local/bin/ebook-meta && \
+     echo "✅ Calibre 安装成功: $($REAL_PATH/ebook-convert --version 2>&1 | head -1)") && \
+    apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# 从构建阶段复制文件
+COPY --from=builder /app/package*.json ./
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/scripts ./scripts
+
+# 创建必要的目录
+RUN mkdir -p /app/data /app/books/public /app/books/user /app/covers /app/fonts /app/import
+
+# 创建启动脚本
+RUN echo '#!/bin/bash' > /app/entrypoint.sh && \
+    echo 'echo "正在检查并创建必要的目录..."' >> /app/entrypoint.sh && \
+    echo 'mkdir -p /app/data' >> /app/entrypoint.sh && \
+    echo 'mkdir -p /app/books/public' >> /app/entrypoint.sh && \
+    echo 'mkdir -p /app/books/user' >> /app/entrypoint.sh && \
+    echo 'mkdir -p /app/books/.temp' >> /app/entrypoint.sh && \
+    echo 'mkdir -p /app/covers' >> /app/entrypoint.sh && \
+    echo 'mkdir -p /app/fonts' >> /app/entrypoint.sh && \
+    echo 'mkdir -p /app/import' >> /app/entrypoint.sh && \
+    echo 'echo "目录结构已就绪"' >> /app/entrypoint.sh && \
+    echo 'echo "检查 Calibre 安装..."' >> /app/entrypoint.sh && \
+    echo 'if [ ! -f /usr/local/bin/ebook-convert ]; then' >> /app/entrypoint.sh && \
+    echo '  if [ -f /opt/calibre/calibre/ebook-convert ]; then' >> /app/entrypoint.sh && \
+    echo '    ln -sf /opt/calibre/calibre/ebook-convert /usr/local/bin/ebook-convert' >> /app/entrypoint.sh && \
+    echo '    ln -sf /opt/calibre/calibre/ebook-meta /usr/local/bin/ebook-meta' >> /app/entrypoint.sh && \
+    echo '    echo "✅ Calibre 符号链接已创建"' >> /app/entrypoint.sh && \
+    echo '  elif [ -f /opt/calibre/ebook-convert ]; then' >> /app/entrypoint.sh && \
+    echo '    ln -sf /opt/calibre/ebook-convert /usr/local/bin/ebook-convert' >> /app/entrypoint.sh && \
+    echo '    ln -sf /opt/calibre/ebook-meta /usr/local/bin/ebook-meta' >> /app/entrypoint.sh && \
+    echo '    echo "✅ Calibre 符号链接已创建"' >> /app/entrypoint.sh && \
+    echo '  else' >> /app/entrypoint.sh && \
+    echo '    echo "⚠️  Calibre 未安装，MOBI 转 EPUB 功能将不可用"' >> /app/entrypoint.sh && \
+    echo '  fi' >> /app/entrypoint.sh && \
+    echo 'fi' >> /app/entrypoint.sh && \
+    echo 'echo "启动应用..."' >> /app/entrypoint.sh && \
+    echo 'exec node dist/index.js' >> /app/entrypoint.sh && \
+    chmod +x /app/entrypoint.sh
+
+# 设置目录权限
+RUN chmod -R 755 /app/data /app/books /app/covers /app/fonts /app/import
+
+# 验证Calibre安装
+RUN if command -v ebook-convert >/dev/null 2>&1; then \
+    echo "✅ Calibre已安装: $(ebook-convert --version 2>&1 | head -1)"; \
+    else \
+    echo "⚠️  Calibre未安装"; \
+    fi
+
+# 设置环境变量
+ENV NODE_ENV=production
+ENV PORT=1281
+ENV DB_PATH=./data/database.db
+ENV BOOKS_DIR=./books
+
+# 暴露端口
+EXPOSE 1281
+
+# 启动命令
+CMD ["/app/entrypoint.sh"]
+

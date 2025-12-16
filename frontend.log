@@ -1,0 +1,414 @@
+
+> readknows-frontend@0.2025.12 dev
+> vite
+
+📦 构建版本号: 1.125.12(EW5IBB)
+🕐 构建时间: 2025-12-16T02:13:16.418Z
+
+  VITE v5.4.21  ready in 141 ms
+
+  ➜  Local:   http://localhost:1280/
+  ➜  Network: http://192.168.5.245:1280/
+  ➜  Network: http://192.1.1.1:1280/
+  ➜  Network: http://169.254.174.77:1280/
+  ➜  Network: http://192.168.5.216:1280/
+  ➜  Network: http://10.8.1.2:1280/
+[SPA Fallback] 其他路由，返回index.html: /
+[Vite Proxy] /books bypass: {
+  url: '/books/public/%E6%9C%AA%E5%88%86%E7%B1%BB/%E3%80%90%E8%8B%B1%E3%80%91%E6%9D%B0%E8%A5%BF%E5%8D%A1%C2%B7%E7%BD%97%E6%A3%AE/%E5%8E%9A%E5%9C%9F%E6%97%A0%E7%96%86/cover.jpg',
+  accept: 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+  method: 'GET'
+}
+[Vite Proxy] 相对路径文件请求，继续代理: /books/public/%E6%9C%AA%E5%88%86%E7%B1%BB/%E3%80%90%E8%8B%B1%E3%80%91%E6%9D%B0%E8%A5%BF%E5%8D%A1%C2%B7%E7%BD%97%E6%A3%AE/%E5%8E%9A%E5%9C%9F%E6%97%A0%E7%96%86/cover.jpg
+[Vite Proxy] /books bypass: {
+  url: '/books/public/%E6%9C%AA%E5%88%86%E7%B1%BB/%E6%9D%A8%E8%8C%9C/%E5%B8%82%E9%95%87%E5%86%85%E5%A4%96%EF%BC%9A%E6%99%9A%E6%98%8E%E6%B1%9F%E5%8D%97%E7%9A%84%E5%9C%B0%E5%9F%9F%E7%BB%93%E6%9E%84%E4%B8%8E%E7%A4%BE%E4%BC%9A%E5%8F%98%E8%BF%81/cover.jpg',
+  accept: 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+  method: 'GET'
+}
+[Vite Proxy] 相对路径文件请求，继续代理: /books/public/%E6%9C%AA%E5%88%86%E7%B1%BB/%E6%9D%A8%E8%8C%9C/%E5%B8%82%E9%95%87%E5%86%85%E5%A4%96%EF%BC%9A%E6%99%9A%E6%98%8E%E6%B1%9F%E5%8D%97%E7%9A%84%E5%9C%B0%E5%9F%9F%E7%BB%93%E6%9E%84%E4%B8%8E%E7%A4%BE%E4%BC%9A%E5%8F%98%E8%BF%81/cover.jpg
+[Vite Proxy] /books bypass: {
+  url: '/books/public/%E6%9C%AA%E5%88%86%E7%B1%BB/%E6%9D%A8%E6%9C%AC%E8%8A%AC/%E6%88%91%E6%9C%AC%E8%8A%AC%E8%8A%B3%EF%BC%88%E6%96%B0%E7%89%88%EF%BC%89/cover.jpg',
+  accept: 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+  method: 'GET'
+}
+[Vite Proxy] 相对路径文件请求，继续代理: /books/public/%E6%9C%AA%E5%88%86%E7%B1%BB/%E6%9D%A8%E6%9C%AC%E8%8A%AC/%E6%88%91%E6%9C%AC%E8%8A%AC%E8%8A%B3%EF%BC%88%E6%96%B0%E7%89%88%EF%BC%89/cover.jpg
+[Vite Proxy] /books bypass: {
+  url: '/books/public/%E6%9C%AA%E5%88%86%E7%B1%BB/%E5%BC%A0%E6%98%95%E5%AE%87%EF%BC%9B%E6%A2%81%E7%BA%A2/%E4%BA%91%E4%B8%8A%E5%85%AD%E4%B8%87%E5%85%AC%E9%87%8C/cover.jpg',
+  accept: 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+  method: 'GET'
+}
+[Vite Proxy] 相对路径文件请求，继续代理: /books/public/%E6%9C%AA%E5%88%86%E7%B1%BB/%E5%BC%A0%E6%98%95%E5%AE%87%EF%BC%9B%E6%A2%81%E7%BA%A2/%E4%BA%91%E4%B8%8A%E5%85%AD%E4%B8%87%E5%85%AC%E9%87%8C/cover.jpg
+[Vite Proxy] /books bypass: {
+  url: '/books/public/%E6%96%87%E5%AD%A6/%E8%B7%AF%E9%81%A5/%E5%B9%B3%E5%87%A1%E7%9A%84%E4%B8%96%E7%95%8C%EF%BC%88%E6%BF%80%E5%8A%B1%E4%BA%BF%E4%B8%87%E8%AF%BB%E8%80%85%E7%9A%84%E6%96%B0%E8%AF%BE%E6%A0%87%E7%BB%8F%E5%85%B8%E3%80%81%E6%94%B9%E5%8F%98%E9%A9%AC%E4%BA%91%E4%B8%80%E7%94%9F%E7%9A%84%E4%B9%A6%E3%80%81%E6%96%B0%E6%99%8B%E7%94%B7%E7%A5%9E%E6%9C%B1%E4%B8%80%E9%BE%99%E6%8E%A8%E8%8D%90%EF%BC%89/cover.jpg',
+  accept: 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+  method: 'GET'
+}
+[Vite Proxy] 相对路径文件请求，继续代理: /books/public/%E6%96%87%E5%AD%A6/%E8%B7%AF%E9%81%A5/%E5%B9%B3%E5%87%A1%E7%9A%84%E4%B8%96%E7%95%8C%EF%BC%88%E6%BF%80%E5%8A%B1%E4%BA%BF%E4%B8%87%E8%AF%BB%E8%80%85%E7%9A%84%E6%96%B0%E8%AF%BE%E6%A0%87%E7%BB%8F%E5%85%B8%E3%80%81%E6%94%B9%E5%8F%98%E9%A9%AC%E4%BA%91%E4%B8%80%E7%94%9F%E7%9A%84%E4%B9%A6%E3%80%81%E6%96%B0%E6%99%8B%E7%94%B7%E7%A5%9E%E6%9C%B1%E4%B8%80%E9%BE%99%E6%8E%A8%E8%8D%90%EF%BC%89/cover.jpg
+[Vite Proxy] /books bypass: {
+  url: '/books/public/%E6%96%87%E5%AD%A6/%E7%BA%A6%E7%BF%B0%C2%B7%E4%BA%9A%E7%91%9F%C2%B7%E6%B1%A4%E5%A7%86%E6%A3%AE/%E5%8A%A8%E7%89%A9%E7%94%9F%E6%B4%BB%E5%8F%B2/cover.jpeg',
+  accept: 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+  method: 'GET'
+}
+[Vite Proxy] 相对路径文件请求，继续代理: /books/public/%E6%96%87%E5%AD%A6/%E7%BA%A6%E7%BF%B0%C2%B7%E4%BA%9A%E7%91%9F%C2%B7%E6%B1%A4%E5%A7%86%E6%A3%AE/%E5%8A%A8%E7%89%A9%E7%94%9F%E6%B4%BB%E5%8F%B2/cover.jpeg
+[Vite Proxy] /books bypass: {
+  url: '/books/user/default/%E6%9C%AA%E5%88%86%E7%B1%BB/(%E7%BE%8E)%20%E6%92%92%E7%A9%86%E5%B0%94%C2%B7%E4%BC%8A%E8%AF%BA%E5%85%8B%C2%B7%E6%96%AF%E9%80%9A%E6%99%AE%E5%A4%AB%2C%20%E9%82%93%E6%99%93%E8%8A%92/%E8%A5%BF%E6%96%B9%E5%93%B2%E5%AD%A6%E5%8F%B2/cover.jpg',
+  accept: 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+  method: 'GET'
+}
+[Vite Proxy] 相对路径文件请求，继续代理: /books/user/default/%E6%9C%AA%E5%88%86%E7%B1%BB/(%E7%BE%8E)%20%E6%92%92%E7%A9%86%E5%B0%94%C2%B7%E4%BC%8A%E8%AF%BA%E5%85%8B%C2%B7%E6%96%AF%E9%80%9A%E6%99%AE%E5%A4%AB%2C%20%E9%82%93%E6%99%93%E8%8A%92/%E8%A5%BF%E6%96%B9%E5%93%B2%E5%AD%A6%E5%8F%B2/cover.jpg
+[Vite Proxy] /books bypass: {
+  url: '/books/public/c0b05791-cccf-4fa5-8610-9372e77f1ff8/cover.jpg',
+  accept: 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+  method: 'GET'
+}
+[Vite Proxy] 相对路径文件请求，继续代理: /books/public/c0b05791-cccf-4fa5-8610-9372e77f1ff8/cover.jpg
+[Vite Proxy] /books bypass: {
+  url: '/books/public/d6356357-54e1-48ff-aefa-9e77ad13a230/cover.jpg',
+  accept: 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+  method: 'GET'
+}
+[Vite Proxy] 相对路径文件请求，继续代理: /books/public/d6356357-54e1-48ff-aefa-9e77ad13a230/cover.jpg
+[Vite Proxy] /books bypass: {
+  url: '/books/user/default/%E4%BA%BA%E7%B1%BB%E5%A6%82%E4%BD%95%E6%80%9D%E8%80%83/%5B%E7%BE%8E%5D%20%E7%90%86%E6%9F%A5%E5%BE%B7%C2%B7E.%E5%B0%BC%E6%96%AF%E8%B4%9D%E7%89%B9%2C%20%E6%BD%87%E6%AA%AC%20%E7%AD%89/%E6%9C%AA%E5%88%86%E7%B1%BB/cover.jpg',
+  accept: 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+  method: 'GET'
+}
+[Vite Proxy] 相对路径文件请求，继续代理: /books/user/default/%E4%BA%BA%E7%B1%BB%E5%A6%82%E4%BD%95%E6%80%9D%E8%80%83/%5B%E7%BE%8E%5D%20%E7%90%86%E6%9F%A5%E5%BE%B7%C2%B7E.%E5%B0%BC%E6%96%AF%E8%B4%9D%E7%89%B9%2C%20%E6%BD%87%E6%AA%AC%20%E7%AD%89/%E6%9C%AA%E5%88%86%E7%B1%BB/cover.jpg
+[Vite Proxy] /books bypass: {
+  url: '/books/user/default/%E6%9C%AA%E5%88%86%E7%B1%BB/%E3%80%90%E5%8C%88%E7%89%99%E5%88%A9%E3%80%91%E5%85%8B%E6%8B%89%E6%96%AF%E8%AF%BA%E9%9C%8D%E5%B0%94%E5%8D%A1%E4%BC%8A%C2%B7%E6%8B%89%E6%96%AF%E6%B4%9B/%E4%B8%96%E7%95%8C%E5%9C%A8%E5%89%8D%E8%BF%9B/cover.jpg',
+  accept: 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+  method: 'GET'
+}
+[Vite Proxy] 相对路径文件请求，继续代理: /books/user/default/%E6%9C%AA%E5%88%86%E7%B1%BB/%E3%80%90%E5%8C%88%E7%89%99%E5%88%A9%E3%80%91%E5%85%8B%E6%8B%89%E6%96%AF%E8%AF%BA%E9%9C%8D%E5%B0%94%E5%8D%A1%E4%BC%8A%C2%B7%E6%8B%89%E6%96%AF%E6%B4%9B/%E4%B8%96%E7%95%8C%E5%9C%A8%E5%89%8D%E8%BF%9B/cover.jpg
+[Vite Proxy] /books bypass: {
+  url: '/books/public/%E5%B0%8F%E8%AF%B4/%E3%80%90%E7%BE%8E%E3%80%91%E6%89%98%E9%A9%AC%E6%96%AF%C2%B7%E5%86%85%E6%A0%BC%E5%B0%94/%E4%BD%9C%E4%B8%BA%E4%B8%80%E5%8F%AA%E8%9D%99%E8%9D%A0%E6%98%AF%E4%BB%80%E4%B9%88%E6%A0%B7%EF%BC%9F/cover.jpg',
+  accept: 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+  method: 'GET'
+}
+[Vite Proxy] 相对路径文件请求，继续代理: /books/public/%E5%B0%8F%E8%AF%B4/%E3%80%90%E7%BE%8E%E3%80%91%E6%89%98%E9%A9%AC%E6%96%AF%C2%B7%E5%86%85%E6%A0%BC%E5%B0%94/%E4%BD%9C%E4%B8%BA%E4%B8%80%E5%8F%AA%E8%9D%99%E8%9D%A0%E6%98%AF%E4%BB%80%E4%B9%88%E6%A0%B7%EF%BC%9F/cover.jpg
+[Vite Proxy] /books bypass: {
+  url: '/books/user/ttbye/%E6%9C%AA%E5%88%86%E7%B1%BB/%E9%BB%8E%E4%B8%9C%E6%96%B9/%E7%BB%86%E8%AF%B4%E5%85%83%E6%9C%9D/cover.jpg',
+  accept: 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+  method: 'GET'
+}
+[Vite Proxy] 相对路径文件请求，继续代理: /books/user/ttbye/%E6%9C%AA%E5%88%86%E7%B1%BB/%E9%BB%8E%E4%B8%9C%E6%96%B9/%E7%BB%86%E8%AF%B4%E5%85%83%E6%9C%9D/cover.jpg
+[Vite Proxy] /books bypass: {
+  url: '/books/user/default/%E6%9C%AA%E5%88%86%E7%B1%BB/%E7%8B%AC%E9%92%93%E5%AF%92%E6%B1%9F%E9%9B%AA/%E9%87%8D%E7%94%9F2011/cover.jpg',
+  accept: 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+  method: 'GET'
+}
+[Vite Proxy] 相对路径文件请求，继续代理: /books/user/default/%E6%9C%AA%E5%88%86%E7%B1%BB/%E7%8B%AC%E9%92%93%E5%AF%92%E6%B1%9F%E9%9B%AA/%E9%87%8D%E7%94%9F2011/cover.jpg
+[Vite Proxy] /books bypass: {
+  url: '/books/public/%E6%9C%AA%E5%88%86%E7%B1%BB/%E6%9C%AA%E7%9F%A5%E4%BD%9C%E8%80%85/%E6%88%90%E4%B8%BA%E6%9B%B4%E7%90%86%E6%80%A7%E7%9A%84%E4%BA%BA%EF%BC%9A%E7%94%A8%E7%A4%BE%E4%BC%9A%E5%AD%A6%E7%9C%8B%E9%80%8F%E7%8E%B0%E4%BB%A3%E7%A4%BE%E4%BC%9A_(%E5%AD%9F%E5%BA%86%E5%BB%B6)_TG%E5%85%B3%E6%B3%A8%40kaipanshare/cover.jpg',
+  accept: 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+  method: 'GET'
+}
+[Vite Proxy] 相对路径文件请求，继续代理: /books/public/%E6%9C%AA%E5%88%86%E7%B1%BB/%E6%9C%AA%E7%9F%A5%E4%BD%9C%E8%80%85/%E6%88%90%E4%B8%BA%E6%9B%B4%E7%90%86%E6%80%A7%E7%9A%84%E4%BA%BA%EF%BC%9A%E7%94%A8%E7%A4%BE%E4%BC%9A%E5%AD%A6%E7%9C%8B%E9%80%8F%E7%8E%B0%E4%BB%A3%E7%A4%BE%E4%BC%9A_(%E5%AD%9F%E5%BA%86%E5%BB%B6)_TG%E5%85%B3%E6%B3%A8%40kaipanshare/cover.jpg
+[Vite Proxy] /books bypass: {
+  url: '/books/6b5130e1-11ce-4063-9be3-8d9667758993.pdf',
+  accept: '*/*',
+  method: 'GET'
+}
+[Vite Proxy] 文件请求，继续代理: /books/6b5130e1-11ce-4063-9be3-8d9667758993.pdf
+[SPA Fallback] 其他路由，返回index.html: /
+[SPA Fallback] 其他路由，返回index.html: /manifest.webmanifest
+[Vite Proxy] /books bypass: {
+  url: '/books/public/%E6%96%87%E5%AD%A6/%E9%B2%8D%E9%B9%8F%E5%B1%B1/%E9%B2%8D%E9%B9%8F%E5%B1%B1%E6%96%B0%E8%AF%BB%E8%AF%B8%E5%AD%90%E7%99%BE%E5%AE%B6/cover.jpg',
+  accept: 'image/webp,image/avif,image/jxl,image/heic,image/heic-sequence,video/*;q=0.8,image/png,image/svg+xml,image/*;q=0.8,*/*;q=0.5',
+  method: 'GET'
+}
+[Vite Proxy] 相对路径文件请求，继续代理: /books/public/%E6%96%87%E5%AD%A6/%E9%B2%8D%E9%B9%8F%E5%B1%B1/%E9%B2%8D%E9%B9%8F%E5%B1%B1%E6%96%B0%E8%AF%BB%E8%AF%B8%E5%AD%90%E7%99%BE%E5%AE%B6/cover.jpg
+[Vite Proxy] /books bypass: {
+  url: '/books/public/%E6%9C%AA%E5%88%86%E7%B1%BB/%E6%96%AF%E5%A1%94%E5%A4%AB%E9%87%8C%E9%98%BF%E8%AF%BA%E6%96%AF/%E5%85%A8%E7%90%83%E9%80%9A%E5%8F%B2%EF%BC%9A%E4%BB%8E%E5%8F%B2%E5%89%8D%E5%88%B021%E4%B8%96%E7%BA%AA%EF%BC%88%E7%AC%AC7%E7%89%88%E6%96%B0%E6%A0%A1%E6%9C%AC%20%E4%B8%8A%E4%B8%8B%E5%86%8C%E5%A5%97%E8%A3%85%EF%BC%89/cover.jpeg',
+  accept: 'image/webp,image/avif,image/jxl,image/heic,image/heic-sequence,video/*;q=0.8,image/png,image/svg+xml,image/*;q=0.8,*/*;q=0.5',
+  method: 'GET'
+}
+[Vite Proxy] 相对路径文件请求，继续代理: /books/public/%E6%9C%AA%E5%88%86%E7%B1%BB/%E6%96%AF%E5%A1%94%E5%A4%AB%E9%87%8C%E9%98%BF%E8%AF%BA%E6%96%AF/%E5%85%A8%E7%90%83%E9%80%9A%E5%8F%B2%EF%BC%9A%E4%BB%8E%E5%8F%B2%E5%89%8D%E5%88%B021%E4%B8%96%E7%BA%AA%EF%BC%88%E7%AC%AC7%E7%89%88%E6%96%B0%E6%A0%A1%E6%9C%AC%20%E4%B8%8A%E4%B8%8B%E5%86%8C%E5%A5%97%E8%A3%85%EF%BC%89/cover.jpeg
+[Vite Proxy] /books bypass: {
+  url: '/books/public/%E6%9C%AA%E5%88%86%E7%B1%BB/%E3%80%90%E8%8B%B1%E3%80%91%E6%9D%B0%E8%A5%BF%E5%8D%A1%C2%B7%E7%BD%97%E6%A3%AE/%E5%8E%9A%E5%9C%9F%E6%97%A0%E7%96%86/cover.jpg',
+  accept: 'image/webp,image/avif,image/jxl,image/heic,image/heic-sequence,video/*;q=0.8,image/png,image/svg+xml,image/*;q=0.8,*/*;q=0.5',
+  method: 'GET'
+}
+[Vite Proxy] 相对路径文件请求，继续代理: /books/public/%E6%9C%AA%E5%88%86%E7%B1%BB/%E3%80%90%E8%8B%B1%E3%80%91%E6%9D%B0%E8%A5%BF%E5%8D%A1%C2%B7%E7%BD%97%E6%A3%AE/%E5%8E%9A%E5%9C%9F%E6%97%A0%E7%96%86/cover.jpg
+[Vite Proxy] /books bypass: {
+  url: '/books/public/%E6%9C%AA%E5%88%86%E7%B1%BB/%E6%9D%A8%E8%8C%9C/%E5%B8%82%E9%95%87%E5%86%85%E5%A4%96%EF%BC%9A%E6%99%9A%E6%98%8E%E6%B1%9F%E5%8D%97%E7%9A%84%E5%9C%B0%E5%9F%9F%E7%BB%93%E6%9E%84%E4%B8%8E%E7%A4%BE%E4%BC%9A%E5%8F%98%E8%BF%81/cover.jpg',
+  accept: 'image/webp,image/avif,image/jxl,image/heic,image/heic-sequence,video/*;q=0.8,image/png,image/svg+xml,image/*;q=0.8,*/*;q=0.5',
+  method: 'GET'
+}
+[Vite Proxy] 相对路径文件请求，继续代理: /books/public/%E6%9C%AA%E5%88%86%E7%B1%BB/%E6%9D%A8%E8%8C%9C/%E5%B8%82%E9%95%87%E5%86%85%E5%A4%96%EF%BC%9A%E6%99%9A%E6%98%8E%E6%B1%9F%E5%8D%97%E7%9A%84%E5%9C%B0%E5%9F%9F%E7%BB%93%E6%9E%84%E4%B8%8E%E7%A4%BE%E4%BC%9A%E5%8F%98%E8%BF%81/cover.jpg
+[Vite Proxy] /books bypass: {
+  url: '/books/public/%E6%9C%AA%E5%88%86%E7%B1%BB/%E6%9D%A8%E6%9C%AC%E8%8A%AC/%E6%88%91%E6%9C%AC%E8%8A%AC%E8%8A%B3%EF%BC%88%E6%96%B0%E7%89%88%EF%BC%89/cover.jpg',
+  accept: 'image/webp,image/avif,image/jxl,image/heic,image/heic-sequence,video/*;q=0.8,image/png,image/svg+xml,image/*;q=0.8,*/*;q=0.5',
+  method: 'GET'
+}
+[Vite Proxy] 相对路径文件请求，继续代理: /books/public/%E6%9C%AA%E5%88%86%E7%B1%BB/%E6%9D%A8%E6%9C%AC%E8%8A%AC/%E6%88%91%E6%9C%AC%E8%8A%AC%E8%8A%B3%EF%BC%88%E6%96%B0%E7%89%88%EF%BC%89/cover.jpg
+[Vite Proxy] /books bypass: {
+  url: '/books/public/%E6%9C%AA%E5%88%86%E7%B1%BB/%E5%BC%A0%E6%98%95%E5%AE%87%EF%BC%9B%E6%A2%81%E7%BA%A2/%E4%BA%91%E4%B8%8A%E5%85%AD%E4%B8%87%E5%85%AC%E9%87%8C/cover.jpg',
+  accept: 'image/webp,image/avif,image/jxl,image/heic,image/heic-sequence,video/*;q=0.8,image/png,image/svg+xml,image/*;q=0.8,*/*;q=0.5',
+  method: 'GET'
+}
+[Vite Proxy] 相对路径文件请求，继续代理: /books/public/%E6%9C%AA%E5%88%86%E7%B1%BB/%E5%BC%A0%E6%98%95%E5%AE%87%EF%BC%9B%E6%A2%81%E7%BA%A2/%E4%BA%91%E4%B8%8A%E5%85%AD%E4%B8%87%E5%85%AC%E9%87%8C/cover.jpg
+[Vite Proxy] /books bypass: {
+  url: '/books/public/%E6%96%87%E5%AD%A6/%E8%B7%AF%E9%81%A5/%E5%B9%B3%E5%87%A1%E7%9A%84%E4%B8%96%E7%95%8C%EF%BC%88%E6%BF%80%E5%8A%B1%E4%BA%BF%E4%B8%87%E8%AF%BB%E8%80%85%E7%9A%84%E6%96%B0%E8%AF%BE%E6%A0%87%E7%BB%8F%E5%85%B8%E3%80%81%E6%94%B9%E5%8F%98%E9%A9%AC%E4%BA%91%E4%B8%80%E7%94%9F%E7%9A%84%E4%B9%A6%E3%80%81%E6%96%B0%E6%99%8B%E7%94%B7%E7%A5%9E%E6%9C%B1%E4%B8%80%E9%BE%99%E6%8E%A8%E8%8D%90%EF%BC%89/cover.jpg',
+  accept: 'image/webp,image/avif,image/jxl,image/heic,image/heic-sequence,video/*;q=0.8,image/png,image/svg+xml,image/*;q=0.8,*/*;q=0.5',
+  method: 'GET'
+}
+[Vite Proxy] 相对路径文件请求，继续代理: /books/public/%E6%96%87%E5%AD%A6/%E8%B7%AF%E9%81%A5/%E5%B9%B3%E5%87%A1%E7%9A%84%E4%B8%96%E7%95%8C%EF%BC%88%E6%BF%80%E5%8A%B1%E4%BA%BF%E4%B8%87%E8%AF%BB%E8%80%85%E7%9A%84%E6%96%B0%E8%AF%BE%E6%A0%87%E7%BB%8F%E5%85%B8%E3%80%81%E6%94%B9%E5%8F%98%E9%A9%AC%E4%BA%91%E4%B8%80%E7%94%9F%E7%9A%84%E4%B9%A6%E3%80%81%E6%96%B0%E6%99%8B%E7%94%B7%E7%A5%9E%E6%9C%B1%E4%B8%80%E9%BE%99%E6%8E%A8%E8%8D%90%EF%BC%89/cover.jpg
+[Vite Proxy] /books bypass: {
+  url: '/books/public/%E6%96%87%E5%AD%A6/%E7%BA%A6%E7%BF%B0%C2%B7%E4%BA%9A%E7%91%9F%C2%B7%E6%B1%A4%E5%A7%86%E6%A3%AE/%E5%8A%A8%E7%89%A9%E7%94%9F%E6%B4%BB%E5%8F%B2/cover.jpeg',
+  accept: 'image/webp,image/avif,image/jxl,image/heic,image/heic-sequence,video/*;q=0.8,image/png,image/svg+xml,image/*;q=0.8,*/*;q=0.5',
+  method: 'GET'
+}
+[Vite Proxy] 相对路径文件请求，继续代理: /books/public/%E6%96%87%E5%AD%A6/%E7%BA%A6%E7%BF%B0%C2%B7%E4%BA%9A%E7%91%9F%C2%B7%E6%B1%A4%E5%A7%86%E6%A3%AE/%E5%8A%A8%E7%89%A9%E7%94%9F%E6%B4%BB%E5%8F%B2/cover.jpeg
+[Vite Proxy] /books bypass: {
+  url: '/books/user/default/%E6%9C%AA%E5%88%86%E7%B1%BB/(%E7%BE%8E)%20%E6%92%92%E7%A9%86%E5%B0%94%C2%B7%E4%BC%8A%E8%AF%BA%E5%85%8B%C2%B7%E6%96%AF%E9%80%9A%E6%99%AE%E5%A4%AB%2C%20%E9%82%93%E6%99%93%E8%8A%92/%E8%A5%BF%E6%96%B9%E5%93%B2%E5%AD%A6%E5%8F%B2/cover.jpg',
+  accept: 'image/webp,image/avif,image/jxl,image/heic,image/heic-sequence,video/*;q=0.8,image/png,image/svg+xml,image/*;q=0.8,*/*;q=0.5',
+  method: 'GET'
+}
+[Vite Proxy] 相对路径文件请求，继续代理: /books/user/default/%E6%9C%AA%E5%88%86%E7%B1%BB/(%E7%BE%8E)%20%E6%92%92%E7%A9%86%E5%B0%94%C2%B7%E4%BC%8A%E8%AF%BA%E5%85%8B%C2%B7%E6%96%AF%E9%80%9A%E6%99%AE%E5%A4%AB%2C%20%E9%82%93%E6%99%93%E8%8A%92/%E8%A5%BF%E6%96%B9%E5%93%B2%E5%AD%A6%E5%8F%B2/cover.jpg
+[Vite Proxy] /books bypass: {
+  url: '/books/public/c0b05791-cccf-4fa5-8610-9372e77f1ff8/cover.jpg',
+  accept: 'image/webp,image/avif,image/jxl,image/heic,image/heic-sequence,video/*;q=0.8,image/png,image/svg+xml,image/*;q=0.8,*/*;q=0.5',
+  method: 'GET'
+}
+[Vite Proxy] 相对路径文件请求，继续代理: /books/public/c0b05791-cccf-4fa5-8610-9372e77f1ff8/cover.jpg
+[Vite Proxy] /books bypass: {
+  url: '/books/public/d6356357-54e1-48ff-aefa-9e77ad13a230/cover.jpg',
+  accept: 'image/webp,image/avif,image/jxl,image/heic,image/heic-sequence,video/*;q=0.8,image/png,image/svg+xml,image/*;q=0.8,*/*;q=0.5',
+  method: 'GET'
+}
+[Vite Proxy] 相对路径文件请求，继续代理: /books/public/d6356357-54e1-48ff-aefa-9e77ad13a230/cover.jpg
+[Vite Proxy] /books bypass: {
+  url: '/books/user/default/%E4%BA%BA%E7%B1%BB%E5%A6%82%E4%BD%95%E6%80%9D%E8%80%83/%5B%E7%BE%8E%5D%20%E7%90%86%E6%9F%A5%E5%BE%B7%C2%B7E.%E5%B0%BC%E6%96%AF%E8%B4%9D%E7%89%B9%2C%20%E6%BD%87%E6%AA%AC%20%E7%AD%89/%E6%9C%AA%E5%88%86%E7%B1%BB/cover.jpg',
+  accept: 'image/webp,image/avif,image/jxl,image/heic,image/heic-sequence,video/*;q=0.8,image/png,image/svg+xml,image/*;q=0.8,*/*;q=0.5',
+  method: 'GET'
+}
+[Vite Proxy] 相对路径文件请求，继续代理: /books/user/default/%E4%BA%BA%E7%B1%BB%E5%A6%82%E4%BD%95%E6%80%9D%E8%80%83/%5B%E7%BE%8E%5D%20%E7%90%86%E6%9F%A5%E5%BE%B7%C2%B7E.%E5%B0%BC%E6%96%AF%E8%B4%9D%E7%89%B9%2C%20%E6%BD%87%E6%AA%AC%20%E7%AD%89/%E6%9C%AA%E5%88%86%E7%B1%BB/cover.jpg
+[Vite Proxy] /books bypass: {
+  url: '/books/user/default/%E6%9C%AA%E5%88%86%E7%B1%BB/%E3%80%90%E5%8C%88%E7%89%99%E5%88%A9%E3%80%91%E5%85%8B%E6%8B%89%E6%96%AF%E8%AF%BA%E9%9C%8D%E5%B0%94%E5%8D%A1%E4%BC%8A%C2%B7%E6%8B%89%E6%96%AF%E6%B4%9B/%E4%B8%96%E7%95%8C%E5%9C%A8%E5%89%8D%E8%BF%9B/cover.jpg',
+  accept: 'image/webp,image/avif,image/jxl,image/heic,image/heic-sequence,video/*;q=0.8,image/png,image/svg+xml,image/*;q=0.8,*/*;q=0.5',
+  method: 'GET'
+}
+[Vite Proxy] 相对路径文件请求，继续代理: /books/user/default/%E6%9C%AA%E5%88%86%E7%B1%BB/%E3%80%90%E5%8C%88%E7%89%99%E5%88%A9%E3%80%91%E5%85%8B%E6%8B%89%E6%96%AF%E8%AF%BA%E9%9C%8D%E5%B0%94%E5%8D%A1%E4%BC%8A%C2%B7%E6%8B%89%E6%96%AF%E6%B4%9B/%E4%B8%96%E7%95%8C%E5%9C%A8%E5%89%8D%E8%BF%9B/cover.jpg
+[Vite Proxy] /books bypass: {
+  url: '/books/public/%E5%B0%8F%E8%AF%B4/%E3%80%90%E7%BE%8E%E3%80%91%E6%89%98%E9%A9%AC%E6%96%AF%C2%B7%E5%86%85%E6%A0%BC%E5%B0%94/%E4%BD%9C%E4%B8%BA%E4%B8%80%E5%8F%AA%E8%9D%99%E8%9D%A0%E6%98%AF%E4%BB%80%E4%B9%88%E6%A0%B7%EF%BC%9F/cover.jpg',
+  accept: 'image/webp,image/avif,image/jxl,image/heic,image/heic-sequence,video/*;q=0.8,image/png,image/svg+xml,image/*;q=0.8,*/*;q=0.5',
+  method: 'GET'
+}
+[Vite Proxy] 相对路径文件请求，继续代理: /books/public/%E5%B0%8F%E8%AF%B4/%E3%80%90%E7%BE%8E%E3%80%91%E6%89%98%E9%A9%AC%E6%96%AF%C2%B7%E5%86%85%E6%A0%BC%E5%B0%94/%E4%BD%9C%E4%B8%BA%E4%B8%80%E5%8F%AA%E8%9D%99%E8%9D%A0%E6%98%AF%E4%BB%80%E4%B9%88%E6%A0%B7%EF%BC%9F/cover.jpg
+[Vite Proxy] /books bypass: {
+  url: '/books/6b5130e1-11ce-4063-9be3-8d9667758993.pdf',
+  accept: '*/*',
+  method: 'GET'
+}
+[Vite Proxy] 文件请求，继续代理: /books/6b5130e1-11ce-4063-9be3-8d9667758993.pdf
+[SPA Fallback] 其他路由，返回index.html: /login
+[SPA Fallback] 其他路由，返回index.html: /manifest.webmanifest
+[Vite Proxy] /books bypass: {
+  url: '/books/user/default/%E4%BA%BA%E7%B1%BB%E5%A6%82%E4%BD%95%E6%80%9D%E8%80%83/%5B%E7%BE%8E%5D%20%E7%90%86%E6%9F%A5%E5%BE%B7%C2%B7E.%E5%B0%BC%E6%96%AF%E8%B4%9D%E7%89%B9%2C%20%E6%BD%87%E6%AA%AC%20%E7%AD%89/%E6%9C%AA%E5%88%86%E7%B1%BB/cover.jpg',
+  accept: 'image/webp,image/avif,image/jxl,image/heic,image/heic-sequence,video/*;q=0.8,image/png,image/svg+xml,image/*;q=0.8,*/*;q=0.5',
+  method: 'GET'
+}
+[Vite Proxy] 相对路径文件请求，继续代理: /books/user/default/%E4%BA%BA%E7%B1%BB%E5%A6%82%E4%BD%95%E6%80%9D%E8%80%83/%5B%E7%BE%8E%5D%20%E7%90%86%E6%9F%A5%E5%BE%B7%C2%B7E.%E5%B0%BC%E6%96%AF%E8%B4%9D%E7%89%B9%2C%20%E6%BD%87%E6%AA%AC%20%E7%AD%89/%E6%9C%AA%E5%88%86%E7%B1%BB/cover.jpg
+[Vite Proxy] /books bypass: {
+  url: '/books/public/%E6%9C%AA%E5%88%86%E7%B1%BB/%E3%80%90%E8%8B%B1%E3%80%91%E6%9D%B0%E8%A5%BF%E5%8D%A1%C2%B7%E7%BD%97%E6%A3%AE/%E5%8E%9A%E5%9C%9F%E6%97%A0%E7%96%86/cover.jpg',
+  accept: 'image/webp,image/avif,image/jxl,image/heic,image/heic-sequence,video/*;q=0.8,image/png,image/svg+xml,image/*;q=0.8,*/*;q=0.5',
+  method: 'GET'
+}
+[Vite Proxy] 相对路径文件请求，继续代理: /books/public/%E6%9C%AA%E5%88%86%E7%B1%BB/%E3%80%90%E8%8B%B1%E3%80%91%E6%9D%B0%E8%A5%BF%E5%8D%A1%C2%B7%E7%BD%97%E6%A3%AE/%E5%8E%9A%E5%9C%9F%E6%97%A0%E7%96%86/cover.jpg
+[Vite Proxy] /books bypass: {
+  url: '/books/user/default/%E6%9C%AA%E5%88%86%E7%B1%BB/(%E7%BE%8E)%20%E6%92%92%E7%A9%86%E5%B0%94%C2%B7%E4%BC%8A%E8%AF%BA%E5%85%8B%C2%B7%E6%96%AF%E9%80%9A%E6%99%AE%E5%A4%AB%2C%20%E9%82%93%E6%99%93%E8%8A%92/%E8%A5%BF%E6%96%B9%E5%93%B2%E5%AD%A6%E5%8F%B2/cover.jpg',
+  accept: 'image/webp,image/avif,image/jxl,image/heic,image/heic-sequence,video/*;q=0.8,image/png,image/svg+xml,image/*;q=0.8,*/*;q=0.5',
+  method: 'GET'
+}
+[Vite Proxy] 相对路径文件请求，继续代理: /books/user/default/%E6%9C%AA%E5%88%86%E7%B1%BB/(%E7%BE%8E)%20%E6%92%92%E7%A9%86%E5%B0%94%C2%B7%E4%BC%8A%E8%AF%BA%E5%85%8B%C2%B7%E6%96%AF%E9%80%9A%E6%99%AE%E5%A4%AB%2C%20%E9%82%93%E6%99%93%E8%8A%92/%E8%A5%BF%E6%96%B9%E5%93%B2%E5%AD%A6%E5%8F%B2/cover.jpg
+[Vite Proxy] /books bypass: {
+  url: '/books/public/%E6%96%87%E5%AD%A6/%E7%BA%A6%E7%BF%B0%C2%B7%E4%BA%9A%E7%91%9F%C2%B7%E6%B1%A4%E5%A7%86%E6%A3%AE/%E5%8A%A8%E7%89%A9%E7%94%9F%E6%B4%BB%E5%8F%B2/cover.jpeg',
+  accept: 'image/webp,image/avif,image/jxl,image/heic,image/heic-sequence,video/*;q=0.8,image/png,image/svg+xml,image/*;q=0.8,*/*;q=0.5',
+  method: 'GET'
+}
+[Vite Proxy] 相对路径文件请求，继续代理: /books/public/%E6%96%87%E5%AD%A6/%E7%BA%A6%E7%BF%B0%C2%B7%E4%BA%9A%E7%91%9F%C2%B7%E6%B1%A4%E5%A7%86%E6%A3%AE/%E5%8A%A8%E7%89%A9%E7%94%9F%E6%B4%BB%E5%8F%B2/cover.jpeg
+[Vite Proxy] /books bypass: {
+  url: '/books/user/ttbye/%E6%9C%AA%E5%88%86%E7%B1%BB/%E9%BB%8E%E4%B8%9C%E6%96%B9/%E7%BB%86%E8%AF%B4%E5%85%83%E6%9C%9D/cover.jpg',
+  accept: 'image/webp,image/avif,image/jxl,image/heic,image/heic-sequence,video/*;q=0.8,image/png,image/svg+xml,image/*;q=0.8,*/*;q=0.5',
+  method: 'GET'
+}
+[Vite Proxy] 相对路径文件请求，继续代理: /books/user/ttbye/%E6%9C%AA%E5%88%86%E7%B1%BB/%E9%BB%8E%E4%B8%9C%E6%96%B9/%E7%BB%86%E8%AF%B4%E5%85%83%E6%9C%9D/cover.jpg
+[Vite Proxy] /books bypass: {
+  url: '/books/public/c0b05791-cccf-4fa5-8610-9372e77f1ff8/cover.jpg',
+  accept: 'image/webp,image/avif,image/jxl,image/heic,image/heic-sequence,video/*;q=0.8,image/png,image/svg+xml,image/*;q=0.8,*/*;q=0.5',
+  method: 'GET'
+}
+[Vite Proxy] 相对路径文件请求，继续代理: /books/public/c0b05791-cccf-4fa5-8610-9372e77f1ff8/cover.jpg
+[Vite Proxy] /books bypass: {
+  url: '/books/public/%E5%B0%8F%E8%AF%B4/%E3%80%90%E7%BE%8E%E3%80%91%E6%89%98%E9%A9%AC%E6%96%AF%C2%B7%E5%86%85%E6%A0%BC%E5%B0%94/%E4%BD%9C%E4%B8%BA%E4%B8%80%E5%8F%AA%E8%9D%99%E8%9D%A0%E6%98%AF%E4%BB%80%E4%B9%88%E6%A0%B7%EF%BC%9F/cover.jpg',
+  accept: 'image/webp,image/avif,image/jxl,image/heic,image/heic-sequence,video/*;q=0.8,image/png,image/svg+xml,image/*;q=0.8,*/*;q=0.5',
+  method: 'GET'
+}
+[Vite Proxy] 相对路径文件请求，继续代理: /books/public/%E5%B0%8F%E8%AF%B4/%E3%80%90%E7%BE%8E%E3%80%91%E6%89%98%E9%A9%AC%E6%96%AF%C2%B7%E5%86%85%E6%A0%BC%E5%B0%94/%E4%BD%9C%E4%B8%BA%E4%B8%80%E5%8F%AA%E8%9D%99%E8%9D%A0%E6%98%AF%E4%BB%80%E4%B9%88%E6%A0%B7%EF%BC%9F/cover.jpg
+[Vite Proxy] /books bypass: {
+  url: '/books/user/default/%E6%9C%AA%E5%88%86%E7%B1%BB/%E7%8B%AC%E9%92%93%E5%AF%92%E6%B1%9F%E9%9B%AA/%E9%87%8D%E7%94%9F2011/cover.jpg',
+  accept: 'image/webp,image/avif,image/jxl,image/heic,image/heic-sequence,video/*;q=0.8,image/png,image/svg+xml,image/*;q=0.8,*/*;q=0.5',
+  method: 'GET'
+}
+[Vite Proxy] 相对路径文件请求，继续代理: /books/user/default/%E6%9C%AA%E5%88%86%E7%B1%BB/%E7%8B%AC%E9%92%93%E5%AF%92%E6%B1%9F%E9%9B%AA/%E9%87%8D%E7%94%9F2011/cover.jpg
+[Vite Proxy] /books bypass: {
+  url: '/books/public/%E6%9C%AA%E5%88%86%E7%B1%BB/%E3%80%90%E8%8B%B1%E3%80%91%E6%9D%B0%E8%A5%BF%E5%8D%A1%C2%B7%E7%BD%97%E6%A3%AE/%E5%8E%9A%E5%9C%9F%E6%97%A0%E7%96%86/cover.jpg',
+  accept: 'image/webp,image/avif,image/jxl,image/heic,image/heic-sequence,video/*;q=0.8,image/png,image/svg+xml,image/*;q=0.8,*/*;q=0.5',
+  method: 'GET'
+}
+[Vite Proxy] 相对路径文件请求，继续代理: /books/public/%E6%9C%AA%E5%88%86%E7%B1%BB/%E3%80%90%E8%8B%B1%E3%80%91%E6%9D%B0%E8%A5%BF%E5%8D%A1%C2%B7%E7%BD%97%E6%A3%AE/%E5%8E%9A%E5%9C%9F%E6%97%A0%E7%96%86/cover.jpg
+[Vite Proxy] /books bypass: {
+  url: '/books/public/%E6%96%87%E5%AD%A6/%E8%B7%AF%E9%81%A5/%E5%B9%B3%E5%87%A1%E7%9A%84%E4%B8%96%E7%95%8C%EF%BC%88%E6%BF%80%E5%8A%B1%E4%BA%BF%E4%B8%87%E8%AF%BB%E8%80%85%E7%9A%84%E6%96%B0%E8%AF%BE%E6%A0%87%E7%BB%8F%E5%85%B8%E3%80%81%E6%94%B9%E5%8F%98%E9%A9%AC%E4%BA%91%E4%B8%80%E7%94%9F%E7%9A%84%E4%B9%A6%E3%80%81%E6%96%B0%E6%99%8B%E7%94%B7%E7%A5%9E%E6%9C%B1%E4%B8%80%E9%BE%99%E6%8E%A8%E8%8D%90%EF%BC%89/cover.jpg',
+  accept: 'image/webp,image/avif,image/jxl,image/heic,image/heic-sequence,video/*;q=0.8,image/png,image/svg+xml,image/*;q=0.8,*/*;q=0.5',
+  method: 'GET'
+}
+[Vite Proxy] 相对路径文件请求，继续代理: /books/public/%E6%96%87%E5%AD%A6/%E8%B7%AF%E9%81%A5/%E5%B9%B3%E5%87%A1%E7%9A%84%E4%B8%96%E7%95%8C%EF%BC%88%E6%BF%80%E5%8A%B1%E4%BA%BF%E4%B8%87%E8%AF%BB%E8%80%85%E7%9A%84%E6%96%B0%E8%AF%BE%E6%A0%87%E7%BB%8F%E5%85%B8%E3%80%81%E6%94%B9%E5%8F%98%E9%A9%AC%E4%BA%91%E4%B8%80%E7%94%9F%E7%9A%84%E4%B9%A6%E3%80%81%E6%96%B0%E6%99%8B%E7%94%B7%E7%A5%9E%E6%9C%B1%E4%B8%80%E9%BE%99%E6%8E%A8%E8%8D%90%EF%BC%89/cover.jpg
+[Vite Proxy] /books bypass: {
+  url: '/books/user/default/%E4%BA%BA%E7%B1%BB%E5%A6%82%E4%BD%95%E6%80%9D%E8%80%83/%5B%E7%BE%8E%5D%20%E7%90%86%E6%9F%A5%E5%BE%B7%C2%B7E.%E5%B0%BC%E6%96%AF%E8%B4%9D%E7%89%B9%2C%20%E6%BD%87%E6%AA%AC%20%E7%AD%89/%E6%9C%AA%E5%88%86%E7%B1%BB/cover.jpg',
+  accept: 'image/webp,image/avif,image/jxl,image/heic,image/heic-sequence,video/*;q=0.8,image/png,image/svg+xml,image/*;q=0.8,*/*;q=0.5',
+  method: 'GET'
+}
+[Vite Proxy] 相对路径文件请求，继续代理: /books/user/default/%E4%BA%BA%E7%B1%BB%E5%A6%82%E4%BD%95%E6%80%9D%E8%80%83/%5B%E7%BE%8E%5D%20%E7%90%86%E6%9F%A5%E5%BE%B7%C2%B7E.%E5%B0%BC%E6%96%AF%E8%B4%9D%E7%89%B9%2C%20%E6%BD%87%E6%AA%AC%20%E7%AD%89/%E6%9C%AA%E5%88%86%E7%B1%BB/cover.jpg
+[Vite Proxy] /books bypass: {
+  url: '/books/user/default/%E6%9C%AA%E5%88%86%E7%B1%BB/(%E7%BE%8E)%20%E6%92%92%E7%A9%86%E5%B0%94%C2%B7%E4%BC%8A%E8%AF%BA%E5%85%8B%C2%B7%E6%96%AF%E9%80%9A%E6%99%AE%E5%A4%AB%2C%20%E9%82%93%E6%99%93%E8%8A%92/%E8%A5%BF%E6%96%B9%E5%93%B2%E5%AD%A6%E5%8F%B2/cover.jpg',
+  accept: 'image/webp,image/avif,image/jxl,image/heic,image/heic-sequence,video/*;q=0.8,image/png,image/svg+xml,image/*;q=0.8,*/*;q=0.5',
+  method: 'GET'
+}
+[Vite Proxy] 相对路径文件请求，继续代理: /books/user/default/%E6%9C%AA%E5%88%86%E7%B1%BB/(%E7%BE%8E)%20%E6%92%92%E7%A9%86%E5%B0%94%C2%B7%E4%BC%8A%E8%AF%BA%E5%85%8B%C2%B7%E6%96%AF%E9%80%9A%E6%99%AE%E5%A4%AB%2C%20%E9%82%93%E6%99%93%E8%8A%92/%E8%A5%BF%E6%96%B9%E5%93%B2%E5%AD%A6%E5%8F%B2/cover.jpg
+[Vite Proxy] /books bypass: {
+  url: '/books/public/%E5%B0%8F%E8%AF%B4/%E3%80%90%E7%BE%8E%E3%80%91%E6%89%98%E9%A9%AC%E6%96%AF%C2%B7%E5%86%85%E6%A0%BC%E5%B0%94/%E4%BD%9C%E4%B8%BA%E4%B8%80%E5%8F%AA%E8%9D%99%E8%9D%A0%E6%98%AF%E4%BB%80%E4%B9%88%E6%A0%B7%EF%BC%9F/cover.jpg',
+  accept: 'image/webp,image/avif,image/jxl,image/heic,image/heic-sequence,video/*;q=0.8,image/png,image/svg+xml,image/*;q=0.8,*/*;q=0.5',
+  method: 'GET'
+}
+[Vite Proxy] 相对路径文件请求，继续代理: /books/public/%E5%B0%8F%E8%AF%B4/%E3%80%90%E7%BE%8E%E3%80%91%E6%89%98%E9%A9%AC%E6%96%AF%C2%B7%E5%86%85%E6%A0%BC%E5%B0%94/%E4%BD%9C%E4%B8%BA%E4%B8%80%E5%8F%AA%E8%9D%99%E8%9D%A0%E6%98%AF%E4%BB%80%E4%B9%88%E6%A0%B7%EF%BC%9F/cover.jpg
+[Vite Proxy] /books bypass: {
+  url: '/books/public/%E6%9C%AA%E5%88%86%E7%B1%BB/%E3%80%90%E8%8B%B1%E3%80%91%E6%9D%B0%E8%A5%BF%E5%8D%A1%C2%B7%E7%BD%97%E6%A3%AE/%E5%8E%9A%E5%9C%9F%E6%97%A0%E7%96%86/cover.jpg',
+  accept: 'image/webp,image/avif,image/jxl,image/heic,image/heic-sequence,video/*;q=0.8,image/png,image/svg+xml,image/*;q=0.8,*/*;q=0.5',
+  method: 'GET'
+}
+[Vite Proxy] 相对路径文件请求，继续代理: /books/public/%E6%9C%AA%E5%88%86%E7%B1%BB/%E3%80%90%E8%8B%B1%E3%80%91%E6%9D%B0%E8%A5%BF%E5%8D%A1%C2%B7%E7%BD%97%E6%A3%AE/%E5%8E%9A%E5%9C%9F%E6%97%A0%E7%96%86/cover.jpg
+[Vite Proxy] /books bypass: {
+  url: '/books/public/%E6%96%87%E5%AD%A6/%E8%B7%AF%E9%81%A5/%E5%B9%B3%E5%87%A1%E7%9A%84%E4%B8%96%E7%95%8C%EF%BC%88%E6%BF%80%E5%8A%B1%E4%BA%BF%E4%B8%87%E8%AF%BB%E8%80%85%E7%9A%84%E6%96%B0%E8%AF%BE%E6%A0%87%E7%BB%8F%E5%85%B8%E3%80%81%E6%94%B9%E5%8F%98%E9%A9%AC%E4%BA%91%E4%B8%80%E7%94%9F%E7%9A%84%E4%B9%A6%E3%80%81%E6%96%B0%E6%99%8B%E7%94%B7%E7%A5%9E%E6%9C%B1%E4%B8%80%E9%BE%99%E6%8E%A8%E8%8D%90%EF%BC%89/cover.jpg',
+  accept: 'image/webp,image/avif,image/jxl,image/heic,image/heic-sequence,video/*;q=0.8,image/png,image/svg+xml,image/*;q=0.8,*/*;q=0.5',
+  method: 'GET'
+}
+[Vite Proxy] 相对路径文件请求，继续代理: /books/public/%E6%96%87%E5%AD%A6/%E8%B7%AF%E9%81%A5/%E5%B9%B3%E5%87%A1%E7%9A%84%E4%B8%96%E7%95%8C%EF%BC%88%E6%BF%80%E5%8A%B1%E4%BA%BF%E4%B8%87%E8%AF%BB%E8%80%85%E7%9A%84%E6%96%B0%E8%AF%BE%E6%A0%87%E7%BB%8F%E5%85%B8%E3%80%81%E6%94%B9%E5%8F%98%E9%A9%AC%E4%BA%91%E4%B8%80%E7%94%9F%E7%9A%84%E4%B9%A6%E3%80%81%E6%96%B0%E6%99%8B%E7%94%B7%E7%A5%9E%E6%9C%B1%E4%B8%80%E9%BE%99%E6%8E%A8%E8%8D%90%EF%BC%89/cover.jpg
+[Vite Proxy] /books bypass: {
+  url: '/books/public/%E6%96%87%E5%AD%A6/%E7%BA%A6%E7%BF%B0%C2%B7%E4%BA%9A%E7%91%9F%C2%B7%E6%B1%A4%E5%A7%86%E6%A3%AE/%E5%8A%A8%E7%89%A9%E7%94%9F%E6%B4%BB%E5%8F%B2/cover.jpeg',
+  accept: 'image/webp,image/avif,image/jxl,image/heic,image/heic-sequence,video/*;q=0.8,image/png,image/svg+xml,image/*;q=0.8,*/*;q=0.5',
+  method: 'GET'
+}
+[Vite Proxy] 相对路径文件请求，继续代理: /books/public/%E6%96%87%E5%AD%A6/%E7%BA%A6%E7%BF%B0%C2%B7%E4%BA%9A%E7%91%9F%C2%B7%E6%B1%A4%E5%A7%86%E6%A3%AE/%E5%8A%A8%E7%89%A9%E7%94%9F%E6%B4%BB%E5%8F%B2/cover.jpeg
+[Vite Proxy] /books bypass: {
+  url: '/books/user/default/%E4%BA%BA%E7%B1%BB%E5%A6%82%E4%BD%95%E6%80%9D%E8%80%83/%5B%E7%BE%8E%5D%20%E7%90%86%E6%9F%A5%E5%BE%B7%C2%B7E.%E5%B0%BC%E6%96%AF%E8%B4%9D%E7%89%B9%2C%20%E6%BD%87%E6%AA%AC%20%E7%AD%89/%E6%9C%AA%E5%88%86%E7%B1%BB/cover.jpg',
+  accept: 'image/webp,image/avif,image/jxl,image/heic,image/heic-sequence,video/*;q=0.8,image/png,image/svg+xml,image/*;q=0.8,*/*;q=0.5',
+  method: 'GET'
+}
+[Vite Proxy] 相对路径文件请求，继续代理: /books/user/default/%E4%BA%BA%E7%B1%BB%E5%A6%82%E4%BD%95%E6%80%9D%E8%80%83/%5B%E7%BE%8E%5D%20%E7%90%86%E6%9F%A5%E5%BE%B7%C2%B7E.%E5%B0%BC%E6%96%AF%E8%B4%9D%E7%89%B9%2C%20%E6%BD%87%E6%AA%AC%20%E7%AD%89/%E6%9C%AA%E5%88%86%E7%B1%BB/cover.jpg
+[Vite Proxy] /books bypass: {
+  url: '/books/public/c0b05791-cccf-4fa5-8610-9372e77f1ff8/cover.jpg',
+  accept: 'image/webp,image/avif,image/jxl,image/heic,image/heic-sequence,video/*;q=0.8,image/png,image/svg+xml,image/*;q=0.8,*/*;q=0.5',
+  method: 'GET'
+}
+[Vite Proxy] 相对路径文件请求，继续代理: /books/public/c0b05791-cccf-4fa5-8610-9372e77f1ff8/cover.jpg
+[Vite Proxy] /books bypass: {
+  url: '/books/public/%E5%B0%8F%E8%AF%B4/%E3%80%90%E7%BE%8E%E3%80%91%E6%89%98%E9%A9%AC%E6%96%AF%C2%B7%E5%86%85%E6%A0%BC%E5%B0%94/%E4%BD%9C%E4%B8%BA%E4%B8%80%E5%8F%AA%E8%9D%99%E8%9D%A0%E6%98%AF%E4%BB%80%E4%B9%88%E6%A0%B7%EF%BC%9F/cover.jpg',
+  accept: 'image/webp,image/avif,image/jxl,image/heic,image/heic-sequence,video/*;q=0.8,image/png,image/svg+xml,image/*;q=0.8,*/*;q=0.5',
+  method: 'GET'
+}
+[Vite Proxy] 相对路径文件请求，继续代理: /books/public/%E5%B0%8F%E8%AF%B4/%E3%80%90%E7%BE%8E%E3%80%91%E6%89%98%E9%A9%AC%E6%96%AF%C2%B7%E5%86%85%E6%A0%BC%E5%B0%94/%E4%BD%9C%E4%B8%BA%E4%B8%80%E5%8F%AA%E8%9D%99%E8%9D%A0%E6%98%AF%E4%BB%80%E4%B9%88%E6%A0%B7%EF%BC%9F/cover.jpg
+[Vite Proxy] /books bypass: {
+  url: '/books/public/%E6%9C%AA%E5%88%86%E7%B1%BB/%E3%80%90%E8%8B%B1%E3%80%91%E6%9D%B0%E8%A5%BF%E5%8D%A1%C2%B7%E7%BD%97%E6%A3%AE/%E5%8E%9A%E5%9C%9F%E6%97%A0%E7%96%86/cover.jpg',
+  accept: 'image/webp,image/avif,image/jxl,image/heic,image/heic-sequence,video/*;q=0.8,image/png,image/svg+xml,image/*;q=0.8,*/*;q=0.5',
+  method: 'GET'
+}
+[Vite Proxy] 相对路径文件请求，继续代理: /books/public/%E6%9C%AA%E5%88%86%E7%B1%BB/%E3%80%90%E8%8B%B1%E3%80%91%E6%9D%B0%E8%A5%BF%E5%8D%A1%C2%B7%E7%BD%97%E6%A3%AE/%E5%8E%9A%E5%9C%9F%E6%97%A0%E7%96%86/cover.jpg
+[Vite Proxy] /books bypass: {
+  url: '/books/public/%E6%96%87%E5%AD%A6/%E8%B7%AF%E9%81%A5/%E5%B9%B3%E5%87%A1%E7%9A%84%E4%B8%96%E7%95%8C%EF%BC%88%E6%BF%80%E5%8A%B1%E4%BA%BF%E4%B8%87%E8%AF%BB%E8%80%85%E7%9A%84%E6%96%B0%E8%AF%BE%E6%A0%87%E7%BB%8F%E5%85%B8%E3%80%81%E6%94%B9%E5%8F%98%E9%A9%AC%E4%BA%91%E4%B8%80%E7%94%9F%E7%9A%84%E4%B9%A6%E3%80%81%E6%96%B0%E6%99%8B%E7%94%B7%E7%A5%9E%E6%9C%B1%E4%B8%80%E9%BE%99%E6%8E%A8%E8%8D%90%EF%BC%89/cover.jpg',
+  accept: 'image/webp,image/avif,image/jxl,image/heic,image/heic-sequence,video/*;q=0.8,image/png,image/svg+xml,image/*;q=0.8,*/*;q=0.5',
+  method: 'GET'
+}
+[Vite Proxy] 相对路径文件请求，继续代理: /books/public/%E6%96%87%E5%AD%A6/%E8%B7%AF%E9%81%A5/%E5%B9%B3%E5%87%A1%E7%9A%84%E4%B8%96%E7%95%8C%EF%BC%88%E6%BF%80%E5%8A%B1%E4%BA%BF%E4%B8%87%E8%AF%BB%E8%80%85%E7%9A%84%E6%96%B0%E8%AF%BE%E6%A0%87%E7%BB%8F%E5%85%B8%E3%80%81%E6%94%B9%E5%8F%98%E9%A9%AC%E4%BA%91%E4%B8%80%E7%94%9F%E7%9A%84%E4%B9%A6%E3%80%81%E6%96%B0%E6%99%8B%E7%94%B7%E7%A5%9E%E6%9C%B1%E4%B8%80%E9%BE%99%E6%8E%A8%E8%8D%90%EF%BC%89/cover.jpg
+[Vite Proxy] /books bypass: {
+  url: '/books/public/%E6%96%87%E5%AD%A6/%E7%BA%A6%E7%BF%B0%C2%B7%E4%BA%9A%E7%91%9F%C2%B7%E6%B1%A4%E5%A7%86%E6%A3%AE/%E5%8A%A8%E7%89%A9%E7%94%9F%E6%B4%BB%E5%8F%B2/cover.jpeg',
+  accept: 'image/webp,image/avif,image/jxl,image/heic,image/heic-sequence,video/*;q=0.8,image/png,image/svg+xml,image/*;q=0.8,*/*;q=0.5',
+  method: 'GET'
+}
+[Vite Proxy] 相对路径文件请求，继续代理: /books/public/%E6%96%87%E5%AD%A6/%E7%BA%A6%E7%BF%B0%C2%B7%E4%BA%9A%E7%91%9F%C2%B7%E6%B1%A4%E5%A7%86%E6%A3%AE/%E5%8A%A8%E7%89%A9%E7%94%9F%E6%B4%BB%E5%8F%B2/cover.jpeg
+[Vite Proxy] /books bypass: {
+  url: '/books/user/default/%E4%BA%BA%E7%B1%BB%E5%A6%82%E4%BD%95%E6%80%9D%E8%80%83/%5B%E7%BE%8E%5D%20%E7%90%86%E6%9F%A5%E5%BE%B7%C2%B7E.%E5%B0%BC%E6%96%AF%E8%B4%9D%E7%89%B9%2C%20%E6%BD%87%E6%AA%AC%20%E7%AD%89/%E6%9C%AA%E5%88%86%E7%B1%BB/cover.jpg',
+  accept: 'image/webp,image/avif,image/jxl,image/heic,image/heic-sequence,video/*;q=0.8,image/png,image/svg+xml,image/*;q=0.8,*/*;q=0.5',
+  method: 'GET'
+}
+[Vite Proxy] 相对路径文件请求，继续代理: /books/user/default/%E4%BA%BA%E7%B1%BB%E5%A6%82%E4%BD%95%E6%80%9D%E8%80%83/%5B%E7%BE%8E%5D%20%E7%90%86%E6%9F%A5%E5%BE%B7%C2%B7E.%E5%B0%BC%E6%96%AF%E8%B4%9D%E7%89%B9%2C%20%E6%BD%87%E6%AA%AC%20%E7%AD%89/%E6%9C%AA%E5%88%86%E7%B1%BB/cover.jpg
+[Vite Proxy] /books bypass: {
+  url: '/books/user/default/%E6%9C%AA%E5%88%86%E7%B1%BB/(%E7%BE%8E)%20%E6%92%92%E7%A9%86%E5%B0%94%C2%B7%E4%BC%8A%E8%AF%BA%E5%85%8B%C2%B7%E6%96%AF%E9%80%9A%E6%99%AE%E5%A4%AB%2C%20%E9%82%93%E6%99%93%E8%8A%92/%E8%A5%BF%E6%96%B9%E5%93%B2%E5%AD%A6%E5%8F%B2/cover.jpg',
+  accept: 'image/webp,image/avif,image/jxl,image/heic,image/heic-sequence,video/*;q=0.8,image/png,image/svg+xml,image/*;q=0.8,*/*;q=0.5',
+  method: 'GET'
+}
+[Vite Proxy] 相对路径文件请求，继续代理: /books/user/default/%E6%9C%AA%E5%88%86%E7%B1%BB/(%E7%BE%8E)%20%E6%92%92%E7%A9%86%E5%B0%94%C2%B7%E4%BC%8A%E8%AF%BA%E5%85%8B%C2%B7%E6%96%AF%E9%80%9A%E6%99%AE%E5%A4%AB%2C%20%E9%82%93%E6%99%93%E8%8A%92/%E8%A5%BF%E6%96%B9%E5%93%B2%E5%AD%A6%E5%8F%B2/cover.jpg
+[Vite Proxy] /books bypass: {
+  url: '/books/public/c0b05791-cccf-4fa5-8610-9372e77f1ff8/cover.jpg',
+  accept: 'image/webp,image/avif,image/jxl,image/heic,image/heic-sequence,video/*;q=0.8,image/png,image/svg+xml,image/*;q=0.8,*/*;q=0.5',
+  method: 'GET'
+}
+[Vite Proxy] 相对路径文件请求，继续代理: /books/public/c0b05791-cccf-4fa5-8610-9372e77f1ff8/cover.jpg
+[Vite Proxy] /books bypass: {
+  url: '/books/public/%E5%B0%8F%E8%AF%B4/%E3%80%90%E7%BE%8E%E3%80%91%E6%89%98%E9%A9%AC%E6%96%AF%C2%B7%E5%86%85%E6%A0%BC%E5%B0%94/%E4%BD%9C%E4%B8%BA%E4%B8%80%E5%8F%AA%E8%9D%99%E8%9D%A0%E6%98%AF%E4%BB%80%E4%B9%88%E6%A0%B7%EF%BC%9F/cover.jpg',
+  accept: 'image/webp,image/avif,image/jxl,image/heic,image/heic-sequence,video/*;q=0.8,image/png,image/svg+xml,image/*;q=0.8,*/*;q=0.5',
+  method: 'GET'
+}
+[Vite Proxy] 相对路径文件请求，继续代理: /books/public/%E5%B0%8F%E8%AF%B4/%E3%80%90%E7%BE%8E%E3%80%91%E6%89%98%E9%A9%AC%E6%96%AF%C2%B7%E5%86%85%E6%A0%BC%E5%B0%94/%E4%BD%9C%E4%B8%BA%E4%B8%80%E5%8F%AA%E8%9D%99%E8%9D%A0%E6%98%AF%E4%BB%80%E4%B9%88%E6%A0%B7%EF%BC%9F/cover.jpg
+[Vite Proxy] /books bypass: {
+  url: '/books/public/%E6%9C%AA%E5%88%86%E7%B1%BB/%E3%80%90%E8%8B%B1%E3%80%91%E6%9D%B0%E8%A5%BF%E5%8D%A1%C2%B7%E7%BD%97%E6%A3%AE/%E5%8E%9A%E5%9C%9F%E6%97%A0%E7%96%86/cover.jpg',
+  accept: 'image/webp,image/avif,image/jxl,image/heic,image/heic-sequence,video/*;q=0.8,image/png,image/svg+xml,image/*;q=0.8,*/*;q=0.5',
+  method: 'GET'
+}
+[Vite Proxy] 相对路径文件请求，继续代理: /books/public/%E6%9C%AA%E5%88%86%E7%B1%BB/%E3%80%90%E8%8B%B1%E3%80%91%E6%9D%B0%E8%A5%BF%E5%8D%A1%C2%B7%E7%BD%97%E6%A3%AE/%E5%8E%9A%E5%9C%9F%E6%97%A0%E7%96%86/cover.jpg
+[Vite Proxy] /books bypass: {
+  url: '/books/public/%E6%96%87%E5%AD%A6/%E8%B7%AF%E9%81%A5/%E5%B9%B3%E5%87%A1%E7%9A%84%E4%B8%96%E7%95%8C%EF%BC%88%E6%BF%80%E5%8A%B1%E4%BA%BF%E4%B8%87%E8%AF%BB%E8%80%85%E7%9A%84%E6%96%B0%E8%AF%BE%E6%A0%87%E7%BB%8F%E5%85%B8%E3%80%81%E6%94%B9%E5%8F%98%E9%A9%AC%E4%BA%91%E4%B8%80%E7%94%9F%E7%9A%84%E4%B9%A6%E3%80%81%E6%96%B0%E6%99%8B%E7%94%B7%E7%A5%9E%E6%9C%B1%E4%B8%80%E9%BE%99%E6%8E%A8%E8%8D%90%EF%BC%89/cover.jpg',
+  accept: 'image/webp,image/avif,image/jxl,image/heic,image/heic-sequence,video/*;q=0.8,image/png,image/svg+xml,image/*;q=0.8,*/*;q=0.5',
+  method: 'GET'
+}
+[Vite Proxy] 相对路径文件请求，继续代理: /books/public/%E6%96%87%E5%AD%A6/%E8%B7%AF%E9%81%A5/%E5%B9%B3%E5%87%A1%E7%9A%84%E4%B8%96%E7%95%8C%EF%BC%88%E6%BF%80%E5%8A%B1%E4%BA%BF%E4%B8%87%E8%AF%BB%E8%80%85%E7%9A%84%E6%96%B0%E8%AF%BE%E6%A0%87%E7%BB%8F%E5%85%B8%E3%80%81%E6%94%B9%E5%8F%98%E9%A9%AC%E4%BA%91%E4%B8%80%E7%94%9F%E7%9A%84%E4%B9%A6%E3%80%81%E6%96%B0%E6%99%8B%E7%94%B7%E7%A5%9E%E6%9C%B1%E4%B8%80%E9%BE%99%E6%8E%A8%E8%8D%90%EF%BC%89/cover.jpg
+[Vite Proxy] /books bypass: {
+  url: '/books/public/%E6%96%87%E5%AD%A6/%E7%BA%A6%E7%BF%B0%C2%B7%E4%BA%9A%E7%91%9F%C2%B7%E6%B1%A4%E5%A7%86%E6%A3%AE/%E5%8A%A8%E7%89%A9%E7%94%9F%E6%B4%BB%E5%8F%B2/cover.jpeg',
+  accept: 'image/webp,image/avif,image/jxl,image/heic,image/heic-sequence,video/*;q=0.8,image/png,image/svg+xml,image/*;q=0.8,*/*;q=0.5',
+  method: 'GET'
+}
+[Vite Proxy] 相对路径文件请求，继续代理: /books/public/%E6%96%87%E5%AD%A6/%E7%BA%A6%E7%BF%B0%C2%B7%E4%BA%9A%E7%91%9F%C2%B7%E6%B1%A4%E5%A7%86%E6%A3%AE/%E5%8A%A8%E7%89%A9%E7%94%9F%E6%B4%BB%E5%8F%B2/cover.jpeg
+[Vite Proxy] /books bypass: {
+  url: '/books/user/default/%E4%BA%BA%E7%B1%BB%E5%A6%82%E4%BD%95%E6%80%9D%E8%80%83/%5B%E7%BE%8E%5D%20%E7%90%86%E6%9F%A5%E5%BE%B7%C2%B7E.%E5%B0%BC%E6%96%AF%E8%B4%9D%E7%89%B9%2C%20%E6%BD%87%E6%AA%AC%20%E7%AD%89/%E6%9C%AA%E5%88%86%E7%B1%BB/cover.jpg',
+  accept: 'image/webp,image/avif,image/jxl,image/heic,image/heic-sequence,video/*;q=0.8,image/png,image/svg+xml,image/*;q=0.8,*/*;q=0.5',
+  method: 'GET'
+}
+[Vite Proxy] 相对路径文件请求，继续代理: /books/user/default/%E4%BA%BA%E7%B1%BB%E5%A6%82%E4%BD%95%E6%80%9D%E8%80%83/%5B%E7%BE%8E%5D%20%E7%90%86%E6%9F%A5%E5%BE%B7%C2%B7E.%E5%B0%BC%E6%96%AF%E8%B4%9D%E7%89%B9%2C%20%E6%BD%87%E6%AA%AC%20%E7%AD%89/%E6%9C%AA%E5%88%86%E7%B1%BB/cover.jpg
+[Vite Proxy] /books bypass: {
+  url: '/books/user/default/%E6%9C%AA%E5%88%86%E7%B1%BB/(%E7%BE%8E)%20%E6%92%92%E7%A9%86%E5%B0%94%C2%B7%E4%BC%8A%E8%AF%BA%E5%85%8B%C2%B7%E6%96%AF%E9%80%9A%E6%99%AE%E5%A4%AB%2C%20%E9%82%93%E6%99%93%E8%8A%92/%E8%A5%BF%E6%96%B9%E5%93%B2%E5%AD%A6%E5%8F%B2/cover.jpg',
+  accept: 'image/webp,image/avif,image/jxl,image/heic,image/heic-sequence,video/*;q=0.8,image/png,image/svg+xml,image/*;q=0.8,*/*;q=0.5',
+  method: 'GET'
+}
+[Vite Proxy] 相对路径文件请求，继续代理: /books/user/default/%E6%9C%AA%E5%88%86%E7%B1%BB/(%E7%BE%8E)%20%E6%92%92%E7%A9%86%E5%B0%94%C2%B7%E4%BC%8A%E8%AF%BA%E5%85%8B%C2%B7%E6%96%AF%E9%80%9A%E6%99%AE%E5%A4%AB%2C%20%E9%82%93%E6%99%93%E8%8A%92/%E8%A5%BF%E6%96%B9%E5%93%B2%E5%AD%A6%E5%8F%B2/cover.jpg
+[Vite Proxy] /books bypass: {
+  url: '/books/public/c0b05791-cccf-4fa5-8610-9372e77f1ff8/cover.jpg',
+  accept: 'image/webp,image/avif,image/jxl,image/heic,image/heic-sequence,video/*;q=0.8,image/png,image/svg+xml,image/*;q=0.8,*/*;q=0.5',
+  method: 'GET'
+}
+[Vite Proxy] 相对路径文件请求，继续代理: /books/public/c0b05791-cccf-4fa5-8610-9372e77f1ff8/cover.jpg
+[Vite Proxy] /books bypass: {
+  url: '/books/public/%E6%9C%AA%E5%88%86%E7%B1%BB/%E6%9C%AA%E7%9F%A5%E4%BD%9C%E8%80%85/%E6%B0%B4%E6%83%85%E9%83%A8%E4%BF%A1%E6%81%AF%E5%8C%96%E5%B7%A5%E4%BD%9C%E8%A6%81%E7%82%B9/cover.png',
+  accept: 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+  method: 'GET'
+}
+[Vite Proxy] 相对路径文件请求，继续代理: /books/public/%E6%9C%AA%E5%88%86%E7%B1%BB/%E6%9C%AA%E7%9F%A5%E4%BD%9C%E8%80%85/%E6%B0%B4%E6%83%85%E9%83%A8%E4%BF%A1%E6%81%AF%E5%8C%96%E5%B7%A5%E4%BD%9C%E8%A6%81%E7%82%B9/cover.png
+[SPA Fallback] /books路径，返回index.html: /books/42cb9b02-e07c-4c37-b13e-1a25d89cfa76.docx
+10:20:07 [vite] hmr update /src/pages/ReaderNew.tsx, /src/index.css
+10:20:07 [vite] hmr update /src/components/readers/formats/ReaderPDFPro.tsx, /src/index.css
+[SPA Fallback] 其他路由，返回index.html: /
+[SPA Fallback] 其他路由，返回index.html: /reader/6b5130e1-11ce-4063-9be3-8d9667758993
+[SPA Fallback] 其他路由，返回index.html: /manifest.webmanifest
+10:41:58 [vite] hmr update /src/components/readers/ReadingSettingsPanel.tsx, /src/index.css
+10:42:49 [vite] hmr update /src/components/readers/formats/ReaderPDFPro.tsx, /src/index.css
+10:43:16 [vite] hmr update /src/components/readers/ReadingSettingsPanel.tsx, /src/index.css
+10:43:16 [vite] hmr update /src/components/readers/formats/ReaderPDFPro.tsx, /src/index.css

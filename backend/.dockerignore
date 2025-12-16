@@ -1,0 +1,45 @@
+# Node.js
+node_modules
+npm-debug.log
+yarn-error.log
+
+# 构建输出
+dist
+build
+
+# 数据文件（会单独挂载）
+data
+books
+covers
+fonts
+
+# 环境变量
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode
+.idea
+
+# 日志
+*.log
+
+# 临时文件
+.tmp
+*.tmp
+
+# Git
+.git
+.gitignore
+
+# 文档
+*.md
+
+# 测试
+*.test.ts
+*.spec.ts
+coverage
+
+# 其他
+.DS_Store

@@ -1,0 +1,101 @@
+services:
+  # 后端服务
+  backend:
+    image: ttbye/readknows-backend:latest
+    platform: linux/amd64  # 指定平台，兼容 x86_64 和 ARM64
+    build:
+      context: ../backend
+      dockerfile: Dockerfile.debian
+    container_name: readknows-backend
+    restart: unless-stopped
+    # 使用root用户运行以避免权限问题（特别是在NAS上）
+    # 如果需要更安全的配置，请确保宿主机目录权限为1000:1000
+    user: "0:0"
+    ports:
+      - "1281:1281"
+    environment:
+      - NODE_ENV=production
+      - PORT=1281
+      - JWT_SECRET=${JWT_SECRET:-change-this-secret-key-in-production}
+      - JWT_EXPIRES_IN=${JWT_EXPIRES_IN:-7d}
+      - DB_PATH=./data/database.db
+      - BOOKS_DIR=./books
+      - DOUBAN_API_BASE=${DOUBAN_API_BASE:-}
+      - AI_PROVIDER=${AI_PROVIDER:-ollama}
+      # 通过nginx代理访问ollama服务器（nginx在前端容器中）
+      # 如果设置了AI_API_URL环境变量，则使用该值；否则使用nginx代理地址
+      - AI_API_URL=${AI_API_URL:-http://frontend:1280/ollama-proxy}
+      - AI_API_KEY=${AI_API_KEY:-}
+      - AI_MODEL=${AI_MODEL:-llama2}
+    volumes:
+      # 数据持久化
+      - /volume5/docker/ReadKnows/data:/app/data
+      - /volume5/docker/ReadKnows/books:/app/books
+      - /volume5/docker/ReadKnows/covers:/app/covers
+      - /volume5/docker/ReadKnows/fonts:/app/fonts
+      - /volume5/docker/ReadKnows/import:/app/import
+      # Calibre 安装缓存（用于加速重复安装）
+      - ../cache/calibre:/app/cache/calibre:rw
+      # 扫描目录（可选，用于批量扫描本地书籍）
+      # 将宿主机的书籍目录挂载到容器的/app/scan目录
+      # 示例：- /path/to/your/books:/app/scan:ro
+      # :ro 表示只读模式，防止意外修改
+      # - /volume5/books:/app/scan:ro
+    # 在Linux上支持host.docker.internal（Docker Desktop自动支持，但Linux需要手动配置）
+    # 这样后端容器可以访问宿主机上的服务（如 ollama）
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - readknows-network
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:1281/api/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # 前端服务
+  frontend:
+    image: ttbye/readknows-frontend:latest
+    platform: linux/amd64  # 指定平台，兼容 x86_64 和 ARM64
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile
+    container_name: readknows-frontend
+    restart: unless-stopped
+    ports:
+      - "1280:1280"
+    environment:
+      # Ollama服务器完整URL（包含协议、主机和端口）
+      # 例如：http://192.168.6.20:11434 或 http://ollama-server:8080
+      # 如果ollama在宿主机上，可以使用：http://host.docker.internal:11434
+      # 如果ollama在局域网其他机器上，使用实际的IP地址，如：http://192.168.6.20:11434
+      # 注意：前端容器中的nginx会通过此地址代理到实际的Ollama服务器
+      # 端口号应该与系统设置中配置的ollama端口一致
+      - OLLAMA_URL=${OLLAMA_URL:-http://host.docker.internal:11434}
+    # 在Linux上支持host.docker.internal（Docker Desktop自动支持，但Linux需要手动配置）
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - backend
+    networks:
+      - readknows-network
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:1280/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+networks:
+  readknows-network:
+    driver: bridge
+    # 允许容器访问宿主机局域网
+    # 默认情况下，bridge网络应该可以访问宿主机可以访问的网络
+    # 如果无法访问，可能需要配置iptables或使用host网络模式
+    # 注意：bridge 网络默认允许容器访问宿主机网络，但某些防火墙规则可能阻止
+    # 如果遇到网络问题，可以尝试：
+    # 1. 检查宿主机防火墙设置
+    # 2. 确保 Docker 的 iptables 规则正确
+    # 3. 使用 host.docker.internal 访问宿主机服务
+    # 4. 使用实际局域网 IP 访问其他机器上的服务
+

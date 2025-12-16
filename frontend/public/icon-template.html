@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>生成PWA图标</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+        }
+        canvas {
+            border: 1px solid #ccc;
+            margin: 20px 0;
+        }
+        button {
+            background: #2563eb;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            margin: 5px;
+            cursor: pointer;
+            border-radius: 5px;
+        }
+        button:hover {
+            background: #1d4ed8;
+        }
+    </style>
+</head>
+<body>
+    <h1>PWA图标生成器</h1>
+    <p>这个工具可以快速生成临时的PWA图标。在浏览器中打开此文件，点击下载按钮即可。</p>
+    
+    <h2>预览</h2>
+    <canvas id="icon512" width="512" height="512"></canvas>
+    <canvas id="icon192" width="192" height="192"></canvas>
+    <canvas id="icon180" width="180" height="180"></canvas>
+    
+    <h2>下载图标</h2>
+    <button onclick="downloadIcon('icon512', 'pwa-512x512.png')">下载 512×512</button>
+    <button onclick="downloadIcon('icon192', 'pwa-192x192.png')">下载 192×192</button>
+    <button onclick="downloadIcon('icon180', 'apple-touch-icon.png')">下载 180×180 (iOS)</button>
+    <button onclick="downloadAll()">下载全部</button>
+
+    <script>
+        // 绘制图标
+        function drawIcon(canvas) {
+            const ctx = canvas.getContext('2d');
+            const size = canvas.width;
+            
+            // 背景渐变
+            const gradient = ctx.createLinearGradient(0, 0, size, size);
+            gradient.addColorStop(0, '#667eea');
+            gradient.addColorStop(1, '#764ba2');
+            ctx.fillStyle = gradient;
+            ctx.fillRect(0, 0, size, size);
+            
+            // 绘制书本图标
+            ctx.fillStyle = 'white';
+            
+            // 书本主体
+            const bookWidth = size * 0.5;
+            const bookHeight = size * 0.6;
+            const x = (size - bookWidth) / 2;
+            const y = (size - bookHeight) / 2;
+            
+            // 左页
+            ctx.fillRect(x, y, bookWidth / 2 - 5, bookHeight);
+            
+            // 右页
+            ctx.fillRect(x + bookWidth / 2 + 5, y, bookWidth / 2 - 5, bookHeight);
+            
+            // 书脊
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
+            ctx.fillRect(x + bookWidth / 2 - 5, y, 10, bookHeight);
+            
+            // 添加文字 "书"
+            ctx.fillStyle = 'white';
+            ctx.font = `bold ${size * 0.3}px Arial, "Microsoft YaHei", sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('书', size / 2, size * 0.65);
+        }
+        
+        // 初始化画布
+        ['icon512', 'icon192', 'icon180'].forEach(id => {
+            const canvas = document.getElementById(id);
+            drawIcon(canvas);
+        });
+        
+        // 下载单个图标
+        function downloadIcon(canvasId, filename) {
+            const canvas = document.getElementById(canvasId);
+            canvas.toBlob(blob => {
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = filename;
+                a.click();
+                URL.revokeObjectURL(url);
+            });
+        }
+        
+        // 下载所有图标
+        function downloadAll() {
+            setTimeout(() => downloadIcon('icon512', 'pwa-512x512.png'), 0);
+            setTimeout(() => downloadIcon('icon192', 'pwa-192x192.png'), 500);
+            setTimeout(() => downloadIcon('icon180', 'apple-touch-icon.png'), 1000);
+        }
+    </script>
+    
+    <h2>使用说明</h2>
+    <ol>
+        <li>点击"下载全部"按钮，下载三个图标文件</li>
+        <li>将下载的文件放入 <code>frontend/public</code> 文件夹</li>
+        <li>重新构建项目: <code>npm run build</code></li>
+        <li>测试PWA安装功能</li>
+    </ol>
+    
+    <h2>创建favicon.ico</h2>
+    <p>可以使用以下在线工具将PNG转换为ICO：</p>
+    <ul>
+        <li><a href="https://favicon.io/" target="_blank">favicon.io</a></li>
+        <li><a href="https://www.icoconverter.com/" target="_blank">ICO Converter</a></li>
+        <li><a href="https://realfavicongenerator.net/" target="_blank">Real Favicon Generator</a></li>
+    </ul>
+    
+    <p><strong>提示：</strong>这些是临时图标，建议后续替换为专业设计的品牌图标。</p>
+</body>
+</html>
+

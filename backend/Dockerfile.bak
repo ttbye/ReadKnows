@@ -1,0 +1,80 @@
+# 后端 Dockerfile
+FROM node:20-alpine AS builder
+
+# 使用国内镜像源加速（可选，如果在中国使用）
+# 取消下面注释以启用阿里云镜像
+RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g' /etc/apk/repositories
+
+# 更新 APK 索引并安装构建依赖（canvas需要）
+RUN apk update && apk upgrade && apk add --no-cache \
+    python3 \
+    make \
+    g++ \
+    cairo-dev \
+    jpeg-dev \
+    pango-dev \
+    giflib-dev \
+    pixman-dev
+
+WORKDIR /app
+
+# 设置 npm 镜像源（可选，如果在中国使用）
+# 取消下面注释以启用淘宝镜像
+RUN npm config set registry https://registry.npmmirror.com
+
+# 复制package文件（先复制依赖文件，利用 Docker 缓存）
+COPY package*.json ./
+COPY tsconfig.json ./
+
+# 安装依赖
+# 如果有 package-lock.json 使用 npm ci，否则使用 npm install
+RUN if [ -f package-lock.json ]; then npm ci --production=false; else npm install; fi
+
+# 复制源代码
+COPY src ./src
+COPY scripts ./scripts
+
+# 构建TypeScript
+RUN npm run build
+
+# 生产环境镜像
+FROM node:20-alpine
+
+# 使用国内镜像源加速（可选，如果在中国使用）
+# 取消下面注释以启用阿里云镜像
+RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g' /etc/apk/repositories
+
+# 更新 APK 索引并安装运行时依赖（canvas需要）
+RUN apk update && apk upgrade && apk add --no-cache \
+    cairo \
+    jpeg \
+    pango \
+    giflib \
+    pixman \
+    fontconfig \
+    ttf-dejavu \
+    ttf-liberation
+
+WORKDIR /app
+
+# 从构建阶段复制文件（按依赖顺序，优化缓存）
+COPY --from=builder /app/package*.json ./
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/scripts ./scripts
+
+# 创建必要的目录
+RUN mkdir -p /app/data /app/books/public /app/books/user /app/covers /app/fonts
+
+# 设置环境变量
+ENV NODE_ENV=production
+ENV PORT=3001
+ENV DB_PATH=./data/database.db
+ENV BOOKS_DIR=./books
+
+# 暴露端口
+EXPOSE 3001
+
+# 启动命令
+CMD ["node", "dist/index.js"]
+

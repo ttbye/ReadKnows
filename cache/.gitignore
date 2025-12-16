@@ -1,0 +1,7 @@
+# Calibre 安装缓存
+# 此目录用于缓存 Calibre 安装脚本和二进制文件，加速重复安装
+calibre/
+*.sh
+*.tar.xz
+*.tar.gz
+
