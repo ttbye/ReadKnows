@@ -10,6 +10,9 @@ dist/
 build/
 *.tsbuildinfo
 
+# Android App（功能未完成，暂不上传）
+app/
+
 # 数据文件（用户数据，不应提交）
 data/
 backend/data/*.db
