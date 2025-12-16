@@ -1,0 +1,26 @@
+{
+  "name": "readknows",
+  "version": "0.2025.12",
+  "description": "读士私人书库 | ReadKnows - 支持多格式、多平台、多用户的私人电子书管理平台",
+  "author": "ttbye",
+  "private": true,
+  "workspaces": [
+    "frontend",
+    "backend"
+  ],
+  "scripts": {
+    "dev": "concurrently \"npm run dev:backend\" \"npm run dev:frontend\"",
+    "dev:backend": "cd backend && npm run dev",
+    "dev:frontend": "cd frontend && npm run dev",
+    "build": "npm run build:backend && npm run build:frontend",
+    "build:backend": "cd backend && npm run build",
+    "build:frontend": "cd frontend && npm run build",
+    "install:all": "npm install && cd backend && npm install && cd ../frontend && npm install"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  },
+  "dependencies": {
+    "canvas": "^3.2.0"
+  }
+}

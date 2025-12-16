@@ -1,0 +1,785 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+:root {
+  --bg-primary: #ffffff;
+  --bg-secondary: #f5f5f5;
+  --bg-tertiary: #fafafa;
+  --text-primary: #1a1a1a;
+  --text-secondary: #666666;
+  --text-tertiary: #999999;
+  --border-color: #e0e0e0;
+  --accent-color: #2563eb;
+  --accent-hover: #1d4ed8;
+  --success-color: #10b981;
+  --error-color: #ef4444;
+  --warning-color: #f59e0b;
+  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+}
+
+/* 暗色主题变量 - 使用class模式 */
+.dark {
+  --bg-primary: #1a1a1a;
+  --bg-secondary: #2a2a2a;
+  --bg-tertiary: #333333;
+  --text-primary: #ffffff;
+  --text-secondary: #b3b3b3;
+  --text-tertiary: #808080;
+  --border-color: #404040;
+}
+
+/* 保留媒体查询作为后备（仅在未设置class时使用） */
+@media (prefers-color-scheme: dark) {
+  :root:not(.light) {
+    --bg-primary: #1a1a1a;
+    --bg-secondary: #2a2a2a;
+    --bg-tertiary: #333333;
+    --text-primary: #ffffff;
+    --text-secondary: #b3b3b3;
+    --text-tertiary: #808080;
+    --border-color: #404040;
+  }
+}
+
+html {
+  /* PWA全屏支持 */
+  width: 100%;
+  height: 100%;
+  /* 背景色由各个页面组件动态设置 */
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  color: var(--text-primary);
+  line-height: 1.6;
+  /* PWA全屏支持 */
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  /* 防止iOS下拉反弹 */
+  overscroll-behavior: none;
+  -webkit-overflow-scrolling: touch;
+  /* 背景色由各个页面组件动态设置，这样顶部安全区域会自动匹配页面背景色 */
+  /* 注意：不在body设置padding-top，让导航栏自己处理安全区域 */
+  /* 不设置overflow:hidden，让fixed元素相对viewport定位 */
+  overflow: visible;
+  position: relative;
+}
+
+#root {
+  width: 100%;
+  min-height: 100%;
+  /* 不在root上设置overflow，让子元素自己处理滚动 */
+  /* 这样fixed定位的元素才能相对于viewport定位 */
+  overflow: visible;
+  /* 确保根元素占满整个可视区域 */
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+
+#root::-webkit-scrollbar {
+  display: none;
+}
+
+code {
+  font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
+    monospace;
+}
+
+a {
+  color: var(--accent-color);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+button {
+  cursor: pointer;
+  border: none;
+  outline: none;
+  font-family: inherit;
+}
+
+input, textarea, select {
+  font-family: inherit;
+  outline: none;
+}
+
+.container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 1rem;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.5rem 1rem;
+  border-radius: var(--radius-md);
+  font-size: 0.875rem;
+  font-weight: 500;
+  transition: all 0.2s;
+  gap: 0.5rem;
+}
+
+.btn-primary {
+  background-color: var(--accent-color);
+  color: white;
+}
+
+.btn-primary:hover {
+  background-color: var(--accent-hover);
+  text-decoration: none;
+}
+
+.btn-secondary {
+  background-color: var(--bg-secondary);
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
+}
+
+.btn-secondary:hover {
+  background-color: var(--bg-tertiary);
+  text-decoration: none;
+}
+
+.btn-danger {
+  background-color: var(--error-color);
+  color: white;
+}
+
+.btn-danger:hover {
+  background-color: #dc2626;
+  text-decoration: none;
+}
+
+.card {
+  background-color: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  padding: 1.5rem;
+  box-shadow: var(--shadow-sm);
+}
+
+.input {
+  width: 100%;
+  padding: 0.75rem;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: 0.875rem;
+}
+
+.input:focus {
+  border-color: var(--accent-color);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+}
+
+.grid {
+  display: grid;
+  gap: 1.5rem;
+}
+
+.grid-cols-1 {
+  grid-template-columns: repeat(1, 1fr);
+}
+
+.grid-cols-2 {
+  grid-template-columns: repeat(2, 1fr);
+}
+
+.grid-cols-3 {
+  grid-template-columns: repeat(3, 1fr);
+}
+
+.grid-cols-4 {
+  grid-template-columns: repeat(4, 1fr);
+}
+
+/* 移除这些规则，让Tailwind的响应式类正常工作 */
+/* 如果需要特定页面的单列布局，应该使用更具体的选择器 */
+
+/* 统一的美化卡片样式 - 亮色模式使用微妙的渐变和阴影，深色模式使用彩色渐变背景 */
+.card-gradient {
+  /* 亮色模式：微妙的渐变背景，增强层次感 */
+  background: linear-gradient(135deg, 
+    #ffffff 0%, 
+    #fafafa 50%,
+    #f8f9fa 100%
+  );
+  border-radius: 0.5rem;
+  border: 1px solid rgba(229, 231, 235, 0.8);
+  transition: all 0.2s ease;
+  box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.05),
+              0 1px 2px 0 rgba(0, 0, 0, 0.03);
+  position: relative;
+  overflow: hidden;
+}
+
+/* 亮色模式：添加微妙的顶部高光 */
+.card-gradient::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: linear-gradient(90deg, 
+    transparent 0%,
+    rgba(255, 255, 255, 0.8) 50%,
+    transparent 100%
+  );
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* 亮色模式：悬停效果 */
+.card-gradient:hover {
+  border-color: rgba(59, 130, 246, 0.3);
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.08),
+              0 2px 4px -1px rgba(0, 0, 0, 0.05),
+              0 0 0 1px rgba(59, 130, 246, 0.1);
+  transform: translateY(-2px);
+  background: linear-gradient(135deg, 
+    #ffffff 0%, 
+    #f9fafb 50%,
+    #f7f8fa 100%
+  );
+}
+
+.dark .card-gradient {
+  /* 深色模式：彩色渐变背景 */
+  background: linear-gradient(135deg, 
+    rgba(99, 102, 241, 0.15) 0%, 
+    rgba(139, 92, 246, 0.15) 25%,
+    rgba(236, 72, 153, 0.15) 50%,
+    rgba(251, 146, 60, 0.15) 75%,
+    rgba(59, 130, 246, 0.15) 100%
+  );
+  background-size: 200% 200%;
+  animation: gradientShift 15s ease infinite;
+  border: 1px solid rgba(139, 92, 246, 0.3);
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3), 
+              0 2px 4px -1px rgba(0, 0, 0, 0.2),
+              inset 0 1px 0 rgba(255, 255, 255, 0.1);
+}
+
+.dark .card-gradient::before {
+  display: none;
+}
+
+.dark .card-gradient:hover {
+  border-color: rgba(139, 92, 246, 0.5);
+  box-shadow: 0 10px 15px -3px rgba(139, 92, 246, 0.2),
+              0 4px 6px -2px rgba(139, 92, 246, 0.1),
+              inset 0 1px 0 rgba(255, 255, 255, 0.15);
+  transform: translateY(-2px);
+}
+
+@keyframes gradientShift {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+/* 美化样式 */
+.card {
+  transition: all 0.3s ease;
+}
+
+.card:hover {
+  transform: translateY(-2px);
+}
+
+/* 渐变文字 */
+.gradient-text {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* 平滑滚动 */
+html {
+  scroll-behavior: smooth;
+}
+
+/* PWA全屏模式下的安全区域适配 */
+
+/* 基础定位规则（所有浏览器都适用） */
+header.sticky,
+header.fixed {
+  top: 0;
+}
+
+/* 底部导航栏 - 使用更宽松的选择器匹配Tailwind类 */
+nav.fixed {
+  bottom: 0 !important;
+}
+
+@supports (padding: env(safe-area-inset-top)) {
+  /* 顶部固定元素（如header）- 从屏幕最顶部开始，用padding-top适配安全区域 */
+  /* 使用统一的安全区域方案：最小值20px，最大44px */
+  header.sticky,
+  header.fixed {
+    padding-top: clamp(20px, env(safe-area-inset-top, 20px), 44px);
+  }
+  
+  /* 底部固定元素 - 紧贴屏幕底部，用padding-bottom适配安全区域 */
+  /* 使用统一的安全区域方案：最小值10px，最大34px */
+  nav.fixed {
+    padding-bottom: clamp(10px, env(safe-area-inset-bottom, 10px), 34px);
+  }
+  
+  /* 主内容区域底部padding，避免被底部导航栏遮挡 */
+  main {
+    padding-bottom: 5rem; /* 底部导航栏高度 */
+  }
+  
+  /* 底部安全区域padding（用于预留底部导航栏空间） */
+  .pb-safe {
+    padding-bottom: calc(5rem + env(safe-area-inset-bottom, 0px));
+  }
+  
+  /* 左右安全区域 */
+  .safe-area-x {
+    padding-left: env(safe-area-inset-left, 0px);
+    padding-right: env(safe-area-inset-right, 0px);
+  }
+  
+  /* 阅读器专用安全区域适配 */
+  .reader-safe-area {
+    /* 阅读器全屏模式，确保内容不被边缘遮挡 */
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    padding-left: env(safe-area-inset-left, 0px);
+    padding-right: env(safe-area-inset-right, 0px);
+  }
+  
+  /* 阅读器内容区域高度计算 */
+  .reader-content-area {
+    height: 100vh;
+    max-height: 100vh;
+  }
+}
+
+/* PWA顶部安全区域样式 - 确保与主题色一致 */
+/* 使用class模式控制主题 */
+html:not(.dark), body:not(.dark) {
+  background-color: #f5f7fa; /* 使用柔和的浅灰背景，增强对比度 */
+}
+
+html.dark, body.dark {
+  background-color: #111827; /* bg-gray-900 - 与header保持一致 */
+}
+
+/* 主题色元标签动态更新 - 使用class模式 */
+html.dark {
+  color-scheme: dark;
+}
+
+html:not(.dark) {
+  color-scheme: light;
+}
+
+/* PWA全屏模式优化 */
+@media (display-mode: standalone) {
+  /* PWA模式下的特殊样式 */
+  body {
+    /* 确保顶部安全区域颜色与系统一致 */
+    background-color: var(--bg-primary);
+  }
+  
+  /* 顶部导航栏背景延伸到安全区域 */
+  header {
+    background-color: inherit;
+  }
+  
+  /* 确保整个应用占满视口 */
+  #root {
+    min-height: 100vh;
+    min-height: -webkit-fill-available;
+  }
+  
+  /* iOS PWA模式下的优化 */
+  html {
+    height: -webkit-fill-available;
+  }
+}
+
+/* iOS设备特定优化 */
+@supports (-webkit-touch-callout: none) {
+  /* iOS Safari */
+  body {
+    /* 修复iOS下的高度问题 */
+    min-height: -webkit-fill-available;
+  }
+  
+  #root {
+    min-height: -webkit-fill-available;
+  }
+}
+
+/* 确保内容区域背景色正确 */
+.min-h-screen {
+  background-color: var(--bg-secondary);
+}
+
+/* 亮色模式：页面背景使用更柔和的颜色，增强对比度 */
+html:not(.dark) body {
+  background-color: #f5f7fa;
+}
+
+html:not(.dark) .bg-gray-50 {
+  background-color: #f5f7fa !important;
+}
+
+/* 亮色模式：白色容器在浅灰背景上更突出 */
+html:not(.dark) .bg-white {
+  background-color: #ffffff;
+  box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.03);
+}
+
+/* 亮色模式：增强输入框和表单元素的对比度 */
+html:not(.dark) input,
+html:not(.dark) textarea,
+html:not(.dark) select {
+  background-color: #ffffff;
+  border-color: #d1d5db;
+}
+
+html:not(.dark) input:focus,
+html:not(.dark) textarea:focus,
+html:not(.dark) select:focus {
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+  background-color: #ffffff;
+}
+
+/* 导航栏渐变阴影效果（增强PWA原生感） */
+header.sticky,
+header.fixed {
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+}
+
+/* 底部导航栏渐变阴影效果 */
+nav.fixed {
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.05);
+}
+
+@media (prefers-color-scheme: dark) {
+  nav.fixed {
+    box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.3);
+  }
+}
+
+/* 移动端导航栏美化 - 半透明磨砂效果 */
+/* 适配 iPad 横屏：将断点提高到 1280px，使 iPad 横屏时也使用移动端样式 */
+@media (max-width: 1279px) {
+  /* 移动端顶部导航栏 */
+  header.lg\\:hidden {
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+  }
+  
+  /* 移动端底部导航栏 */
+  nav.lg\\:hidden {
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+  }
+}
+
+/* 默认移动端导航栏高度 */
+.ipad-nav-header {
+  height: 44px;
+  margin-top: -5px;
+}
+
+.ipad-nav-footer {
+  height: 40px;
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+
+.ipad-main-content {
+  padding-bottom: calc(3.5rem + env(safe-area-inset-bottom, 0px));
+}
+
+/* iPad模式导航栏高度增加 */
+/* 适配 iPad 横屏：将断点提高到 1280px */
+@media (min-width: 768px) and (max-width: 1279px) {
+  /* iPad顶部导航栏 - 增加高度 */
+  .ipad-nav-header {
+    height: 56px !important;
+    margin-top: -5px;
+    padding: 0;
+  }
+  
+  /* iPad底部导航栏 - 增加高度 */
+  .ipad-nav-footer {
+    height: 56px !important;
+    padding-top: 8px !important;
+    padding-bottom: 8px !important;
+  }
+  
+  /* iPad主内容区域 - 增加底部padding以适配更高的底部导航栏 */
+  .ipad-main-content {
+    padding-bottom: calc(4.5rem + env(safe-area-inset-bottom, 0px)) !important;
+  }
+  
+  /* iPad底部导航栏图标和文字稍微放大 */
+  .ipad-nav-footer .lucide {
+    width: 1.5rem !important;
+    height: 1.5rem !important;
+  }
+  
+  .ipad-nav-footer span {
+    font-size: 0.75rem !important;
+    margin-top: 0.25rem !important;
+  }
+  
+  /* iPad特殊按钮（阅读按钮）稍微放大 */
+  .ipad-nav-footer button div {
+    width: 2.75rem !important;
+    height: 2.75rem !important;
+  }
+  
+  .ipad-nav-footer button .lucide {
+    width: 1.75rem !important;
+    height: 1.75rem !important;
+  }
+}
+
+/* 阅读器样式 - Kindle风格 */
+#epub-container {
+  width: 100% !important;
+  height: 100% !important;
+  min-height: 600px !important;
+  overflow: hidden;
+  position: relative;
+}
+
+#epub-container iframe {
+  width: 100%;
+  height: 100%;
+  border: none;
+  display: block;
+  pointer-events: auto; /* 确保可以接收点击事件 */
+}
+
+/* EPUB内容区域样式 */
+#epub-container .epub-view {
+  width: 100% !important;
+  max-width: 100% !important;
+  overflow: hidden !important;
+}
+
+#epub-container .epub-view section {
+  width: 100% !important;
+  max-width: 100% !important;
+  box-sizing: border-box !important;
+}
+
+/* EPUB阅读器内容区域 */
+#epub-container .epub-container {
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 2rem;
+}
+
+.pdf-container {
+  padding: 20px;
+  max-width: 900px;
+  margin: 0 auto;
+}
+
+.pdf-container canvas {
+  display: block;
+  margin: 0 auto 20px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  background: white;
+}
+
+/* 书籍详情模态框移动端宽度适配 */
+@media (min-width: 640px) {
+  /* PC端：使用固定最大宽度并居中 */
+  [data-book-detail-modal] {
+    width: 100% !important;
+    max-width: 1280px !important;
+    /* PC端高度：只考虑安全区域和基本边距 */
+    max-height: calc(100vh - max(env(safe-area-inset-top, 0px), 16px) - max(env(safe-area-inset-bottom, 0px), 16px)) !important;
+  }
+}
+
+.txt-reader {
+  padding: 2rem;
+  max-width: 800px;
+  margin: 0 auto;
+  min-height: 100%;
+}
+
+.txt-reader p {
+  margin-bottom: 1.5em;
+  text-indent: 2em;
+  line-height: inherit;
+  text-align: justify;
+}
+
+/* 阅读器工具栏动画 */
+.reader-toolbar {
+  transition: transform 0.3s ease;
+}
+
+.reader-toolbar.hidden {
+  transform: translateY(-100%);
+}
+
+/* 设置弹窗动画 */
+@keyframes slideUp {
+  from {
+    transform: translateY(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+.reading-settings-panel {
+  animation: slideUp 0.3s ease;
+}
+
+.animate-slide-up {
+  animation: slideUp 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+@media (min-width: 768px) {
+  .animate-slide-up {
+    animation: fadeIn 0.25s ease-out;
+  }
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* 隐藏滚动条但保持滚动功能 */
+.hide-scrollbar {
+  -ms-overflow-style: none;  /* IE and Edge */
+  scrollbar-width: none;  /* Firefox */
+}
+
+.hide-scrollbar::-webkit-scrollbar {
+  display: none;  /* Chrome, Safari and Opera */
+}
+
+/* 阅读器背景纹理效果 */
+.reader-background-texture {
+  position: relative;
+  isolation: isolate;
+}
+
+.reader-background-texture::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  pointer-events: none;
+  z-index: 1;
+  opacity: 0.015;
+  background-image: 
+    repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 2px,
+      rgba(0, 0, 0, 0.02) 2px,
+      rgba(0, 0, 0, 0.02) 4px
+    );
+  background-size: 100% 100%;
+  mix-blend-mode: multiply;
+}
+
+/* 深色模式下的纹理效果 */
+.reader-background-texture[data-theme="dark"]::before {
+  opacity: 0.01;
+  background-image: 
+    repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 2px,
+      rgba(255, 255, 255, 0.015) 2px,
+      rgba(255, 255, 255, 0.015) 4px
+    );
+  mix-blend-mode: screen;
+}
+
+/* 阅读内容容器样式优化 */
+.reader-content-wrapper {
+  position: relative;
+  z-index: 2;
+}
+
+/* 隐藏滚动条但保持滚动功能 */
+.scrollbar-hide {
+  /* Firefox */
+  scrollbar-width: none;
+  /* IE 和 Edge */
+  -ms-overflow-style: none;
+}
+
+.scrollbar-hide::-webkit-scrollbar {
+  /* Chrome, Safari, Opera */
+  display: none;
+}
+
+/* 全局隐藏滚动条但保持滚动功能 */
+.hide-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.hide-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+

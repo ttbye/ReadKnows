@@ -1,0 +1,46 @@
+{
+  "name": "readknows-frontend",
+  "version": "0.2025.12",
+  "author": "ttbye",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build && node scripts/format-manifest.js",
+    "preview": "vite preview",
+    "type-check": "tsc --noEmit --skipLibCheck"
+  },
+  "dependencies": {
+    "@tailwindcss/typography": "^0.5.19",
+    "axios": "^1.6.2",
+    "epubjs": "^0.3.88",
+    "jszip": "^3.10.1",
+    "lucide-react": "^0.303.0",
+    "pdfjs-dist": "^3.11.174",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-epub-viewer": "^0.2.0",
+    "react-hot-toast": "^2.4.1",
+    "react-markdown": "^10.1.0",
+    "react-pdf": "^10.2.0",
+    "react-reader": "^2.0.15",
+    "react-router-dom": "^6.21.1",
+    "rehype-raw": "^7.0.0",
+    "remark-gfm": "^4.0.1",
+    "zustand": "^4.4.7"
+  },
+  "optionalDependencies": {
+    "canvas": "^2.11.2"
+  },
+  "devDependencies": {
+    "@types/react": "^18.2.45",
+    "@types/react-dom": "^18.2.18",
+    "@vitejs/plugin-react": "^4.2.1",
+    "autoprefixer": "^10.4.16",
+    "postcss": "^8.4.32",
+    "tailwindcss": "^3.4.0",
+    "typescript": "^5.3.3",
+    "vite": "^5.0.8",
+    "vite-plugin-pwa": "^0.17.4"
+  }
+}
