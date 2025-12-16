@@ -21,6 +21,10 @@ backend/covers/
 backend/fonts/
 backend/import/
 
+# 所有 books 目录（无论位置）
+**/books/
+books/
+
 # 环境变量
 .env
 .env.local
