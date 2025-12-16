@@ -33,8 +33,9 @@ export interface ReadingSettings {
   clickToTurn: boolean;
   showBottomInfoBar: boolean; // 是否显示底部信息栏
   readerWidth: 'full' | 'centered'; // 阅读区域宽度：全宽或居中（仅PC端）
-  pdfAutoCropMargins?: boolean; // PDF自动裁剪白边（默认true）
-  pdfRenderQuality?: 'standard' | 'high' | 'ultra'; // PDF渲染质量（默认high）
+  pdfAutoCropMargins?: boolean; // PDF自动裁剪白边（默认false）
+  pdfRenderQuality?: 'standard' | 'high' | 'ultra'; // PDF渲染质量（默认ultra）
+  pdfAutoFit?: boolean; // PDF自适应屏幕（默认false）
   keyboardShortcuts: {
     prev: string;
     next: string;
@@ -109,8 +110,9 @@ export const defaultSettings: ReadingSettings = {
   clickToTurn: true,
   showBottomInfoBar: true,
   readerWidth: 'centered',
-  pdfAutoCropMargins: true, // PDF默认启用自动裁剪白边
-  pdfRenderQuality: 'high', // PDF默认使用高质量渲染
+  pdfAutoCropMargins: false, // PDF默认不启用自动裁剪白边
+  pdfRenderQuality: 'ultra', // PDF默认使用最佳清晰度渲染
+  pdfAutoFit: false, // PDF默认不自适应屏幕
   keyboardShortcuts: {
     prev: 'ArrowLeft',
     next: 'ArrowRight',
