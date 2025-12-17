@@ -162,6 +162,38 @@ class OfflineDataCache {
   }
 
   /**
+   * 按 URL 前缀批量删除缓存（用于上传/新增后让列表强制刷新）
+   */
+  async deleteByPrefix(urlPrefix: string): Promise<void> {
+    await this.init();
+
+    return new Promise((resolve, reject) => {
+      const transaction = this.db!.transaction([STORE_NAME], 'readwrite');
+      const store = transaction.objectStore(STORE_NAME);
+      const request = store.openCursor();
+
+      request.onsuccess = (event) => {
+        const cursor = (event.target as IDBRequest).result as IDBCursorWithValue | null;
+        if (!cursor) {
+          resolve();
+          return;
+        }
+
+        const entry = cursor.value as CacheEntry;
+        if (typeof entry?.key === 'string' && entry.key.startsWith(urlPrefix)) {
+          cursor.delete();
+        }
+        cursor.continue();
+      };
+
+      request.onerror = () => {
+        console.error('OfflineDataCache: 前缀删除失败', request.error);
+        reject(request.error);
+      };
+    });
+  }
+
+  /**
    * 清理过期缓存
    */
   async cleanExpired(): Promise<void> {

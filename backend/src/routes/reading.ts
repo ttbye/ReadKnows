@@ -82,10 +82,11 @@ router.post('/progress', authenticateToken, async (req: AuthRequest, res) => {
       const serverUpdatedAt = new Date(existing.updated_at).getTime();
       const clientTime = clientTimestamp ? new Date(clientTimestamp).getTime() : Date.now();
       
-      // 如果服务器进度更新且进度值更大，可能存在冲突
-      // 或者服务器更新时间比客户端时间新超过5秒（允许网络延迟）
+      // 冲突判断：
+      // 1) 如果服务器进度明显更大（跨设备更新），就提示客户端是否要跳转
+      // 2) 时间戳仅用于减少误判（允许网络延迟），但不再作为必须条件
       const timeDiff = serverUpdatedAt - clientTime;
-      const hasConflict = timeDiff > 5000 && existing.progress > progressValue;
+      const hasConflict = existing.progress > progressValue + 0.01 && (timeDiff > -30000); // 允许客户端时间稍新（最多30s）
       
       if (hasConflict) {
         // 返回冲突信息，让客户端决定
@@ -94,6 +95,7 @@ router.post('/progress', authenticateToken, async (req: AuthRequest, res) => {
           conflict: true,
           serverProgress: {
             progress: existing.progress,
+            currentPosition: existing.current_position || null,
             currentPage: existing.current_page || 1,
             totalPages: existing.total_pages || 1,
             chapterIndex: existing.chapter_index || 0,
@@ -114,14 +116,21 @@ router.post('/progress', authenticateToken, async (req: AuthRequest, res) => {
       try {
         // 限制 currentPosition 长度（SQLite TEXT 理论上无限制，但为安全起见限制长度）
         const maxCfiLength = 10000; // 10KB 应该足够存储 CFI
-        const safeCurrentPosition = currentPosition && currentPosition.length > maxCfiLength 
-          ? currentPosition.substring(0, maxCfiLength) 
-          : (currentPosition || null);
+        // ⚠️ 关键修复：
+        // currentPosition 为空/未传时，绝对不要覆盖数据库里已有的 current_position（否则会导致重新打开只能回到章节开头）
+        const normalizedCurrentPosition =
+          typeof currentPosition === 'string' && currentPosition.trim().length > 0
+            ? currentPosition
+            : null;
+        const safeCurrentPosition =
+          normalizedCurrentPosition && normalizedCurrentPosition.length > maxCfiLength
+            ? normalizedCurrentPosition.substring(0, maxCfiLength)
+            : normalizedCurrentPosition;
         
         const updateStmt = db.prepare(`
         UPDATE reading_progress 
         SET progress = ?, 
-            current_position = ?, 
+            current_position = COALESCE(?, current_position), 
             current_page = ?,
             total_pages = ?,
             chapter_index = ?,

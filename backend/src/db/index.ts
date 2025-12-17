@@ -434,6 +434,35 @@ export function initDatabase() {
     console.error('创建笔记索引错误:', e);
   }
 
+  // EPUB 高亮标注表（基于 CFI range）
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS highlights (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      book_id TEXT NOT NULL,
+      cfi_range TEXT NOT NULL,
+      selected_text TEXT,
+      color TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      deleted_at DATETIME,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE CASCADE
+    )
+  `);
+
+  // 高亮索引
+  try {
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_highlights_user_id ON highlights(user_id);
+      CREATE INDEX IF NOT EXISTS idx_highlights_book_id ON highlights(book_id);
+      CREATE INDEX IF NOT EXISTS idx_highlights_user_book ON highlights(user_id, book_id);
+      CREATE INDEX IF NOT EXISTS idx_highlights_updated_at ON highlights(updated_at DESC);
+    `);
+  } catch (e) {
+    console.error('创建高亮索引错误:', e);
+  }
+
   // 字体表
   db.exec(`
     CREATE TABLE IF NOT EXISTS fonts (
@@ -480,7 +509,7 @@ export function initDatabase() {
     const existingCategories = db.prepare('SELECT COUNT(*) as count FROM book_categories').get() as any;
     if (existingCategories.count === 0) {
       const defaultCategories = [
-        '未分类', '小说', '文学', '历史', '哲学', '网络小说', '武侠小说',
+        '未分类', '笔记', '小说', '文学', '历史', '哲学', '网络小说', '武侠小说',
         '传记', '科技', '计算机', '编程', '经济', '管理', '心理学',
         '社会科学', '自然科学', '艺术', '教育', '儿童读物', '漫画'
       ];
@@ -492,6 +521,16 @@ export function initDatabase() {
     }
   } catch (e) {
     console.error('初始化默认书籍类型失败:', e);
+  }
+
+  // 兼容迁移：确保“笔记”分类存在（即使之前已经初始化过）
+  try {
+    const noteCat = db.prepare('SELECT id FROM book_categories WHERE name = ?').get('笔记') as any;
+    if (!noteCat) {
+      db.prepare('INSERT OR IGNORE INTO book_categories (id, name, display_order) VALUES (?, ?, ?)').run(uuidv4(), '笔记', 0);
+    }
+  } catch (e) {
+    console.error('确保笔记分类存在失败:', e);
   }
 
   // 系统设置表

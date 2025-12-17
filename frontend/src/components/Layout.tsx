@@ -547,8 +547,11 @@ export default function Layout({ children }: LayoutProps) {
         </div>
       </header>
 
-      {/* 主内容区域 - 底部预留导航栏高度 + 额外空间避免内容被遮挡 */}
-      <main className="flex-1 container mx-auto px-4 py-6 lg:py-8 overflow-y-auto hide-scrollbar ipad-main-content">
+      {/* 主内容区域
+          说明：不要在 main 上使用 overflow-y-auto 作为滚动容器，否则 iOS/PWA 的弹性拖拽会让 sticky header 看起来“乱动”。
+          让页面滚动回到 body，sticky 才能稳定固定在顶部。
+      */}
+      <main className="flex-1 container mx-auto px-4 py-6 lg:py-8 hide-scrollbar ipad-main-content">
         {children}
       </main>
 

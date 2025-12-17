@@ -23,6 +23,7 @@ import usersRoutes from './routes/users';
 import ipManagementRoutes from './routes/ipManagement';
 import aiRoutes from './routes/ai';
 import notesRoutes from './routes/notes';
+import highlightsRoutes from './routes/highlights';
 import importRoutes from './routes/import';
 import { startFileWatcher, stopFileWatcher, getWatcherStatus, triggerManualScan } from './utils/fileWatcher';
 
@@ -506,6 +507,7 @@ app.use('/api/users', usersRoutes);
 app.use('/api/ip', ipManagementRoutes);
 app.use('/api/ai', aiRoutes);
 app.use('/api/notes', notesRoutes);
+app.use('/api/highlights', highlightsRoutes);
 app.use('/api/import', importRoutes);
 app.use('/opds', opdsRoutes);
 

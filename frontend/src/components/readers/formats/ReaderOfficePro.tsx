@@ -190,6 +190,150 @@ export default function ReaderOfficePro({
     },
   }[settings.theme];
 
+  const fileType = book.file_type?.toLowerCase();
+  const isMarkdown = fileType === 'md';
+
+  // 记录滚动位置（用于 flush / 字号变化后恢复）
+  const lastScrollTopRef = useRef<number>(0);
+  const lastProgressRef = useRef<number>(0);
+
+  // 让 MD 的阅读体验更接近 EPUB：顶部导航由 ReaderContainer 统一管理
+  // 点击内容区域时，切换 ReaderContainer 的导航栏显示/隐藏
+  const handleToggleNavigation = useCallback(() => {
+    try {
+      const fn = (window as any).__toggleReaderNavigation;
+      if (typeof fn === 'function') fn();
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  // MD 默认字号兜底：避免过小导致难以阅读（仅在非常小的值时矫正）
+  useEffect(() => {
+    if (!isMarkdown) return;
+    const fs = typeof settings.fontSize === 'number' ? settings.fontSize : 0;
+    if (fs > 0 && fs < 16) {
+      onSettingsChange({ ...settings, fontSize: 18 });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isMarkdown]);
+
+  // MD：按滚动进度记录/恢复阅读位置（跨设备/跨字号比“页码”稳定）
+  useEffect(() => {
+    if (!isMarkdown) return;
+    const el = contentRef.current;
+    if (!el) return;
+
+    // 恢复：优先 scrollTop（px），其次 progress（百分比）
+    const restore = () => {
+      try {
+        const maxScroll = Math.max(1, el.scrollHeight - el.clientHeight);
+        const byPx = typeof initialPosition?.scrollTop === 'number' ? initialPosition!.scrollTop : 0;
+        const byProg = typeof initialPosition?.progress === 'number' ? initialPosition!.progress : 0;
+
+        let target = 0;
+        if (byPx && byPx > 0) {
+          target = Math.max(0, Math.min(maxScroll, byPx));
+        } else if (byProg && byProg > 0) {
+          target = Math.max(0, Math.min(maxScroll, Math.round(byProg * maxScroll)));
+        }
+
+        el.scrollTop = target;
+        lastScrollTopRef.current = el.scrollTop;
+        lastProgressRef.current = maxScroll > 0 ? Math.min(1, Math.max(0, el.scrollTop / maxScroll)) : 0;
+      } catch {
+        // ignore
+      }
+    };
+
+    // 内容加载后下一帧恢复，确保 scrollHeight 已稳定
+    const t = window.setTimeout(restore, 0);
+    return () => window.clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isMarkdown, content, settings.fontSize, settings.lineHeight, settings.fontFamily]);
+
+  useEffect(() => {
+    if (!isMarkdown) return;
+    const el = contentRef.current;
+    if (!el) return;
+
+    const emit = () => {
+      try {
+        const maxScroll = Math.max(1, el.scrollHeight - el.clientHeight);
+        const scrollTop = el.scrollTop || 0;
+        const progress = Math.min(1, Math.max(0, scrollTop / maxScroll));
+        lastScrollTopRef.current = scrollTop;
+        lastProgressRef.current = progress;
+        onProgressChange(progress, {
+          currentPage: 1,
+          totalPages: 1,
+          progress,
+          scrollTop,
+          currentLocation: `mdscroll:${Math.round(progress * 100000)}`, // 仅用于调试/可扩展
+        });
+      } catch {
+        // ignore
+      }
+    };
+
+    let raf = 0;
+    const onScroll = () => {
+      if (raf) cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(emit);
+    };
+    el.addEventListener('scroll', onScroll, { passive: true });
+
+    // 初次上报一次（进入书籍即有进度）
+    const t = window.setTimeout(emit, 50);
+
+    // flush：切后台/关闭时立即上报，避免回退
+    const flushNow = () => emit();
+    const onVis = () => {
+      if (document.visibilityState === 'hidden') flushNow();
+    };
+    const onPageHide = () => flushNow();
+    document.addEventListener('visibilitychange', onVis);
+    window.addEventListener('pagehide', onPageHide);
+
+    return () => {
+      window.clearTimeout(t);
+      el.removeEventListener('scroll', onScroll as any);
+      if (raf) cancelAnimationFrame(raf);
+      document.removeEventListener('visibilitychange', onVis);
+      window.removeEventListener('pagehide', onPageHide);
+      flushNow();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isMarkdown, content, onProgressChange]);
+
+  // 暴露“跳转到指定进度/位置”给外部（供跨设备进度跳转）
+  useEffect(() => {
+    if (!isMarkdown) return;
+    (window as any).__readerGoToPosition = (pos: any) => {
+      try {
+        const el = contentRef.current;
+        if (!el) return false;
+        const maxScroll = Math.max(1, el.scrollHeight - el.clientHeight);
+        const scrollTop = typeof pos?.scrollTop === 'number' ? pos.scrollTop : null;
+        const progress = typeof pos?.progress === 'number' ? pos.progress : null;
+        let target = 0;
+        if (scrollTop != null && !isNaN(scrollTop)) {
+          target = Math.max(0, Math.min(maxScroll, scrollTop));
+        } else if (progress != null && !isNaN(progress)) {
+          target = Math.max(0, Math.min(maxScroll, Math.round(progress * maxScroll)));
+        }
+        el.scrollTop = target;
+        return true;
+      } catch {
+        // ignore
+      }
+      return false;
+    };
+    return () => {
+      delete (window as any).__readerGoToPosition;
+    };
+  }, [isMarkdown, content]);
+
   // 隐藏/显示底部栏
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -246,26 +390,32 @@ export default function ReaderOfficePro({
   }
 
   return (
-    <div 
+    <div
       ref={containerRef}
       className="relative h-full w-full overflow-hidden"
-      style={{ 
-        backgroundColor: themeStyles.bg, 
+      style={{
+        backgroundColor: themeStyles.bg,
         color: themeStyles.text,
-        // 确保内容区域不会被安全区域遮挡（左右边距）
         paddingLeft: 'env(safe-area-inset-left, 0px)',
         paddingRight: 'env(safe-area-inset-right, 0px)',
         boxSizing: 'border-box',
       }}
-      onClick={() => setShowBottomBar(!showBottomBar)}
+      onClick={() => {
+        // MD：交给 ReaderContainer 统一控制顶部/侧栏等
+        if (isMarkdown) {
+          handleToggleNavigation();
+        } else {
+          // 其他 Office：保留原行为
+          setShowBottomBar(!showBottomBar);
+        }
+      }}
     >
-      {/* 顶部栏 */}
-      {showBottomBar && (
-        <div 
+      {/* 非 MD：保留原有顶部栏 */}
+      {!isMarkdown && showBottomBar && (
+        <div
           className="absolute top-0 left-0 right-0 z-10 flex items-center justify-between p-4"
-          style={{ 
+          style={{
             backgroundColor: themeStyles.bg,
-            // 顶部安全区域
             paddingTop: 'env(safe-area-inset-top, 0px)',
             paddingLeft: 'env(safe-area-inset-left, 0px)',
             paddingRight: 'env(safe-area-inset-right, 0px)',
@@ -291,188 +441,192 @@ export default function ReaderOfficePro({
       )}
 
       {/* 内容区域 */}
-      <div 
+      <div
         ref={contentRef}
-        className="h-full overflow-y-auto p-4 md:p-8 lg:p-12"
-        style={{ 
-          paddingTop: showBottomBar ? 'calc(80px + env(safe-area-inset-top, 0px))' : 'env(safe-area-inset-top, 0px)',
-          paddingBottom: showBottomBar ? 'calc(80px + env(safe-area-inset-bottom, 0px))' : 'env(safe-area-inset-bottom, 0px)',
-          paddingLeft: 'env(safe-area-inset-left, 0px)',
-          paddingRight: 'env(safe-area-inset-right, 0px)',
+        className={`h-full overflow-y-auto ${
+          isMarkdown
+            ? 'px-4 sm:px-6 md:px-10 py-6 sm:py-7 md:py-8'
+            : 'p-4 md:p-8 lg:p-12'
+        }`}
+        style={{
+          // ReaderContainer 已处理顶部工具栏高度与安全区；这里不再重复 top padding
+          paddingTop: isMarkdown
+            ? '16px'
+            : showBottomBar
+              ? 'calc(80px + env(safe-area-inset-top, 0px))'
+              : 'env(safe-area-inset-top, 0px)',
+          paddingBottom: isMarkdown
+            ? '32px'
+            : showBottomBar
+              ? 'calc(80px + env(safe-area-inset-bottom, 0px))'
+              : 'env(safe-area-inset-bottom, 0px)',
+          // 给 MD 一个稳定的左右页边距（并兼容刘海/圆角屏 safe-area）
+          paddingLeft: isMarkdown ? 'max(env(safe-area-inset-left, 0px), 16px)' : 'env(safe-area-inset-left, 0px)',
+          paddingRight: isMarkdown ? 'max(env(safe-area-inset-right, 0px), 16px)' : 'env(safe-area-inset-right, 0px)',
         }}
       >
-        <div 
-          className="max-w-4xl mx-auto prose prose-lg dark:prose-invert rounded-2xl p-6 md:p-8 lg:p-10 shadow-xl"
+        <div
+          className={`${isMarkdown ? 'max-w-3xl' : 'max-w-4xl'} mx-auto`}
           style={{
-            fontSize: `${settings.fontSize}px`,
             fontFamily: settings.fontFamily,
+            fontSize: `${settings.fontSize}px`,
             lineHeight: settings.lineHeight,
             color: themeStyles.text,
-            backgroundColor: themeStyles.contentBg,
-            backdropFilter: 'blur(20px) saturate(180%)',
-            WebkitBackdropFilter: 'blur(20px) saturate(180%)',
-            border: `1px solid ${themeStyles.contentBorder}`,
-            boxShadow: settings.theme === 'dark' 
-              ? '0 20px 60px rgba(0, 0, 0, 0.3), 0 8px 24px rgba(0, 0, 0, 0.2)'
-              : '0 20px 60px rgba(0, 0, 0, 0.1), 0 8px 24px rgba(0, 0, 0, 0.08)',
           }}
         >
-          {/* 文档标题 */}
-          <div 
-            className="mb-8 pb-4 border-b"
-            style={{ borderColor: themeStyles.contentBorder }}
-          >
-            <div className="flex items-center gap-3 mb-2">
-              {getFileIcon()}
-              <h1 className="text-3xl font-bold m-0" style={{ color: themeStyles.text }}>
-                {book.title}
-              </h1>
-            </div>
-            <p className="text-sm opacity-70" style={{ color: themeStyles.text }}>
-              {getFileTypeName()}
-            </p>
-          </div>
-
-          {/* 文档内容 */}
-          {contentType === 'markdown' ? (
-            <div 
-              className="prose prose-lg dark:prose-invert max-w-none"
+          {/* 非 MD：保留文档标题卡片；MD：更接近 EPUB 的“纯阅读” */}
+          {!isMarkdown && (
+            <div
+              className="prose prose-lg dark:prose-invert rounded-2xl p-6 md:p-8 lg:p-10 shadow-xl"
               style={{
-                fontFamily: settings.fontFamily,
-                fontSize: `${settings.fontSize}px`,
-                lineHeight: settings.lineHeight,
                 color: themeStyles.text,
+                backgroundColor: themeStyles.contentBg,
+                backdropFilter: 'blur(20px) saturate(180%)',
+                WebkitBackdropFilter: 'blur(20px) saturate(180%)',
+                border: `1px solid ${themeStyles.contentBorder}`,
+                boxShadow:
+                  settings.theme === 'dark'
+                    ? '0 20px 60px rgba(0, 0, 0, 0.3), 0 8px 24px rgba(0, 0, 0, 0.2)'
+                    : '0 20px 60px rgba(0, 0, 0, 0.1), 0 8px 24px rgba(0, 0, 0, 0.08)',
+              }}
+            >
+              <div className="mb-8 pb-4 border-b" style={{ borderColor: themeStyles.contentBorder }}>
+                <div className="flex items-center gap-3 mb-2">
+                  {getFileIcon()}
+                  <h1 className="text-3xl font-bold m-0" style={{ color: themeStyles.text }}>
+                    {book.title}
+                  </h1>
+                </div>
+                <p className="text-sm opacity-70" style={{ color: themeStyles.text }}>
+                  {getFileTypeName()}
+                </p>
+              </div>
+
+              {/* 非 MD 的内容渲染 */}
+              {contentType === 'markdown' ? (
+                <div
+                  className="prose prose-lg dark:prose-invert max-w-none"
+                  style={{
+                    fontFamily: settings.fontFamily,
+                    fontSize: `${settings.fontSize}px`,
+                    lineHeight: settings.lineHeight,
+                    color: themeStyles.text,
+                  }}
+                >
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
+                </div>
+              ) : contentType === 'html' ? (
+                <div
+                  className="docx-content"
+                  style={{
+                    fontFamily: settings.fontFamily,
+                    fontSize: `${settings.fontSize}px`,
+                    lineHeight: settings.lineHeight,
+                    color: themeStyles.text,
+                  }}
+                >
+                  <div dangerouslySetInnerHTML={{ __html: content }} />
+                </div>
+              ) : (
+                <div
+                  className="whitespace-pre-wrap break-words"
+                  style={{
+                    fontFamily: settings.fontFamily,
+                    fontSize: `${settings.fontSize}px`,
+                    lineHeight: settings.lineHeight,
+                    color: themeStyles.text,
+                  }}
+                >
+                  {content.split('\n').map((line, index) => (
+                    <p key={index} className="mb-2" style={{ color: themeStyles.text }}>
+                      {line || '\u00A0'}
+                    </p>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* MD：用更轻量的 prose，背景直接跟随主题（更接近 EPUB） */}
+          {isMarkdown && (
+            <div
+              className="prose prose-base md:prose-lg dark:prose-invert max-w-none rounded-2xl px-5 sm:px-6 md:px-8 py-6 sm:py-7 md:py-8"
+              style={{
+                color: themeStyles.text,
+                backgroundColor: settings.theme === 'dark' ? 'rgba(17, 24, 39, 0.35)' : 'rgba(255, 255, 255, 0.65)',
+                border: `1px solid ${themeStyles.contentBorder}`,
+                backdropFilter: 'blur(14px) saturate(160%)',
+                WebkitBackdropFilter: 'blur(14px) saturate(160%)',
               }}
             >
               <style>{`
                 .prose {
                   color: ${themeStyles.text} !important;
+                  max-width: none;
+                  line-height: ${settings.lineHeight};
                 }
                 .prose h1, .prose h2, .prose h3, .prose h4, .prose h5, .prose h6 {
                   color: ${themeStyles.text} !important;
+                  letter-spacing: -0.01em;
                 }
+                .prose h1 {
+                  font-size: 1.8em;
+                  line-height: 1.2;
+                  margin-top: 0.2em;
+                  margin-bottom: 0.6em;
+                }
+                .prose h2 { margin-top: 1.4em; margin-bottom: 0.6em; }
+                .prose h3 { margin-top: 1.2em; margin-bottom: 0.5em; }
                 .prose p, .prose li, .prose td, .prose th {
                   color: ${themeStyles.text} !important;
                 }
+                .prose p { margin-top: 0.65em; margin-bottom: 0.65em; }
+                .prose ul, .prose ol { margin-top: 0.6em; margin-bottom: 0.9em; }
+                .prose li { margin-top: 0.25em; margin-bottom: 0.25em; }
+                .prose hr { border-color: ${themeStyles.contentBorder}; opacity: 0.8; }
+                .prose a { color: ${settings.theme === 'dark' ? '#60a5fa' : '#2563eb'}; text-decoration: none; }
+                .prose a:hover { text-decoration: underline; }
                 .prose code {
-                  background-color: ${settings.theme === 'dark' ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.05)'};
+                  background-color: ${settings.theme === 'dark' ? 'rgba(255, 255, 255, 0.10)' : 'rgba(0, 0, 0, 0.06)'};
                   color: ${themeStyles.text};
+                  padding: 0.15em 0.35em;
+                  border-radius: 0.4em;
                 }
                 .prose pre {
-                  background-color: ${settings.theme === 'dark' ? 'rgba(0, 0, 0, 0.3)' : 'rgba(0, 0, 0, 0.05)'};
+                  background-color: ${settings.theme === 'dark' ? 'rgba(0, 0, 0, 0.35)' : 'rgba(0, 0, 0, 0.06)'};
                   border: 1px solid ${themeStyles.contentBorder};
+                  border-radius: 0.9em;
+                  padding: 0.95em 1.05em;
                 }
+                .prose blockquote {
+                  border-left-color: ${settings.theme === 'dark' ? 'rgba(255,255,255,0.20)' : 'rgba(0,0,0,0.15)'};
+                  background: ${settings.theme === 'dark' ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)'};
+                  border-radius: 0.75em;
+                  padding: 0.75em 0.9em;
+                }
+                .prose img { border-radius: 0.75em; }
+                .prose table { font-size: 0.95em; }
               `}</style>
               <ReactMarkdown
                 remarkPlugins={[remarkGfm]}
                 components={{
-                  // 自定义表格样式
                   table: ({ children }: any) => (
-                    <div className="overflow-x-auto my-4 rounded-lg" style={{ 
-                      border: `1px solid ${themeStyles.contentBorder}`,
-                    }}>
-                      <table className="min-w-full border-collapse" style={{
-                        borderColor: themeStyles.contentBorder,
-                      }}>
-                        {children}
-                      </table>
+                    <div className="overflow-x-auto my-4 rounded-lg" style={{ border: `1px solid ${themeStyles.contentBorder}` }}>
+                      <table className="min-w-full border-collapse">{children}</table>
                     </div>
-                  ),
-                  thead: ({ children }: any) => (
-                    <thead style={{ 
-                      backgroundColor: settings.theme === 'dark' 
-                        ? 'rgba(255, 255, 255, 0.1)' 
-                        : 'rgba(0, 0, 0, 0.05)',
-                    }}>
-                      {children}
-                    </thead>
-                  ),
-                  tbody: ({ children }: any) => (
-                    <tbody>{children}</tbody>
-                  ),
-                  tr: ({ children }: any) => (
-                    <tr style={{ borderColor: themeStyles.contentBorder }}>
-                      {children}
-                    </tr>
-                  ),
-                  th: ({ children }: any) => (
-                    <th 
-                      className="px-4 py-2 text-left font-semibold"
-                      style={{
-                        borderColor: themeStyles.contentBorder,
-                        color: themeStyles.text,
-                      }}
-                    >
-                      {children}
-                    </th>
-                  ),
-                  td: ({ children }: any) => (
-                    <td 
-                      className="px-4 py-2"
-                      style={{
-                        borderColor: themeStyles.contentBorder,
-                        color: themeStyles.text,
-                      }}
-                    >
-                      {children}
-                    </td>
                   ),
                 }}
               >
                 {content}
               </ReactMarkdown>
             </div>
-          ) : contentType === 'html' ? (
-            <div 
-              className="docx-content"
-              style={{
-                fontFamily: settings.fontFamily,
-                fontSize: `${settings.fontSize}px`,
-                lineHeight: settings.lineHeight,
-                color: themeStyles.text,
-              }}
-            >
-              <style>{`
-                .docx-content * {
-                  color: ${themeStyles.text} !important;
-                }
-                .docx-content table {
-                  border-color: ${themeStyles.contentBorder} !important;
-                }
-                .docx-content table th {
-                  background-color: ${settings.theme === 'dark' 
-                    ? 'rgba(255, 255, 255, 0.1)' 
-                    : 'rgba(0, 0, 0, 0.05)'} !important;
-                }
-                .docx-content table td {
-                  border-color: ${themeStyles.contentBorder} !important;
-                }
-              `}</style>
-              <div dangerouslySetInnerHTML={{ __html: content }} />
-            </div>
-          ) : (
-            <div 
-              className="whitespace-pre-wrap break-words"
-              style={{
-                fontFamily: settings.fontFamily,
-                fontSize: `${settings.fontSize}px`,
-                lineHeight: settings.lineHeight,
-                color: themeStyles.text,
-              }}
-            >
-              {content.split('\n').map((line, index) => (
-                <p key={index} className="mb-2" style={{ color: themeStyles.text }}>
-                  {line || '\u00A0'}
-                </p>
-              ))}
-            </div>
           )}
         </div>
       </div>
 
-      {/* 底部提示 */}
-      {!showBottomBar && (
-        <div 
+      {/* 非 MD：底部提示保留 */}
+      {!isMarkdown && !showBottomBar && (
+        <div
           className="absolute left-1/2 transform -translate-x-1/2 text-xs opacity-50"
           style={{
             bottom: 'calc(16px + env(safe-area-inset-bottom, 0px))',

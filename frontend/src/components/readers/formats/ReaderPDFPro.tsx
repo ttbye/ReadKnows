@@ -624,9 +624,13 @@ export default function ReaderPDFPro({
             canvas.width = renderViewport.width;
             canvas.height = renderViewport.height;
             
-            // 通过CSS控制显示尺寸（保持原显示尺寸）
+            // 通过CSS控制显示尺寸
+            // 注意：移动端/PWA 下 canvas 可能受 max-width:100% 约束导致宽度被压缩；
+            // 若此时仍强制设置固定 height(px)，会造成纵向拉伸变形。
+            // 因此只固定宽度，height 使用 auto 以保持纵横比。
             canvas.style.width = `${displayWidth}px`;
-            canvas.style.height = `${displayHeight}px`;
+            canvas.style.maxWidth = '100%';
+            canvas.style.height = 'auto';
             
             // 清空canvas
             ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -672,9 +676,10 @@ export default function ReaderPDFPro({
               // 调整主canvas尺寸并显示裁剪后的内容（保持高分辨率）
               canvas.width = cropWidth;
               canvas.height = cropHeight;
-              // 显示尺寸保持不变
+              // 显示尺寸保持不变（同上：height 用 auto 防止移动端被压缩宽度时变形）
               canvas.style.width = `${displayWidth}px`;
-              canvas.style.height = `${displayHeight}px`;
+              canvas.style.maxWidth = '100%';
+              canvas.style.height = 'auto';
               ctx.clearRect(0, 0, canvas.width, canvas.height);
               ctx.drawImage(croppedCanvas, 0, 0);
             }
@@ -725,7 +730,8 @@ export default function ReaderPDFPro({
       const displayWidth = displayViewport.width;
       const displayHeight = displayViewport.height;
       canvas.style.width = `${displayWidth}px`;
-      canvas.style.height = `${displayHeight}px`;
+      canvas.style.maxWidth = '100%';
+      canvas.style.height = 'auto';
       
       const renderContext = {
         canvasContext: ctx,
@@ -1028,8 +1034,8 @@ export default function ReaderPDFPro({
       distance: 0,
     };
     
-    // 移动端PWA模式：在中心区域长按显示导航栏
-    if (isMobile && isPWA && isInCenterArea) {
+    // 移动端：在中心区域长按显示导航栏（PWA/浏览器保持一致）
+    if (isMobile && isInCenterArea) {
       longPressTimerRef.current = setTimeout(() => {
         showBars();
         // 触觉反馈（如果支持）
@@ -1038,7 +1044,7 @@ export default function ReaderPDFPro({
         }
       }, longPressThreshold);
     }
-  }, [isMobile, isPWA, showBars]);
+  }, [isMobile, showBars]);
 
   const handleTouchMove = useCallback((e: React.TouchEvent) => {
     // 双指捏合缩放处理
@@ -1379,6 +1385,26 @@ export default function ReaderPDFPro({
       delete (window as any).__readerPageTurn;
     };
   }, [turnPage]);
+
+  // 暴露“跳转到指定进度/页码”给外部（供跨设备进度跳转）
+  useEffect(() => {
+    (window as any).__readerGoToPosition = (pos: any) => {
+      try {
+        const p = pos?.currentPage;
+        if (typeof p === 'number' && !isNaN(p)) {
+          const target = Math.max(1, Math.min(totalPages || 1, Math.round(p)));
+          setCurrentPage(target);
+          return true;
+        }
+      } catch {
+        // ignore
+      }
+      return false;
+    };
+    return () => {
+      delete (window as any).__readerGoToPosition;
+    };
+  }, [totalPages]);
 
   const themeStyles = {
     light: { bg: '#ffffff', text: '#000000', border: '#e0e0e0' },

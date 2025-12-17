@@ -18,14 +18,20 @@ import ReadingSettingsPanel from './ReadingSettingsPanel';
 import NotesPanel from './NotesPanel';
 import TextSelectionToolbar from './TextSelectionToolbar';
 import CreateNoteModal from './CreateNoteModal';
+import toast from 'react-hot-toast';
+import { useAuthStore } from '../../store/authStore';
+import { addOrUpdateLocalHighlight, deleteLocalHighlight, generateHighlightId, getLocalHighlights, hasLocalHighlight, refreshHighlightsFromServer, syncHighlightQueue } from '../../utils/highlights';
+import { useNetworkStatus } from '../../hooks/useNetworkStatus';
 
 export default function ReaderContainer({ config }: { config: ReaderConfig }) {
+  const { isAuthenticated } = useAuthStore();
   const [showBottomNav, setShowBottomNav] = useState(false); // 底部栏默认隐藏，只有点击设置时才显示
   const [showTOC, setShowTOC] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showNotes, setShowNotes] = useState(false);
   const [selectedText, setSelectedText] = useState('');
   const [selectionPosition, setSelectionPosition] = useState<{ x: number; y: number } | null>(null);
+  const [selectedCfiRange, setSelectedCfiRange] = useState<string | null>(null);
   const [showSelectionToolbar, setShowSelectionToolbar] = useState(false);
   const [showCreateNoteModal, setShowCreateNoteModal] = useState(false);
   const [, setBookNotes] = useState<any[]>([]);
@@ -38,6 +44,13 @@ export default function ReaderContainer({ config }: { config: ReaderConfig }) {
   const [infoBarHeight, setInfoBarHeight] = useState(34); // 默认移动端高度
   const hideTimerRef = useRef<NodeJS.Timeout | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const lastEpubSelectionAtRef = useRef<number>(0);
+  const { isOnline, checkAndResetOfflineFlag } = useNetworkStatus();
+  const [bookHighlights, setBookHighlights] = useState<{ id: string; cfiRange: string }[]>([]);
+  const [remoteProgressPrompt, setRemoteProgressPrompt] = useState<{ serverProgress: any; clientProgress?: any } | null>(null);
+  // 同一阅读会话内：提示只弹一次；用户选择后不再弹，避免重复骚扰
+  const remotePromptHandledRef = useRef(false);
+  const remotePromptLastProgressRef = useRef<number>(0);
   
   // 检测是否为移动设备
   const [isMobile, setIsMobile] = useState(false);
@@ -69,6 +82,22 @@ export default function ReaderContainer({ config }: { config: ReaderConfig }) {
     window.addEventListener('resize', updateInfoBarHeight);
     return () => window.removeEventListener('resize', updateInfoBarHeight);
   }, []);
+
+  // 刷新/重新打开时：先用 initialPosition 预填，避免底部信息栏短暂显示 1/1
+  // 之后由各格式阅读器 onProgressChange( relocated/scroll ) 覆盖为实时值
+  useEffect(() => {
+    if (!config.initialPosition) return;
+
+    setCurrentPosition((prev) => {
+      // 如果已经有有效进度了，就不强行覆盖
+      const prevLooksValid =
+        (typeof prev.progress === 'number' && prev.progress > 0) ||
+        (typeof prev.currentPage === 'number' && prev.currentPage > 1) ||
+        (typeof prev.totalPages === 'number' && prev.totalPages > 1);
+      if (prevLooksValid) return prev;
+      return { ...prev, ...config.initialPosition };
+    });
+  }, [config.book.id, config.initialPosition]);
 
   // 清理定时器
   useEffect(() => {
@@ -143,14 +172,270 @@ export default function ReaderContainer({ config }: { config: ReaderConfig }) {
     config.onProgressChange(progress, position);
   }, [config]);
 
+  // 跨设备进度冲突提示（由 ReaderNew 在保存进度时触发 409 后广播）
+  useEffect(() => {
+    const handler = (e: Event) => {
+      try {
+        const detail = (e as CustomEvent).detail as any;
+        if (!detail?.serverProgress) return;
+        if (detail.bookId && detail.bookId !== config.book.id) return;
+        if (remotePromptHandledRef.current) return;
+        if (remoteProgressPrompt) return; // 正在显示时不重复 set
+        const p = typeof detail.serverProgress.progress === 'number' ? detail.serverProgress.progress : 0;
+        // 同进度/更小进度不重复提示
+        if (p <= remotePromptLastProgressRef.current + 0.0001) return;
+        remotePromptLastProgressRef.current = p;
+        setRemoteProgressPrompt({ serverProgress: detail.serverProgress, clientProgress: detail.clientProgress });
+      } catch {
+        // ignore
+      }
+    };
+    window.addEventListener('__reading_progress_conflict' as any, handler);
+    return () => window.removeEventListener('__reading_progress_conflict' as any, handler);
+  }, [config.book.id, remoteProgressPrompt]);
+
+  // 打开书时发现服务端进度更靠后：也需要提示一次（不依赖 409 冲突）
+  useEffect(() => {
+    const handler = (e: Event) => {
+      try {
+        const detail = (e as CustomEvent).detail as any;
+        if (!detail?.serverProgress) return;
+        if (detail.bookId && detail.bookId !== config.book.id) return;
+        if (remotePromptHandledRef.current) return;
+        if (remoteProgressPrompt) return;
+        const p = typeof detail.serverProgress.progress === 'number' ? detail.serverProgress.progress : 0;
+        if (p <= remotePromptLastProgressRef.current + 0.0001) return;
+        remotePromptLastProgressRef.current = p;
+        setRemoteProgressPrompt({ serverProgress: detail.serverProgress, clientProgress: detail.clientProgress });
+      } catch {
+        // ignore
+      }
+    };
+    window.addEventListener('__reading_progress_remote_detected' as any, handler);
+    return () => window.removeEventListener('__reading_progress_remote_detected' as any, handler);
+  }, [config.book.id, remoteProgressPrompt]);
+
+  // 兜底：如果 ReaderNew 在 ReaderContainer 挂载前就触发了提示事件，事件可能会丢
+  // 这里从 sessionStorage 读取一次“待提示的远端进度”，确保重新打开 A 端也能看到提示并跳转到 B 端最新进度
+  useEffect(() => {
+    try {
+      if (!config.book.id) return;
+      if (remotePromptHandledRef.current) return;
+      if (remoteProgressPrompt) return;
+
+      const key = `rk-remote-progress-${config.book.id}`;
+      const raw = sessionStorage.getItem(key);
+      if (!raw) return;
+      sessionStorage.removeItem(key); // 读一次就清掉，避免重复弹
+
+      const payload = JSON.parse(raw);
+      const sp = payload?.serverProgress;
+      if (!sp || typeof sp.progress !== 'number') return;
+
+      // 只有当服务器明显更靠后才提示（避免重复/旧数据）
+      const serverP = sp.progress;
+      const localP = typeof currentPosition.progress === 'number' ? currentPosition.progress : 0;
+      if (serverP <= localP + 0.01) return;
+      if (serverP <= remotePromptLastProgressRef.current + 0.0001) return;
+
+      remotePromptLastProgressRef.current = serverP;
+      setRemoteProgressPrompt({ serverProgress: sp, clientProgress: payload?.clientProgress });
+    } catch {
+      // ignore
+    }
+  }, [config.book.id, currentPosition.progress, remoteProgressPrompt]);
+
+  // 切书时重置（新书可再次提示）
+  useEffect(() => {
+    remotePromptHandledRef.current = false;
+    remotePromptLastProgressRef.current = 0;
+    setRemoteProgressPrompt(null);
+  }, [config.book.id]);
+
   // 处理添加笔记
   const handleAddNote = useCallback((text: string) => {
+    console.log('[ReaderContainer] handleAddNote', { textLen: text?.length, hasCfi: !!selectedCfiRange });
     setSelectedText(text);
     setShowCreateNoteModal(true);
     setShowSelectionToolbar(false);
     // 清除文本选择
     window.getSelection()?.removeAllRanges();
-  }, []);
+  }, [selectedCfiRange]);
+
+  const safeOpen = (url: string) => {
+    try {
+      const w = window.open(url, '_blank', 'noopener,noreferrer');
+      if (!w) {
+        toast.error('浏览器阻止了新窗口，请允许弹窗或长按复制链接打开');
+      }
+    } catch (e) {
+      toast.error('打开失败');
+    }
+  };
+
+  const handleCopy = useCallback(async () => {
+    const text = (selectedText || '').trim();
+    if (!text) return;
+    try {
+      await navigator.clipboard.writeText(text);
+      toast.success('已复制');
+    } catch (e) {
+      // 兜底：老浏览器
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.left = '-9999px';
+        document.body.appendChild(ta);
+        ta.focus();
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+        toast.success('已复制');
+      } catch {
+        toast.error('复制失败');
+      }
+    }
+  }, [selectedText]);
+
+  const handleSearch = useCallback(() => {
+    const q = (selectedText || '').trim();
+    if (!q) return;
+    safeOpen(`https://www.baidu.com/s?wd=${encodeURIComponent(q)}`);
+  }, [selectedText]);
+
+  const handleDictionary = useCallback(() => {
+    const q = (selectedText || '').trim();
+    if (!q) return;
+    // 用有道词典网页版
+    safeOpen(`https://www.youdao.com/result?word=${encodeURIComponent(q)}&lang=en`);
+  }, [selectedText]);
+
+  const handleTranslate = useCallback(() => {
+    const q = (selectedText || '').trim();
+    if (!q) return;
+    // Google Translate（自动识别->中文）
+    safeOpen(`https://translate.google.com/?sl=auto&tl=zh-CN&text=${encodeURIComponent(q)}&op=translate`);
+  }, [selectedText]);
+
+  // 处理 EPUB 高亮（支持再次点击取消）
+  const handleToggleHighlight = useCallback(async () => {
+    console.log('[ReaderContainer] handleToggleHighlight', { hasCfi: !!selectedCfiRange, selectedTextLen: selectedText?.length });
+    if (config.book.file_type !== 'epub') {
+      toast.error('仅 EPUB 支持高亮标注');
+      return;
+    }
+    if (!selectedCfiRange) {
+      toast.error('没有检测到可用的选区位置（CFI）');
+      return;
+    }
+    if (!isAuthenticated) {
+      toast.error('请先登录后再使用高亮同步功能');
+      return;
+    }
+
+    const existing = hasLocalHighlight(config.book.id, selectedCfiRange);
+    if (existing) {
+      // 取消高亮：本地删除 + 立即取消渲染 + 同步
+      deleteLocalHighlight(config.book.id, existing.id);
+      setBookHighlights((prev) => prev.filter((x) => x.id !== existing.id));
+      if ((window as any).__epubUnhighlight) {
+        try {
+          (window as any).__epubUnhighlight(existing.cfiRange);
+        } catch {
+          // ignore
+        }
+      }
+      try {
+        await syncHighlightQueue();
+        toast.success('已取消高亮（会自动同步）');
+      } catch {
+        toast.success('已取消高亮（离线/网络异常，稍后自动同步）');
+      }
+    } else {
+      // 新增高亮：本地持久化 + 立即渲染 + 同步
+      const id = generateHighlightId();
+      const item = addOrUpdateLocalHighlight({
+        id,
+        bookId: config.book.id,
+        cfiRange: selectedCfiRange,
+        selectedText: selectedText || undefined,
+        color: 'yellow',
+      });
+      setBookHighlights((prev) => [{ id: item.id, cfiRange: item.cfiRange }, ...prev]);
+      if ((window as any).__epubHighlight) {
+        try {
+          (window as any).__epubHighlight(item.cfiRange);
+        } catch {
+          // ignore
+        }
+      }
+      try {
+        await syncHighlightQueue();
+        toast.success('已高亮（会自动同步）');
+      } catch {
+        toast.success('已高亮（离线/网络异常，稍后自动同步）');
+      }
+    }
+
+    setShowSelectionToolbar(false);
+    window.getSelection()?.removeAllRanges();
+  }, [config.book.file_type, config.book.id, isAuthenticated, selectedCfiRange, selectedText]);
+
+  // 打开 EPUB 时：先用本地缓存快速渲染高亮；在线再从服务端刷新并渲染
+  useEffect(() => {
+    if (config.book.file_type !== 'epub' || !config.book.id) return;
+
+    const applyHighlightsToReader = (list: { cfiRange: string }[]) => {
+      if (!(window as any).__epubHighlight) return;
+      list.forEach((h) => {
+        if (h?.cfiRange) {
+          try {
+            (window as any).__epubHighlight(h.cfiRange);
+          } catch {
+            // ignore
+          }
+        }
+      });
+    };
+
+    // 本地缓存：先渲染
+    const local = getLocalHighlights(config.book.id);
+    setBookHighlights(local.map((h) => ({ id: h.id, cfiRange: h.cfiRange })));
+    // 可能阅读器尚未 ready，做一次轻量重试
+    const t = setTimeout(() => applyHighlightsToReader(local), 300);
+
+    // 在线：刷新并渲染
+    if (isAuthenticated && navigator.onLine) {
+      refreshHighlightsFromServer(config.book.id)
+        .then((merged) => {
+          setBookHighlights(merged.map((h) => ({ id: h.id, cfiRange: h.cfiRange })));
+          setTimeout(() => applyHighlightsToReader(merged), 300);
+        })
+        .catch(() => {});
+    }
+
+    return () => clearTimeout(t);
+  }, [config.book.file_type, config.book.id, isAuthenticated]);
+
+  // 网络恢复时：自动同步离线队列，并刷新服务端高亮
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    if (checkAndResetOfflineFlag()) {
+      syncHighlightQueue()
+        .then(async () => {
+          if (config.book.file_type === 'epub' && config.book.id) {
+            try {
+              await refreshHighlightsFromServer(config.book.id);
+            } catch {
+              // ignore
+            }
+          }
+        })
+        .catch(() => {});
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOnline, isAuthenticated]);
 
   // 处理翻页
   const handlePageTurn = useCallback((direction: 'prev' | 'next') => {
@@ -310,7 +595,33 @@ export default function ReaderContainer({ config }: { config: ReaderConfig }) {
 
   // 处理文本选择
   useEffect(() => {
+    const clearAllSelections = () => {
+      try {
+        window.getSelection()?.removeAllRanges();
+      } catch (e) {
+        // ignore
+      }
+      // 清理 EPUB iframe 内选区（如果有）
+      try {
+        document.querySelectorAll('iframe').forEach((iframe) => {
+          try {
+            const doc = (iframe as HTMLIFrameElement).contentDocument;
+            doc?.getSelection?.()?.removeAllRanges();
+          } catch (e) {
+            // ignore
+          }
+        });
+      } catch (e) {
+        // ignore
+      }
+    };
+
     const handleMouseUp = (_e: MouseEvent) => {
+      // 如果刚刚由 EPUB iframe 上报过选区，则忽略一小段时间内的外层 mouseup，
+      // 避免外层 window.getSelection() 为空把工具栏立刻关掉，导致“点不到按钮/弹窗不出”。
+      if (Date.now() - lastEpubSelectionAtRef.current < 250) {
+        return;
+      }
       const selection = window.getSelection();
       if (!selection || selection.isCollapsed) {
         setShowSelectionToolbar(false);
@@ -329,27 +640,70 @@ export default function ReaderContainer({ config }: { config: ReaderConfig }) {
       setSelectedText(selectedText);
       setSelectionPosition({
         x: rect.left + rect.width / 2,
-        y: rect.top - 10,
+        // 作为“锚点”：交给工具栏自己决定显示在上方还是下方
+        y: rect.top,
       });
       setShowSelectionToolbar(true);
     };
 
-    const handleClick = (_e: MouseEvent) => {
-      // 如果点击的不是选择工具栏，则隐藏工具栏
-      if (!(_e.target as HTMLElement).closest('.text-selection-toolbar')) {
-        const selection = window.getSelection();
-        if (selection && selection.isCollapsed) {
+    // 任意点击空白处都隐藏菜单（不依赖 selection 是否 collapsed）
+    const handlePointerDown = (_e: PointerEvent) => {
+      const target = _e.target as HTMLElement | null;
+      // 点击菜单内部不处理
+      if (target && target.closest('.text-selection-toolbar')) return;
+      // 点击模态框内部也不处理（避免点输入框把菜单/选区清掉）
+      if (target && target.closest('.note-content-textarea')) return;
+      setShowSelectionToolbar(false);
+      setSelectionPosition(null);
+      setSelectedCfiRange(null);
+      clearAllSelections();
+    };
+
+    // 选区变成 collapsed 时自动隐藏菜单
+    const handleSelectionChange = () => {
+      try {
+        const s = window.getSelection();
+        if (!s || s.isCollapsed) {
+          // 仅隐藏，不强制清空 iframe（避免影响 EPUB 内的选区上报节奏）
           setShowSelectionToolbar(false);
         }
+      } catch (e) {
+        // ignore
       }
     };
 
     document.addEventListener('mouseup', handleMouseUp);
-    document.addEventListener('click', handleClick);
+    document.addEventListener('pointerdown', handlePointerDown, true);
+    document.addEventListener('selectionchange', handleSelectionChange);
+
+    // EPUB iframe 内选区：由 ReaderEPUBPro 通过自定义事件上报
+    const handleEpubSelection = (e: Event) => {
+      const detail = (e as CustomEvent).detail as {
+        text: string;
+        x: number;
+        y: number;
+        cfiRange?: string | null;
+      };
+      const t = (detail?.text || '').toString().trim();
+      // 兜底：过滤极短/误触选区（移动端滑动时偶发）
+      if (!t || t.length < 2) {
+        setShowSelectionToolbar(false);
+        return;
+      }
+      lastEpubSelectionAtRef.current = Date.now();
+      setSelectedText(t);
+      setSelectionPosition({ x: detail.x, y: detail.y });
+      setSelectedCfiRange(detail.cfiRange || null);
+      setShowSelectionToolbar(true);
+    };
+
+    window.addEventListener('__reader_text_selection' as any, handleEpubSelection);
     
     return () => {
       document.removeEventListener('mouseup', handleMouseUp);
-      document.removeEventListener('click', handleClick);
+      document.removeEventListener('pointerdown', handlePointerDown, true);
+      document.removeEventListener('selectionchange', handleSelectionChange);
+      window.removeEventListener('__reader_text_selection' as any, handleEpubSelection);
     };
   }, []);
 
@@ -392,6 +746,10 @@ export default function ReaderContainer({ config }: { config: ReaderConfig }) {
       ref={containerRef}
       className="relative flex flex-col overflow-hidden"
       onClick={handleCenterClick}
+      onContextMenu={(e) => {
+        // 全阅读器统一屏蔽默认右键菜单（PC/移动/PWA 一致）
+        e.preventDefault();
+      }}
       style={{
         backgroundColor: themeStyles.bg,
         color: themeStyles.text,
@@ -402,9 +760,11 @@ export default function ReaderContainer({ config }: { config: ReaderConfig }) {
         paddingTop: getSafeAreaTop(),
       }}
     >
-      {/* 顶部工具栏 - 始终显示，固定高度48px */}
+      {/* 顶部工具栏 - 始终显示，固定高度48px
+          说明：用 fixed 避免移动端/PWA 弹性拖拽时出现“工具栏跟着晃动”
+      */}
       <div
-        className="absolute left-0 right-0 z-30"
+        className="fixed left-0 right-0 z-30"
         style={{
           top: getToolbarTop(),
           height: '48px', // 固定高度
@@ -538,6 +898,133 @@ export default function ReaderContainer({ config }: { config: ReaderConfig }) {
         />
       )}
 
+      {/* 跨设备进度变更提示（位于底部信息栏上方） */}
+      {remoteProgressPrompt && (
+        <div className="fixed left-3 right-3 z-[95]" style={{ bottom: `${infoBarHeight + 12}px` }}>
+          <div className="rounded-2xl border border-gray-200/70 dark:border-gray-700/60 bg-white/95 dark:bg-gray-900/90 shadow-xl backdrop-blur-md px-4 py-3 flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="text-sm font-semibold text-gray-900 dark:text-gray-100">检测到新的阅读进度</div>
+              <div className="mt-0.5 text-xs text-gray-600 dark:text-gray-300 line-clamp-2">
+                另一台设备已更新到{' '}
+                <span className="font-semibold">
+                  {(() => {
+                    const sp = remoteProgressPrompt.serverProgress || {};
+                    const pct = typeof sp.progress === 'number' ? sp.progress * 100 : null;
+                    const cp = sp.currentPage;
+                    const tp = sp.totalPages;
+                    // 优先显示百分比（更稳定，跨设备更准确），保留 2 位小数
+                    if (pct != null && Number.isFinite(pct)) return `${pct.toFixed(2)}%`;
+                    if (typeof cp === 'number' && typeof tp === 'number' && tp > 1) return `${cp}/${tp} 页`;
+                    return '更靠后的位置';
+                  })()}
+                </span>
+                ，是否跳转继续阅读？
+              </div>
+
+              {(() => {
+                const sp = remoteProgressPrompt.serverProgress || {};
+                const serverChapterIndex =
+                  typeof sp.chapterIndex === 'number'
+                    ? sp.chapterIndex
+                    : (typeof sp.chapter_index === 'number' ? sp.chapter_index : undefined);
+
+                const serverPct = typeof sp.progress === 'number' ? sp.progress * 100 : null;
+                const localPct = typeof currentPosition.progress === 'number' ? currentPosition.progress * 100 : null;
+
+                const flatten = (items: TOCItem[]): TOCItem[] => {
+                  const out: TOCItem[] = [];
+                  const walk = (arr: TOCItem[]) => {
+                    for (const it of arr) {
+                      out.push(it);
+                      if (it.children?.length) walk(it.children);
+                    }
+                  };
+                  walk(items);
+                  return out;
+                };
+
+                const tocFlat = flatten(toc || []);
+                const findTitleByChapterIndex = (idx: number | undefined) => {
+                  if (idx === undefined) return null;
+                  const hit = tocFlat.find((t) => typeof t.chapterIndex === 'number' && t.chapterIndex === idx);
+                  return hit?.title || null;
+                };
+
+                const serverTitle = findTitleByChapterIndex(serverChapterIndex);
+                const localTitle = currentPosition.chapterTitle || findTitleByChapterIndex(currentPosition.chapterIndex);
+
+                return (
+                  <div className="mt-2 text-[11px] text-gray-600 dark:text-gray-300 space-y-0.5">
+                    <div className="truncate">
+                      本机：{localPct !== null ? `${localPct.toFixed(2)}%` : `${currentPosition.currentPage}/${currentPosition.totalPages}`}
+                      {localTitle ? ` · ${localTitle}` : ''}
+                    </div>
+                    <div className="truncate">
+                      另一端：{serverPct !== null ? `${serverPct.toFixed(2)}%` : (sp.currentPage && sp.totalPages ? `${sp.currentPage}/${sp.totalPages}` : '')}
+                      {serverTitle ? ` · ${serverTitle}` : ''}
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+            <div className="flex items-center gap-2 flex-shrink-0">
+              <button
+                className="px-3 py-2 rounded-xl text-xs font-semibold bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-200 hover:bg-gray-200 dark:hover:bg-gray-700"
+                onClick={() => {
+                  remotePromptHandledRef.current = true;
+                  setRemoteProgressPrompt(null);
+                  try {
+                    window.dispatchEvent(
+                      new CustomEvent('__reading_progress_conflict_resolved', {
+                        detail: { bookId: config.book.id, action: 'dismiss' },
+                      })
+                    );
+                  } catch {
+                    // ignore
+                  }
+                }}
+              >
+                否
+              </button>
+              <button
+                className="px-3 py-2 rounded-xl text-xs font-semibold bg-blue-600 hover:bg-blue-700 text-white"
+                onClick={async () => {
+                  const sp = remoteProgressPrompt.serverProgress || {};
+                  const pos: any = {
+                    progress: sp.progress,
+                    currentPage: sp.currentPage,
+                    totalPages: sp.totalPages,
+                    chapterIndex: sp.chapterIndex,
+                    scrollTop: sp.scrollTop,
+                    currentLocation: sp.currentPosition,
+                  };
+                  try {
+                    if ((window as any).__readerGoToPosition) {
+                      await (window as any).__readerGoToPosition(pos);
+                    }
+                  } catch {
+                    // ignore
+                  }
+                  remotePromptHandledRef.current = true;
+                  setRemoteProgressPrompt(null);
+                  try {
+                    window.dispatchEvent(
+                      new CustomEvent('__reading_progress_conflict_resolved', {
+                        detail: { bookId: config.book.id, action: 'accept' },
+                      })
+                    );
+                  } catch {
+                    // ignore
+                  }
+                }}
+              >
+                是
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* 底部导航栏 - 可自动隐藏，显示在底部信息栏上方 */}
       <BottomNavigation
         book={config.book}
@@ -623,6 +1110,7 @@ export default function ReaderContainer({ config }: { config: ReaderConfig }) {
           currentChapterIndex={currentPosition.chapterIndex}
           selectedText={selectedText}
           isVisible={showNotes}
+          theme={config.settings.theme}
           onClose={() => {
             setShowNotes(false);
             setSelectedText('');
@@ -641,6 +1129,12 @@ export default function ReaderContainer({ config }: { config: ReaderConfig }) {
             selectedText={selectedText}
             position={selectionPosition}
             onAddNote={handleAddNote}
+            onToggleHighlight={handleToggleHighlight}
+            isHighlighted={!!(selectedCfiRange && hasLocalHighlight(config.book.id, selectedCfiRange))}
+            onCopy={handleCopy}
+            onSearch={handleSearch}
+            onDictionary={handleDictionary}
+            onTranslate={handleTranslate}
             onClose={() => {
               setShowSelectionToolbar(false);
               window.getSelection()?.removeAllRanges();
@@ -654,15 +1148,23 @@ export default function ReaderContainer({ config }: { config: ReaderConfig }) {
         isVisible={showCreateNoteModal}
         bookId={config.book.id}
         selectedText={selectedText}
+        selectedCfiRange={selectedCfiRange || undefined}
         currentPage={currentPosition.currentPage}
         chapterIndex={currentPosition.chapterIndex}
         onClose={() => {
           setShowCreateNoteModal(false);
           setSelectedText('');
+          setSelectedCfiRange(null);
         }}
         onSuccess={() => {
-          // 笔记创建成功后的回调，可以在这里刷新笔记列表等
-          // 如果需要刷新笔记面板，可以在这里处理
+          // 高亮选中内容（EPUB）
+          if (selectedCfiRange && (window as any).__epubHighlight) {
+            try {
+              (window as any).__epubHighlight(selectedCfiRange);
+            } catch (e) {
+              // ignore
+            }
+          }
         }}
       />
     </div>

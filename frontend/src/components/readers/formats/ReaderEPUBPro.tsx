@@ -52,6 +52,28 @@ export default function ReaderEPUBPro({
   const isInitializingRef = useRef(false);
   const isInitializedRef = useRef(false);
   
+  // 使用 ref 存储最新的 settings，确保在闭包中能访问到最新值
+  const settingsRef = useRef<ReadingSettings>(settings);
+  
+  // 更新 settings ref
+  useEffect(() => {
+    settingsRef.current = settings;
+  }, [settings]);
+
+  // EPUB locations（用于全书“页码/总页数/进度”的稳定计算，避免字体/横竖屏变化导致跳页）
+  const locationsReadyRef = useRef(false);
+  const totalLocationsRef = useRef<number>(0);
+  const lastCfiRef = useRef<string | null>(null);
+  const isRestoringLayoutRef = useRef(false);
+  // 兜底：保存最近一次计算出来的进度/位置，用于 visibilitychange/pagehide flush
+  const lastProgressRef = useRef<number>(0);
+  const lastPositionRef = useRef<ReadingPosition | null>(null);
+  // 兼容：某些 epubjs 内置 hooks 期望拿到 Document，但实际会收到 Contents（导致 getElementsByTagName/createElement 报错）。
+  // 我们不改 trigger（否则会破坏 contents.on/addStylesheetRules 等），改为“失败后重试一次”的包装。
+  // 某些 EPUB 会在 epubjs.locations.generate 时触发内部 parse 异常（ownerDocument undefined）
+  // 失败后不再重试，避免控制台 Uncaught (in promise) 噪音与潜在性能问题
+  const locationsFailedRef = useRef(false);
+  
   // epubjs 配置
   const [epubjsManager] = useState<EpubjsManager>('default');
   const [epubjsFlow] = useState<EpubjsFlow>('paginated');
@@ -261,6 +283,53 @@ export default function ReaderEPUBPro({
         totalChaptersRef.current = tocItems.length || 1;
       }
 
+      // 生成 EPUB locations（基于内容的稳定“全书页码”映射）
+      // 注意：locations 生成可能较耗时，这里异步后台生成，不阻塞首屏显示
+      const generateLocationsInBackground = async () => {
+        try {
+          if (locationsFailedRef.current) return;
+          // 先重置，避免读到旧状态
+          locationsReadyRef.current = false;
+          totalLocationsRef.current = 0;
+
+          // 保险：spine/items 未就绪时不生成，避免 epubjs 内部 parse 报错
+          const spineItems = (bookInstance?.spine as any)?.items || [];
+          if (!spineItems || spineItems.length === 0) {
+            return;
+          }
+
+          // epubjs 默认按字符数切分，数值越大生成越快但精度越粗；1600 是相对平衡的取值
+          if (bookInstance?.locations && typeof bookInstance.locations.generate === 'function') {
+            // 额外等待 opened（如果存在），并用 catch 吞掉内部异常，避免 Uncaught (in promise)
+            try {
+              if (bookInstance?.opened && typeof bookInstance.opened.then === 'function') {
+                await bookInstance.opened;
+              }
+            } catch {
+              // ignore
+            }
+
+            const gen = bookInstance.locations.generate(1600);
+            if (gen && typeof (gen as any).catch === 'function') {
+              await (gen as any).catch(() => undefined);
+            } else {
+              // 非 promise（极少见），直接 await
+              await gen;
+            }
+            const total = typeof bookInstance.locations.length === 'function'
+              ? bookInstance.locations.length()
+              : (bookInstance.locations?.locations?.length || 0);
+            totalLocationsRef.current = total;
+            locationsReadyRef.current = total > 0;
+          }
+        } catch (e) {
+          // locations 生成失败不影响阅读，回退到旧算法
+          locationsReadyRef.current = false;
+          totalLocationsRef.current = 0;
+          locationsFailedRef.current = true;
+        }
+      };
+
       // 清空容器（注意：不要直接操作，让 epubjs 自己管理）
       // container.innerHTML = '';
 
@@ -270,7 +339,10 @@ export default function ReaderEPUBPro({
         height: containerHeight,
         flow: epubjsFlow,
         spread: 'none', // 单页显示
-        allowScriptedContent: false, // 默认禁用脚本内容
+        // 允许脚本：否则 iframe 会被 sandbox 严格限制，控制台会出现 about:srcdoc 的脚本阻止提示，
+        // 且某些 EPUB（或 epubjs 内部）功能会受影响。风险：EPUB 内脚本可能执行。
+        // 如果你后续希望更安全，可以再做“白名单/按书籍开关”的策略。
+        allowScriptedContent: true,
       };
 
       // 根据管理器类型设置 method
@@ -281,92 +353,70 @@ export default function ReaderEPUBPro({
       // 创建 rendition
       const rendition = bookInstance.renderTo(container, renditionConfig);
       epubjsRenditionRef.current = rendition;
-      
-      // 修复 epubjs 的 hooks，确保它们使用正确的 document
-      if (rendition && rendition.hooks) {
-        // 获取有效的 document 对象的辅助函数
-        const getValidDocument = (view: any, container: HTMLElement): Document | null => {
-          // 首先检查 view.document 是否有效
-          if (view && view.document && typeof view.document.createElement === 'function') {
-            return view.document;
-          }
-          
-          // 尝试从 iframe 获取
-          try {
-            const iframe = container.querySelector('iframe');
-            if (iframe && iframe.contentDocument && typeof iframe.contentDocument.createElement === 'function') {
-              return iframe.contentDocument;
-            }
-          } catch (e) {
-            // 忽略跨域错误
-          }
-          
-          // 尝试从 view 的其他属性获取
-          try {
-            if (view && view.window && view.window.document && typeof view.window.document.createElement === 'function') {
-              return view.window.document;
-            }
-          } catch (e) {
-            // 忽略错误
-          }
-          
-          return null;
-        };
 
-        // 拦截 content hooks 的 trigger，确保所有 hooks 调用前验证 document
-        const originalContentTrigger = rendition.hooks.content.trigger;
-        if (originalContentTrigger) {
-          rendition.hooks.content.trigger = function(name: string, view: any, ...args: any[]) {
-            // 在触发之前，确保 view.document 是有效的 Document 对象
-            if (view) {
-              const validDoc = getValidDocument(view, container);
-              if (validDoc) {
-                // 如果当前 view.document 无效，替换为有效的 document
-                if (!view.document || typeof view.document.createElement !== 'function') {
-                  view.document = validDoc;
-                }
-              } else {
-                // 如果无法获取有效的 document，跳过这个 hook
-                console.warn(`ReaderEPUBPro: 跳过 hook "${name}"，无法获取有效的 document`, view);
-                return;
-              }
-            }
-            
-            try {
-              return originalContentTrigger.call(this, name, view, ...args);
-            } catch (error: any) {
-              // 如果 hook 执行失败，记录错误但不中断流程
-              console.warn(`ReaderEPUBPro: hook "${name}" 执行失败`, error);
-              return;
-            }
-          };
-        }
+      // ---- epubjs Hook 参数兼容补丁（仅修复内置 replaceBase/Meta/Canonical/Identifier） ----
+      // 某些版本/构建下，epubjs 的内置 hooks 会收到 Contents 对象而不是 Document，
+      // 导致 replaceBase/replaceMeta/replaceCanonical/injectIdentifier 内部调用 doc.getElementsByTagName/createElement 报错。
+      // 注意：绝对不要改写 trigger 去传 Document，否则会破坏 epubjs 其它依赖 Contents 的逻辑（contents.on/addStylesheetRules 等）。
+      try {
+        const contentHook: any = (rendition as any)?.hooks?.content;
+        const hookList: any[] =
+          (contentHook && Array.isArray(contentHook.hooks) && contentHook.hooks) ||
+          (contentHook && Array.isArray(contentHook.list) && contentHook.list) ||
+          [];
 
-        // 拦截 display hooks 的 trigger（如果有）
-        if (rendition.hooks.display && rendition.hooks.display.trigger) {
-          const originalDisplayTrigger = rendition.hooks.display.trigger;
-          rendition.hooks.display.trigger = function(name: string, view: any, ...args: any[]) {
-            if (view) {
-              const validDoc = getValidDocument(view, container);
-              if (validDoc) {
-                if (!view.document || typeof view.document.createElement !== 'function') {
-                  view.document = validDoc;
+        if (hookList.length > 0) {
+          const wrapped = hookList.map((fn: any) => {
+            if (typeof fn !== 'function') return fn;
+            if ((fn as any).__rkWrapped) return fn;
+            const w = function (...args: any[]) {
+              try {
+                return fn.apply(this, args);
+              } catch (e: any) {
+                // 仅当遇到“把 Contents 当 Document 用”的错误时，才用 contents.document 重试一次
+                const first = args[0];
+                const msg = String(e?.message || '');
+                const isDocTypeError =
+                  msg.includes('getElementsByTagName is not a function') ||
+                  msg.includes('createElement is not a function') ||
+                  msg.includes("reading 'ownerDocument'");
+                if (
+                  isDocTypeError &&
+                  first &&
+                  first.document &&
+                  typeof first.document.createElement === 'function'
+                ) {
+                  try {
+                    return fn.apply(this, [first.document, ...args.slice(1)]);
+                  } catch {
+                    // fallthrough to rethrow original
+                  }
                 }
-              } else {
-                console.warn(`ReaderEPUBPro: 跳过 display hook "${name}"，无法获取有效的 document`, view);
-                return;
+                throw e;
               }
-            }
-            
-            try {
-              return originalDisplayTrigger.call(this, name, view, ...args);
-            } catch (error: any) {
-              console.warn(`ReaderEPUBPro: display hook "${name}" 执行失败`, error);
-              return;
-            }
-          };
+            };
+            (w as any).__rkWrapped = true;
+            return w;
+          });
+          // 覆盖回 hook 列表
+          if (Array.isArray((contentHook as any).hooks)) (contentHook as any).hooks = wrapped;
+          else if (Array.isArray((contentHook as any).list)) (contentHook as any).list = wrapped;
         }
+      } catch {
+        // ignore
       }
+
+      // ⚠️ 禁用 epubjs.locations.generate：
+      // 部分书籍会在 epubjs 内部异步解析 locations 时抛出 Locations.parse(ownerDocument) 异常，
+      // 该异常发生在 requestAnimationFrame 队列中，无法通过 Promise catch 完全捕获，会导致控制台持续报错。
+      // 因此这里直接不生成 locations，回退使用 percentage/章节进度（阅读与进度保存不受影响）。
+      locationsReadyRef.current = false;
+      totalLocationsRef.current = 0;
+      locationsFailedRef.current = true;
+      
+      // ⚠️ 不要 monkey-patch rendition.hooks.content.trigger
+      // epubjs 这里的第一个参数是 Contents（带 .on/.addStylesheetRules 等），不是 Document。
+      // 改写 trigger 会破坏 epubjs 内部逻辑（链接处理/主题注入等），导致阅读器初始化失败与翻页失效。
 
       // 获取主题样式
       const themeStyles = {
@@ -436,11 +486,15 @@ export default function ReaderEPUBPro({
       } = {};
 
       // 监听内容加载
-      rendition.hooks.content.register((view: any) => {
-        const doc = view.document;
+      // epubjs 的 content hook 传入的是 Contents（不是 View）
+      // Contents: { document, window, on(), addStylesheetRules(), ... }
+      rendition.hooks.content.register((a0: any, a1?: any) => {
+        // 兼容：某些场景下第1参会是 Document（见下方 trigger patch），第2参才是 Contents
+        const contents = a1 && a1.document ? a1 : a0;
+        const doc = contents?.document || a0;
         // 确保 doc 是一个有效的 Document 对象
         if (!doc || typeof doc.createElement !== 'function') {
-          console.warn('ReaderEPUBPro: view.document 不是有效的 Document 对象', doc);
+          console.warn('ReaderEPUBPro: contents.document 不是有效的 Document 对象', doc);
           return;
         }
 
@@ -650,15 +704,32 @@ export default function ReaderEPUBPro({
           (doc as any).__epubFontObserver = observer;
         }
 
-        // 应用主题到文档
+        // 应用主题到文档 - 使用最新的settings
+        const currentSettings = settingsRef.current;
+        const currentThemeStyles = {
+          light: { bg: '#ffffff', text: '#000000' },
+          dark: { bg: '#1a1a1a', text: '#ffffff' },
+          sepia: { bg: '#f4e4bc', text: '#5c4b37' },
+          green: { bg: '#c8e6c9', text: '#2e7d32' },
+        }[currentSettings.theme];
+        
         if (doc.body) {
-          doc.body.style.setProperty('background-color', themeStyles.bg, 'important');
-          doc.body.style.setProperty('color', themeStyles.text, 'important');
+          doc.body.style.setProperty('background-color', currentThemeStyles.bg, 'important');
+          doc.body.style.setProperty('color', currentThemeStyles.text, 'important');
         }
         
         // 强制应用颜色到所有文本元素
         const applyThemeToElements = () => {
           try {
+            // 重新获取最新的settings和themeStyles
+            const latestSettings = settingsRef.current;
+            const latestThemeStyles = {
+              light: { bg: '#ffffff', text: '#000000' },
+              dark: { bg: '#1a1a1a', text: '#ffffff' },
+              sepia: { bg: '#f4e4bc', text: '#5c4b37' },
+              green: { bg: '#c8e6c9', text: '#2e7d32' },
+            }[latestSettings.theme];
+            
             const iframeWindow = doc.defaultView || (doc as any).parentWindow;
             // 获取所有可能的文本元素
             const textElements = doc.querySelectorAll('p, div, span, h1, h2, h3, h4, h5, h6, li, td, th, a, em, strong, b, i, u, blockquote, pre, code');
@@ -677,29 +748,29 @@ export default function ReaderEPUBPro({
                 }
                 
                 // 如果当前颜色是白色 (#ffffff, rgb(255,255,255) 等) 且主题是亮色，改为深色
-                if (settings.theme === 'light' && (
+                if (latestSettings.theme === 'light' && (
                   currentColor === 'rgb(255, 255, 255)' || 
                   currentColor === '#ffffff' || 
                   currentColor === 'white' ||
                   currentColor.includes('rgb(255, 255, 255)')
                 )) {
-                  el.style.setProperty('color', themeStyles.text, 'important');
+                  el.style.setProperty('color', latestThemeStyles.text, 'important');
                 }
                 // 如果当前颜色是黑色 (#000000, rgb(0,0,0) 等) 且主题是深色，改为浅色
-                else if (settings.theme === 'dark' && (
+                else if (latestSettings.theme === 'dark' && (
                   currentColor === 'rgb(0, 0, 0)' || 
                   currentColor === '#000000' || 
                   currentColor === 'black' ||
                   currentColor.includes('rgb(0, 0, 0)')
                 )) {
-                  el.style.setProperty('color', themeStyles.text, 'important');
+                  el.style.setProperty('color', latestThemeStyles.text, 'important');
                 }
                 // 如果颜色与背景色太接近，也强制应用主题色
-                else if (currentColor === themeStyles.bg || 
-                         (settings.theme === 'dark' && (currentColor === 'rgb(26, 26, 26)' || currentColor.includes('rgb(26, 26, 26)'))) ||
-                         (settings.theme === 'light' && (currentColor === 'rgb(255, 255, 255)' || currentColor.includes('rgb(255, 255, 255)'))) ||
+                else if (currentColor === latestThemeStyles.bg || 
+                         (latestSettings.theme === 'dark' && (currentColor === 'rgb(26, 26, 26)' || currentColor.includes('rgb(26, 26, 26)'))) ||
+                         (latestSettings.theme === 'light' && (currentColor === 'rgb(255, 255, 255)' || currentColor.includes('rgb(255, 255, 255)'))) ||
                          !currentColor) {
-                  el.style.setProperty('color', themeStyles.text, 'important');
+                  el.style.setProperty('color', latestThemeStyles.text, 'important');
                 }
               }
             });
@@ -725,6 +796,551 @@ export default function ReaderEPUBPro({
           });
           
           (doc as any).__epubThemeObserver = themeObserver;
+        }
+
+        // ==================== 文本选择 + 笔记（iframe 内） ====================
+        // 允许选中文本，并把选区信息上报给外层 ReaderContainer
+        try {
+          const win = doc.defaultView;
+          const iframeEl = (win?.frameElement as HTMLIFrameElement | null) || null;
+
+          // 让 iframe 内允许选择
+          if (doc.documentElement) {
+            (doc.documentElement.style as any).userSelect = 'text';
+            (doc.documentElement.style as any).webkitUserSelect = 'text';
+          }
+          if (doc.body) {
+            doc.body.style.setProperty('user-select', 'text');
+            (doc.body.style as any).webkitUserSelect = 'text';
+          }
+
+          const emitSelection = () => {
+            try {
+              const selection = win?.getSelection?.() || doc.getSelection?.();
+              if (!selection || selection.isCollapsed) return;
+              const text = selection.toString().trim();
+              if (!text) return;
+              const range = selection.getRangeAt(0);
+              const rect = range.getBoundingClientRect();
+
+              // 计算相对主窗口的坐标
+              const iframeRect = iframeEl?.getBoundingClientRect();
+              const x = (iframeRect?.left ?? 0) + rect.left + rect.width / 2;
+              // 作为“锚点”：交给外层工具栏决定显示在上方还是下方（避免遮挡）
+              const y = (iframeRect?.top ?? 0) + rect.top;
+
+              // 计算 CFI range（用于高亮）
+              let cfiRange: string | null = null;
+              try {
+                // epubjs: 不同版本 cfiFromRange 所在对象不同，做多级兜底
+                const anyRendition: any = rendition as any;
+                const anyContents: any = contents as any;
+                const anyBook: any = bookInstance as any;
+
+                if (typeof anyRendition?.cfiFromRange === 'function') {
+                  cfiRange = anyRendition.cfiFromRange(range);
+                } else if (typeof anyContents?.cfiFromRange === 'function') {
+                  cfiRange = anyContents.cfiFromRange(range);
+                } else if (typeof anyBook?.cfiFromRange === 'function') {
+                  cfiRange = anyBook.cfiFromRange(range);
+                }
+              } catch (e) {
+                cfiRange = null;
+              }
+
+              window.dispatchEvent(
+                new CustomEvent('__reader_text_selection', {
+                  detail: { text, x, y, cfiRange },
+                })
+              );
+            } catch (e) {
+              // ignore
+            }
+          };
+
+          // 监听鼠标/触摸结束后上报选区
+          // 说明：移动端/滚动/滑动翻页时，WebView/Chrome 可能产生“短暂选区”，会导致误弹菜单；
+          // 这里加入“手势移动阈值”与“最小文本长度”来防误触。
+          if (!(doc as any).__rkSelectionListener) {
+            const state = {
+              touchStart: null as { x: number; y: number } | null,
+              touchMoved: false,
+              mouseDown: false,
+              mouseMoved: false,
+              mouseStart: null as { x: number; y: number } | null,
+            };
+
+            const MOVE_PX = 12; // 认为是“滑动/滚动”的阈值
+            const MIN_TEXT = 2; // 认为是“有效选择”的最小字符数（中文/英文都更稳）
+
+            const safeEmitSelection = () => {
+              try {
+                const selection = win?.getSelection?.() || doc.getSelection?.();
+                if (!selection || selection.isCollapsed) return;
+                const text = selection.toString().trim();
+                if (!text || text.length < MIN_TEXT) return;
+                const range = selection.getRangeAt(0);
+                const rect = range.getBoundingClientRect();
+                // rect 过小也视为误触（例如 caret/极短选区）
+                if (!rect || (rect.width < 2 && rect.height < 8)) return;
+                emitSelection();
+              } catch {
+                // ignore
+              }
+            };
+
+            const onMouseDown = (e: MouseEvent) => {
+              state.mouseDown = true;
+              state.mouseMoved = false;
+              state.mouseStart = { x: e.clientX, y: e.clientY };
+            };
+            const onMouseMove = (e: MouseEvent) => {
+              if (!state.mouseDown || !state.mouseStart) return;
+              const dx = Math.abs(e.clientX - state.mouseStart.x);
+              const dy = Math.abs(e.clientY - state.mouseStart.y);
+              if (dx > MOVE_PX || dy > MOVE_PX) state.mouseMoved = true;
+            };
+            const onMouseUp = () => {
+              const moved = state.mouseMoved;
+              state.mouseDown = false;
+              state.mouseMoved = false;
+              state.mouseStart = null;
+              if (moved) return;
+              setTimeout(safeEmitSelection, 0);
+            };
+
+            const onTouchStart = (e: TouchEvent) => {
+              const t = e.touches?.[0];
+              if (!t) return;
+              state.touchStart = { x: t.clientX, y: t.clientY };
+              state.touchMoved = false;
+            };
+            const onTouchMove = (e: TouchEvent) => {
+              const t = e.touches?.[0];
+              if (!t || !state.touchStart) return;
+              const dx = Math.abs(t.clientX - state.touchStart.x);
+              const dy = Math.abs(t.clientY - state.touchStart.y);
+              if (dx > MOVE_PX || dy > MOVE_PX) state.touchMoved = true;
+            };
+            const onTouchEnd = () => {
+              const moved = state.touchMoved;
+              state.touchStart = null;
+              state.touchMoved = false;
+              if (moved) return;
+              setTimeout(safeEmitSelection, 0);
+            };
+
+            doc.addEventListener('mousedown', onMouseDown, { capture: true });
+            doc.addEventListener('mousemove', onMouseMove, { capture: true });
+            doc.addEventListener('mouseup', onMouseUp);
+            doc.addEventListener('touchstart', onTouchStart, { passive: true, capture: true });
+            doc.addEventListener('touchmove', onTouchMove, { passive: true, capture: true });
+            doc.addEventListener('touchend', onTouchEnd);
+
+            (doc as any).__rkSelectionListener = {
+              onMouseDown,
+              onMouseMove,
+              onMouseUp,
+              onTouchStart,
+              onTouchMove,
+              onTouchEnd,
+            };
+          }
+
+          // 点击已高亮区域：自动选中该高亮的全部内容并弹出菜单
+          // 实现策略：获取点击点的 caret range（collapsed），判断是否落在某个 highlightRange 内，
+          // 若命中则将 selection 替换为该 highlightRange，并触发 emitSelection。
+          if (!(doc as any).__rkHighlightClickSelect) {
+            const onPointerDownSelectHighlight = (e: PointerEvent) => {
+              try {
+                // 只处理左键/触摸/笔
+                if ((e as any).button !== undefined && (e as any).button !== 0) return;
+
+                const sel = win?.getSelection?.() || doc.getSelection?.();
+                // 用户正在手动选择时不干预
+                if (sel && !sel.isCollapsed) return;
+
+                // 获取点击点的 Range（collapsed）
+                let clickRange: Range | null = null;
+                const anyDoc = doc as any;
+                if (typeof anyDoc.caretRangeFromPoint === 'function') {
+                  clickRange = anyDoc.caretRangeFromPoint(e.clientX, e.clientY);
+                } else if (typeof anyDoc.caretPositionFromPoint === 'function') {
+                  const pos = anyDoc.caretPositionFromPoint(e.clientX, e.clientY);
+                  if (pos) {
+                    clickRange = doc.createRange();
+                    clickRange.setStart(pos.offsetNode, pos.offset);
+                    clickRange.collapse(true);
+                  }
+                }
+                if (!clickRange) return;
+
+                // 读取本地高亮列表（同源 iframe 可直接访问 localStorage）
+                const bookId = (book as any)?.id;
+                if (!bookId) return;
+                const raw = localStorage.getItem(`epub-highlights-cache-${bookId}`);
+                if (!raw) return;
+                let list: any[] = [];
+                try {
+                  list = JSON.parse(raw) || [];
+                } catch (e) {
+                  list = [];
+                }
+                // 仅考虑未删除的
+                const highlights = list.filter((h) => h && !h.deleted && typeof h.cfiRange === 'string');
+                if (!highlights.length) return;
+
+                // 命中检测：点击点是否在某个 highlightRange 内
+                for (const h of highlights) {
+                  const cfi = h.cfiRange as string;
+                  let hr: Range | null = null;
+                  try {
+                    // Rendition.getRange 是同步方法
+                    hr = (rendition as any).getRange?.(cfi) || null;
+                  } catch (e) {
+                    hr = null;
+                  }
+                  if (!hr) continue;
+
+                  try {
+                    const node = clickRange.startContainer;
+                    const offset = clickRange.startOffset;
+                    // comparePoint 返回 0 表示在 range 内
+                    const inside = typeof (hr as any).comparePoint === 'function'
+                      ? (hr as any).comparePoint(node, offset) === 0
+                      : false;
+                    if (!inside) continue;
+
+                    // 命中：阻止本次事件继续触发翻页点击
+                    e.preventDefault();
+                    e.stopPropagation();
+
+                    const s = win?.getSelection?.() || doc.getSelection?.();
+                    if (!s) return;
+                    s.removeAllRanges();
+                    s.addRange(hr);
+                    // 选中后弹出菜单
+                    setTimeout(emitSelection, 0);
+                    return;
+                  } catch (e) {
+                    // ignore compare failures
+                  }
+                }
+              } catch (e) {
+                // ignore
+              }
+            };
+
+            // capture: true，确保在翻页点击逻辑前执行
+            doc.addEventListener('pointerdown', onPointerDownSelectHighlight as any, true);
+            (doc as any).__rkHighlightClickSelect = { onPointerDownSelectHighlight };
+          }
+        } catch (e) {
+          // ignore
+        }
+
+        // ==================== iframe 内翻页手势（不使用遮罩层，避免挡住选中文本） ====================
+        try {
+          if (!(doc as any).__rkPageTurnListeners) {
+            const win = doc.defaultView;
+            // 屏蔽 iframe 内默认右键菜单/长按菜单
+            const onContextMenu = (e: Event) => {
+              try {
+                e.preventDefault();
+              } catch (e) {}
+            };
+            doc.addEventListener('contextmenu', onContextMenu);
+
+            const getRect = () => {
+              const iframeEl = (win?.frameElement as HTMLIFrameElement | null) || null;
+              const r = iframeEl?.getBoundingClientRect();
+              return r || { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight };
+            };
+
+            // 长按自动选择“一句话”
+            const SENTENCE_BREAK = /[。！？；;.!?\n\r]/;
+            const selectSentenceAtPoint = (clientX: number, clientY: number) => {
+              try {
+                const anyDoc = doc as any;
+                let range: Range | null = null;
+                if (typeof anyDoc.caretRangeFromPoint === 'function') {
+                  range = anyDoc.caretRangeFromPoint(clientX, clientY);
+                } else if (typeof anyDoc.caretPositionFromPoint === 'function') {
+                  const pos = anyDoc.caretPositionFromPoint(clientX, clientY);
+                  if (pos) {
+                    range = doc.createRange();
+                    range.setStart(pos.offsetNode, pos.offset);
+                    range.collapse(true);
+                  }
+                }
+                if (!range) return false;
+
+                let node = range.startContainer as any;
+                let offset = range.startOffset;
+                if (node && node.nodeType !== Node.TEXT_NODE) {
+                  const walker = doc.createTreeWalker(node, NodeFilter.SHOW_TEXT);
+                  const textNode = walker.nextNode();
+                  if (!textNode) return false;
+                  node = textNode;
+                  offset = 0;
+                }
+                const text = (node?.textContent || '') as string;
+                if (!text) return false;
+
+                let start = Math.min(offset, text.length);
+                let end = Math.min(offset, text.length);
+                while (start > 0 && !SENTENCE_BREAK.test(text[start - 1])) start--;
+                while (end < text.length && !SENTENCE_BREAK.test(text[end])) end++;
+                if (end < text.length) end++;
+                if (end - start < 2) return false;
+
+                const sel = win?.getSelection?.() || doc.getSelection?.();
+                if (!sel) return false;
+                const sentenceRange = doc.createRange();
+                sentenceRange.setStart(node, start);
+                sentenceRange.setEnd(node, end);
+                sel.removeAllRanges();
+                sel.addRange(sentenceRange);
+                return true;
+              } catch (e) {
+                return false;
+              }
+            };
+
+            let longPressTimer: any = null;
+            // 增加长按阈值，降低误触（用户反馈：容易误触）
+            const LONG_PRESS_MS = 700;
+            let longPressSelected = false;
+
+            // Pointer Events（iOS PWA/部分浏览器对 iframe 的 touch 事件支持不稳定）
+            // 统一使用 pointer 处理 swipe，再保留 touch 作为兜底
+            let pointerDown: { x: number; y: number; time: number } | null = null;
+            let pointerMove: { maxX: number; maxY: number; lastX: number; lastY: number } = { maxX: 0, maxY: 0, lastX: 0, lastY: 0 };
+
+            const onPointerDown = (e: PointerEvent) => {
+              if (settingsRef.current.pageTurnMethod !== 'swipe') return;
+              if (e.pointerType !== 'touch' && e.pointerType !== 'pen') return;
+              pointerDown = { x: e.clientX, y: e.clientY, time: Date.now() };
+              pointerMove = { maxX: 0, maxY: 0, lastX: e.clientX, lastY: e.clientY };
+            };
+
+            const onPointerMove = (e: PointerEvent) => {
+              if (settingsRef.current.pageTurnMethod !== 'swipe') return;
+              if (!pointerDown) return;
+              const moveX = Math.abs(e.clientX - pointerDown.x);
+              const moveY = Math.abs(e.clientY - pointerDown.y);
+              pointerMove.maxX = Math.max(pointerMove.maxX, moveX);
+              pointerMove.maxY = Math.max(pointerMove.maxY, moveY);
+              pointerMove.lastX = e.clientX;
+              pointerMove.lastY = e.clientY;
+              // 尽量避免浏览器默认手势干扰
+              if (settingsRef.current.pageTurnMode === 'horizontal') {
+                if (moveX > 10 && moveX > moveY * 1.2) e.preventDefault();
+              } else {
+                if (moveY > 10 && moveY > moveX * 1.2) e.preventDefault();
+              }
+            };
+
+            const onPointerUp = () => {
+              if (!pointerDown) return;
+              if (settingsRef.current.pageTurnMethod !== 'swipe') {
+                pointerDown = null;
+                return;
+              }
+              const dir = (() => {
+                const moveX = pointerMove.maxX;
+                const moveY = pointerMove.maxY;
+                const deltaX = pointerMove.lastX - pointerDown!.x;
+                const deltaY = pointerMove.lastY - pointerDown!.y;
+                const PRIMARY_THRESHOLD = 70;
+                const DIRECTION_RATIO = 1.3;
+                const DIRECTION_MIN = 40;
+                if (settingsRef.current.pageTurnMode === 'horizontal') {
+                  if (moveX > PRIMARY_THRESHOLD && moveX > moveY * DIRECTION_RATIO) {
+                    // 修正方向：右→左 下一页；左→右 上一页
+                    if (deltaX > DIRECTION_MIN) return 'prev';
+                    if (deltaX < -DIRECTION_MIN) return 'next';
+                  }
+                } else {
+                  if (moveY > PRIMARY_THRESHOLD && moveY > moveX * DIRECTION_RATIO) {
+                    if (deltaY < -DIRECTION_MIN) return 'next';
+                    if (deltaY > DIRECTION_MIN) return 'prev';
+                  }
+                }
+                return null;
+              })();
+              pointerDown = null;
+              if (!dir || !epubjsRenditionRef.current) return;
+              const now = Date.now();
+              const debounceTime = 300;
+              if (now - pageTurnStateRef.current.lastPageTurnTime < debounceTime) return;
+              if (pageTurnStateRef.current.isTurningPage) return;
+              pageTurnStateRef.current.isTurningPage = true;
+              pageTurnStateRef.current.lastPageTurnTime = now;
+              try {
+                if (dir === 'prev') epubjsRenditionRef.current.prev();
+                else epubjsRenditionRef.current.next();
+              } finally {
+                setTimeout(() => (pageTurnStateRef.current.isTurningPage = false), debounceTime);
+              }
+            };
+
+            const onTouchStart = (e: TouchEvent) => {
+              if (settingsRef.current.pageTurnMethod !== 'swipe') return;
+              if (!e.touches || e.touches.length === 0) return;
+              const t = e.touches[0];
+              // 复用现有记录结构
+              touchStartRef.current = {
+                x: t.clientX,
+                y: t.clientY,
+                clientX: t.clientX,
+                clientY: t.clientY,
+                time: Date.now(),
+              };
+              touchMoveRef.current = { maxMoveX: 0, maxMoveY: 0, lastX: t.clientX, lastY: t.clientY };
+
+              // 长按：自动选择触点所在一句话（不依赖系统菜单）
+              if (longPressTimer) clearTimeout(longPressTimer);
+              longPressSelected = false;
+              longPressTimer = setTimeout(() => {
+                try {
+                  const sel = win?.getSelection?.() || doc.getSelection?.();
+                  if (!sel || sel.isCollapsed) {
+                    const ok = selectSentenceAtPoint(t.clientX, t.clientY);
+                    if (ok) {
+                      longPressSelected = true;
+                      // 长按成功后立即上报选区并弹出菜单（不必等抬手）
+                      setTimeout(emitSelection, 0);
+                    }
+                  }
+                } catch (e) {}
+              }, LONG_PRESS_MS);
+            };
+
+            const onTouchMove = (e: TouchEvent) => {
+              if (settingsRef.current.pageTurnMethod !== 'swipe') return;
+              if (!touchStartRef.current || !e.touches || e.touches.length === 0) return;
+              const t = e.touches[0];
+              const moveX = Math.abs(t.clientX - touchStartRef.current.clientX);
+              const moveY = Math.abs(t.clientY - touchStartRef.current.clientY);
+              touchMoveRef.current.maxMoveX = Math.max(touchMoveRef.current.maxMoveX, moveX);
+              touchMoveRef.current.maxMoveY = Math.max(touchMoveRef.current.maxMoveY, moveY);
+              touchMoveRef.current.lastX = t.clientX;
+              touchMoveRef.current.lastY = t.clientY;
+              // 阻止滚动干扰（按模式）
+              if (settingsRef.current.pageTurnMode === 'horizontal') {
+                if (moveX > 10 && moveX > moveY * 1.2) e.preventDefault();
+              } else {
+                if (moveY > 10 && moveY > moveX * 1.2) e.preventDefault();
+              }
+
+              // 有明显移动就取消长按
+              if (longPressTimer && (moveX > 12 || moveY > 12)) {
+                clearTimeout(longPressTimer);
+                longPressTimer = null;
+              }
+            };
+
+            const onTouchEnd = () => {
+              if (longPressTimer) {
+                clearTimeout(longPressTimer);
+                longPressTimer = null;
+              }
+              // 长按已触发“整句选择”时，不要让 touchend 的 swipe 判定覆盖掉选区
+              if (longPressSelected) {
+                longPressSelected = false;
+                touchStartRef.current = null;
+                return;
+              }
+              if (settingsRef.current.pageTurnMethod !== 'swipe') {
+                touchStartRef.current = null;
+                return;
+              }
+              const dir = (() => {
+                if (!touchStartRef.current) return null;
+                const moveX = touchMoveRef.current.maxMoveX;
+                const moveY = touchMoveRef.current.maxMoveY;
+                const deltaX = touchMoveRef.current.lastX - touchStartRef.current.clientX;
+                const deltaY = touchMoveRef.current.lastY - touchStartRef.current.clientY;
+                const PRIMARY_THRESHOLD = 70;
+                const DIRECTION_RATIO = 1.3;
+                const DIRECTION_MIN = 40;
+                if (settingsRef.current.pageTurnMode === 'horizontal') {
+                  if (moveX > PRIMARY_THRESHOLD && moveX > moveY * DIRECTION_RATIO) {
+                    // 修正方向：右→左 下一页；左→右 上一页
+                    if (deltaX > DIRECTION_MIN) return 'prev';
+                    if (deltaX < -DIRECTION_MIN) return 'next';
+                  }
+                } else {
+                  if (moveY > PRIMARY_THRESHOLD && moveY > moveX * DIRECTION_RATIO) {
+                    if (deltaY < -DIRECTION_MIN) return 'next';
+                    if (deltaY > DIRECTION_MIN) return 'prev';
+                  }
+                }
+                return null;
+              })();
+
+              touchStartRef.current = null;
+              if (!dir || !epubjsRenditionRef.current) return;
+              const now = Date.now();
+              const debounceTime = 300;
+              if (now - pageTurnStateRef.current.lastPageTurnTime < debounceTime) return;
+              if (pageTurnStateRef.current.isTurningPage) return;
+              pageTurnStateRef.current.isTurningPage = true;
+              pageTurnStateRef.current.lastPageTurnTime = now;
+              try {
+                if (dir === 'prev') epubjsRenditionRef.current.prev();
+                else epubjsRenditionRef.current.next();
+              } finally {
+                setTimeout(() => (pageTurnStateRef.current.isTurningPage = false), debounceTime);
+              }
+            };
+
+            const onClick = (e: MouseEvent) => {
+              const s = settingsRef.current;
+              if (s.pageTurnMethod !== 'click' || !s.clickToTurn) return;
+              if (!epubjsRenditionRef.current) return;
+              const rect = getRect();
+              const x = e.clientX - rect.left;
+              const y = e.clientY - rect.top;
+
+              // 若有选区，不触发点击翻页
+              try {
+                const sel = doc.getSelection?.();
+                if (sel && !sel.isCollapsed) return;
+              } catch (e) {}
+
+              const now = Date.now();
+              const debounceTime = 300;
+              if (now - pageTurnStateRef.current.lastPageTurnTime < debounceTime) return;
+              if (pageTurnStateRef.current.isTurningPage) return;
+              pageTurnStateRef.current.isTurningPage = true;
+              pageTurnStateRef.current.lastPageTurnTime = now;
+
+              if (s.pageTurnMode === 'horizontal') {
+                if (x < rect.width / 2) epubjsRenditionRef.current.prev();
+                else epubjsRenditionRef.current.next();
+              } else {
+                if (y < rect.height / 2) epubjsRenditionRef.current.prev();
+                else epubjsRenditionRef.current.next();
+              }
+
+              setTimeout(() => (pageTurnStateRef.current.isTurningPage = false), debounceTime);
+            };
+
+            doc.addEventListener('touchstart', onTouchStart, { passive: true });
+            doc.addEventListener('touchmove', onTouchMove, { passive: false });
+            doc.addEventListener('touchend', onTouchEnd, { passive: true });
+            doc.addEventListener('click', onClick, true);
+            // Pointer Events：更适配 PWA / iOS
+            doc.addEventListener('pointerdown', onPointerDown as any, { passive: true });
+            doc.addEventListener('pointermove', onPointerMove as any, { passive: false });
+            doc.addEventListener('pointerup', onPointerUp as any, { passive: true });
+
+            (doc as any).__rkPageTurnListeners = { onTouchStart, onTouchMove, onTouchEnd, onPointerDown, onPointerMove, onPointerUp, onClick, onContextMenu };
+          }
+        } catch (e) {
+          // ignore
         }
       });
 
@@ -791,26 +1407,48 @@ export default function ReaderEPUBPro({
         // 提取位置信息
         const spineIndex = location.start?.index ?? 0;
         const cfi = location.start?.cfi;
-        const currentPage = location.start?.displayed?.page || 1;
-        const totalPages = location.start?.displayed?.total || 1;
+        // 注意：displayed.page/total 仅对“当前章节/当前视图”有效，字体/尺寸变化会漂移
+        // 全书页码将优先使用 book.locations + CFI 计算（更稳定）
+        const chapterCurrentPage = location.start?.displayed?.page || 1;
+        const chapterTotalPages = location.start?.displayed?.total || 1;
+
+        if (typeof cfi === 'string' && cfi.startsWith('epubcfi(')) {
+          lastCfiRef.current = cfi;
+        }
+
+        // 若正在执行“重排后定位”的恢复流程，避免把中间态写回进度（会造成进度跳动）
+        if (isRestoringLayoutRef.current) {
+          return;
+        }
         
-        // ⚠️ 重要：使用章节索引计算全书进度（而不是章节内的页码进度）
-        // 进度 = (当前章节索引 + 1) / 总章节数
+        // 进度策略（locations 被禁用时也要“随翻页变化”）：
+        // - 优先使用 epubjs 提供的全书 percentage（若可用）
+        // - 否则使用 “spineIndex/spineLength + 当前章节内页码比例” 的组合近似全书进度
         const totalChapters = getTotalChapters();
         let progress = 0;
-        
-        // 验证总章节数是否合理（至少应该大于 spineIndex）
-        if (totalChapters > 0 && spineIndex >= 0) {
-          // 如果总章节数不合理（比如只有1个章节，但 spineIndex 很大），说明总章节数获取错误
+
+        // 章节内进度（0~1）
+        const withinChapter =
+          typeof chapterTotalPages === 'number' &&
+          chapterTotalPages > 1 &&
+          typeof chapterCurrentPage === 'number' &&
+          chapterCurrentPage >= 1
+            ? Math.min(1, Math.max(0, (chapterCurrentPage - 1) / chapterTotalPages))
+            : 0;
+
+        // 先尝试使用 epubjs 的 percentage（如果存在且有效）
+        const percentage = location.start?.percentage;
+        if (percentage !== undefined && percentage !== null && !isNaN(percentage) && percentage > 0) {
+          progress = Math.min(1, Math.max(0, percentage));
+        } else if (totalChapters > 0 && spineIndex >= 0) {
+          // 章节总数异常时尝试重算一次
           if (totalChapters === 1 && spineIndex > 0) {
-            // 总章节数可能获取错误，尝试重新获取
             try {
               const book = epubjsBookRef.current;
               if (book && book.spine) {
                 const spine = book.spine;
                 let recalculatedTotal = 0;
-                
-                // 尝试多种方法重新获取总章节数
+
                 if (typeof spine.length === 'number') {
                   recalculatedTotal = spine.length;
                 } else {
@@ -818,7 +1456,6 @@ export default function ReaderEPUBPro({
                   if (spineItems.length > 0) {
                     recalculatedTotal = spineItems.length;
                   } else {
-                    // 遍历获取最大索引
                     let maxIndex = -1;
                     try {
                       spine.each((item: any) => {
@@ -826,65 +1463,34 @@ export default function ReaderEPUBPro({
                           maxIndex = item.index;
                         }
                       });
-                      if (maxIndex >= 0) {
-                        recalculatedTotal = maxIndex + 1;
-                      }
-                    } catch (e) {
-                      // 忽略错误
+                      if (maxIndex >= 0) recalculatedTotal = maxIndex + 1;
+                    } catch {
+                      // ignore
                     }
                   }
                 }
-                
+
                 if (recalculatedTotal > 0 && recalculatedTotal > spineIndex) {
                   totalChaptersRef.current = recalculatedTotal;
-                  progress = Math.min(1, Math.max(0, (spineIndex + 1) / recalculatedTotal));
+                  progress = Math.min(1, Math.max(0, (spineIndex + withinChapter) / recalculatedTotal));
                 } else {
-                  // 如果重新计算失败，使用 percentage 或页码
-                  const percentage = location.start?.percentage;
-                  if (percentage !== undefined && percentage !== null && !isNaN(percentage) && percentage > 0) {
-                    progress = Math.min(1, Math.max(0, percentage));
-                    console.warn('ReaderEPUBPro: ⚠️ 使用 percentage 作为进度', {
-                      spineIndex,
-                      totalChapters,
-                      percentage,
-                      progress,
-                    });
-                  } else if (totalPages > 0 && currentPage > 0) {
-                    progress = Math.min(1, Math.max(0, currentPage / totalPages));
-                  } else {
-                    progress = 0;
-                  }
+                  // 兜底：至少让进度随章节内翻页变化
+                  progress = Math.min(1, Math.max(0, withinChapter));
                 }
               } else {
-                progress = 0;
+                progress = Math.min(1, Math.max(0, withinChapter));
               }
-            } catch (e) {
-              console.error('ReaderEPUBPro: 重新获取总章节数失败', e);
-              progress = 0;
-            }
-          } else if (spineIndex >= totalChapters) {
-            // 如果 spineIndex 大于等于总章节数，说明总章节数可能获取错误
-            // 使用 percentage 或页码作为备选
-            const percentage = location.start?.percentage;
-            if (percentage !== undefined && percentage !== null && !isNaN(percentage) && percentage > 0) {
-              progress = Math.min(1, Math.max(0, percentage));
-            } else if (totalPages > 0 && currentPage > 0) {
-              progress = Math.min(1, Math.max(0, currentPage / totalPages));
-            } else {
-              progress = Math.min(1, Math.max(0, (spineIndex + 1) / (spineIndex + 1))); // 至少是当前章节
+            } catch {
+              progress = Math.min(1, Math.max(0, withinChapter));
             }
           } else {
-            // 正常情况：使用章节索引计算全书进度
-            progress = Math.min(1, Math.max(0, (spineIndex + 1) / totalChapters));
+            // 正常：组合进度（确保同章节内翻页也会变化）
+            const denom = totalChapters > 0 ? totalChapters : Math.max(1, spineIndex + 1);
+            progress = Math.min(1, Math.max(0, (spineIndex + withinChapter) / denom));
           }
         } else {
-          // 如果章节信息不可用，尝试使用 percentage（如果存在）
-          const percentage = location.start?.percentage;
-          if (percentage !== undefined && percentage !== null && !isNaN(percentage) && percentage > 0) {
-            progress = Math.min(1, Math.max(0, percentage));
-          } else {
-            progress = 0;
-          }
+          // 完全拿不到章节信息时：至少使用章节内页码比例
+          progress = Math.min(1, Math.max(0, withinChapter));
         }
         
         // 确保进度值有效
@@ -917,11 +1523,38 @@ export default function ReaderEPUBPro({
           // 获取失败
         }
         
+        // 使用 locations 计算稳定的“全书页码/总页数/进度”
+        let finalCurrentPage = chapterCurrentPage;
+        let finalTotalPages = chapterTotalPages;
+        let finalProgress = progress;
+
+        try {
+          const bookInstance = epubjsBookRef.current;
+          if (
+            locationsReadyRef.current &&
+            bookInstance?.locations &&
+            typeof bookInstance.locations.locationFromCfi === 'function' &&
+            typeof bookInstance.locations.length === 'function' &&
+            typeof cfi === 'string' &&
+            cfi.startsWith('epubcfi(')
+          ) {
+            const loc = bookInstance.locations.locationFromCfi(cfi);
+            const total = bookInstance.locations.length();
+            if (typeof loc === 'number' && loc >= 0 && typeof total === 'number' && total > 0) {
+              finalCurrentPage = loc + 1;
+              finalTotalPages = total;
+              finalProgress = Math.min(1, Math.max(0, (loc + 1) / total));
+            }
+          }
+        } catch (e) {
+          // 忽略，回退到章节内页码
+        }
+
         const position: ReadingPosition = {
           chapterIndex: spineIndex,
-          currentPage: location.start?.displayed?.page || 1,
-          totalPages: location.start?.displayed?.total || 1,
-          progress: progress,
+          currentPage: finalCurrentPage,
+          totalPages: finalTotalPages,
+          progress: finalProgress,
           currentLocation: cfi, // 保存 CFI（最精确的位置）
           chapterTitle: chapterTitle,
         };
@@ -931,8 +1564,10 @@ export default function ReaderEPUBPro({
           isFirstRelocated = false;
         }
         
-        // 触发进度保存
-        onProgressChange(progress, position);
+        // 触发进度保存（使用最终进度）
+        lastProgressRef.current = finalProgress;
+        lastPositionRef.current = position;
+        onProgressChange(finalProgress, position);
       };
       rendition.on('relocated', eventHandlers.relocated);
 
@@ -986,12 +1621,67 @@ export default function ReaderEPUBPro({
         }
       };
 
+      // 暴露“跳转到指定进度/位置”给外部（供跨设备进度跳转）
+      (window as any).__readerGoToPosition = async (pos: any) => {
+        try {
+          const cfi = pos?.currentLocation || pos?.currentPosition;
+          if (typeof cfi === 'string' && cfi.startsWith('epubcfi(') && typeof rendition.display === 'function') {
+            await rendition.display(cfi);
+            return true;
+          }
+          const chapterIndex = pos?.chapterIndex;
+          if (typeof chapterIndex === 'number' && !isNaN(chapterIndex)) {
+            const item = bookInstance?.spine?.get?.(chapterIndex);
+            if (item?.href) {
+              await rendition.display(item.href);
+              return true;
+            }
+          }
+        } catch {
+          // ignore
+        }
+        return false;
+      };
+
       // 窗口大小变化时调整
       const handleResize = () => {
         if (rendition && container) {
           const width = container.offsetWidth || window.innerWidth;
           const height = container.offsetHeight || window.innerHeight;
-          rendition.resize(width, height);
+
+          const anchorCfi =
+            lastCfiRef.current ||
+            rendition.currentLocation?.()?.start?.cfi ||
+            null;
+
+          // 避免 resize 过程中 relocated 触发保存，导致进度/页码跳动
+          isRestoringLayoutRef.current = true;
+
+          try {
+            rendition.resize(width, height);
+          } catch (e) {
+            // 忽略 resize 错误
+          }
+
+          // resize 后重新定位回锚点 CFI（保证“正在读的内容”不变）
+          if (anchorCfi && typeof rendition.display === 'function') {
+            setTimeout(async () => {
+              try {
+                await rendition.display(anchorCfi);
+              } catch (e) {
+                // 忽略定位失败
+              } finally {
+                // 短延迟后恢复保存
+                setTimeout(() => {
+                  isRestoringLayoutRef.current = false;
+                }, 150);
+              }
+            }, 50);
+          } else {
+            setTimeout(() => {
+              isRestoringLayoutRef.current = false;
+            }, 150);
+          }
         }
       };
 
@@ -1007,6 +1697,53 @@ export default function ReaderEPUBPro({
             console.error('ReaderEPUBPro: 跳转失败', error);
             toast.error('跳转失败');
           }
+        }
+      };
+
+      // 暴露高亮函数（用于笔记高亮）
+      (window as any).__epubHighlight = (cfiRange: string) => {
+        try {
+          if (!cfiRange || typeof cfiRange !== 'string') return;
+          if (!epubjsRenditionRef.current?.annotations?.highlight) return;
+          epubjsRenditionRef.current.annotations.highlight(
+            cfiRange,
+            {},
+            () => {},
+            'rk-note-highlight',
+            {
+              // 更明显的“背景高亮”效果（epubjs 通过 SVG overlay 实现）
+              fill: 'rgba(255, 235, 59, 0.55)',
+              'mix-blend-mode': 'multiply',
+            }
+          );
+        } catch (e) {
+          // ignore
+        }
+      };
+
+      // 暴露取消高亮函数
+      (window as any).__epubUnhighlight = (cfiRange: string) => {
+        try {
+          if (!cfiRange || typeof cfiRange !== 'string') return;
+          const anyR: any = epubjsRenditionRef.current;
+          if (!anyR?.annotations) return;
+          if (typeof anyR.annotations.remove === 'function') {
+            // epubjs 常见 API：remove(cfiRange, type)
+            try {
+              anyR.annotations.remove(cfiRange, 'highlight');
+              return;
+            } catch (e) {
+              // ignore
+            }
+            // 兜底：remove(cfiRange)
+            try {
+              anyR.annotations.remove(cfiRange);
+            } catch (e) {
+              // ignore
+            }
+          }
+        } catch (e) {
+          // ignore
         }
       };
       
@@ -1189,6 +1926,15 @@ export default function ReaderEPUBPro({
       // 等待样式生效后重新计算分页和布局
       setTimeout(async () => {
         try {
+          // 记录重排前的锚点 CFI，避免字体/尺寸变化导致跳页
+          const anchorCfi =
+            lastCfiRef.current ||
+            rendition.currentLocation?.()?.start?.cfi ||
+            null;
+
+          // 标记进入恢复流程，避免 relocated 中间态写回进度
+          isRestoringLayoutRef.current = true;
+
           // 调用 resize 方法重新计算布局
           if (typeof rendition.resize === 'function') {
             await rendition.resize();
@@ -1196,12 +1942,58 @@ export default function ReaderEPUBPro({
           
           // 或者使用 clear 和 render 强制重新渲染当前页
           // 这样可以确保分页正确
-          const currentLocation = rendition.currentLocation();
-          if (currentLocation?.start?.cfi) {
-            await rendition.display(currentLocation.start.cfi);
+          if (anchorCfi && typeof rendition.display === 'function') {
+            await rendition.display(anchorCfi);
           }
+
+          // 重排/定位完成后，再允许进度保存，并主动触发一次“稳定页码”保存
+          setTimeout(() => {
+            try {
+              isRestoringLayoutRef.current = false;
+              const latestLocation = rendition.currentLocation?.();
+              const latestCfi = latestLocation?.start?.cfi;
+              if (typeof latestCfi === 'string' && latestCfi.startsWith('epubcfi(')) {
+                lastCfiRef.current = latestCfi;
+              }
+
+              // 如果 locations 可用，用它更新全书页码/进度
+              const bookInstance = epubjsBookRef.current;
+              if (
+                locationsReadyRef.current &&
+                bookInstance?.locations &&
+                typeof bookInstance.locations.locationFromCfi === 'function' &&
+                typeof bookInstance.locations.length === 'function' &&
+                typeof latestCfi === 'string' &&
+                latestCfi.startsWith('epubcfi(')
+              ) {
+                const loc = bookInstance.locations.locationFromCfi(latestCfi);
+                const total = bookInstance.locations.length();
+                if (typeof loc === 'number' && loc >= 0 && typeof total === 'number' && total > 0) {
+                  const progress = Math.min(1, Math.max(0, (loc + 1) / total));
+                  lastProgressRef.current = progress;
+                  lastPositionRef.current = {
+                    chapterIndex: latestLocation?.start?.index ?? 0,
+                    currentPage: loc + 1,
+                    totalPages: total,
+                    progress,
+                    currentLocation: latestCfi,
+                  };
+                  onProgressChange(progress, {
+                    chapterIndex: latestLocation?.start?.index ?? 0,
+                    currentPage: loc + 1,
+                    totalPages: total,
+                    progress,
+                    currentLocation: latestCfi,
+                  });
+                }
+              }
+            } catch (e) {
+              isRestoringLayoutRef.current = false;
+            }
+          }, 150);
         } catch (e) {
           console.error('ReaderEPUBPro: 重新布局失败', e);
+          isRestoringLayoutRef.current = false;
         }
       }, 100); // 延迟100ms确保样式已应用
       
@@ -1209,6 +2001,79 @@ export default function ReaderEPUBPro({
       console.error('ReaderEPUBPro: 更新主题失败', error);
     }
   }, [settings.theme, settings.fontSize, settings.fontFamily, settings.lineHeight, settings.margin, settings.textIndent]);
+
+  // 在切后台/关闭页面时，强制 flush 一次最新位置，避免“最后一次 relocated 未落库”导致回退到上一页
+  useEffect(() => {
+    const flushNow = () => {
+      try {
+        if (isRestoringLayoutRef.current) return;
+        const rendition = epubjsRenditionRef.current;
+        const bookInstance = epubjsBookRef.current;
+        const cfi =
+          lastCfiRef.current ||
+          rendition?.currentLocation?.()?.start?.cfi ||
+          null;
+
+        // 优先使用我们已经算好的 lastPositionRef
+        if (lastPositionRef.current && lastPositionRef.current.currentLocation) {
+          onProgressChange(lastProgressRef.current || lastPositionRef.current.progress || 0, lastPositionRef.current);
+          return;
+        }
+
+        if (typeof cfi !== 'string' || !cfi.startsWith('epubcfi(')) return;
+
+        // 重新计算一次稳定页码（如果 locations 已就绪）
+        let currentPage = 1;
+        let totalPages = 1;
+        let progress = 0;
+        try {
+          if (
+            locationsReadyRef.current &&
+            bookInstance?.locations &&
+            typeof bookInstance.locations.locationFromCfi === 'function' &&
+            typeof bookInstance.locations.length === 'function'
+          ) {
+            const loc = bookInstance.locations.locationFromCfi(cfi);
+            const total = bookInstance.locations.length();
+            if (typeof loc === 'number' && loc >= 0 && typeof total === 'number' && total > 0) {
+              currentPage = loc + 1;
+              totalPages = total;
+              progress = Math.min(1, Math.max(0, (loc + 1) / total));
+            }
+          }
+        } catch {
+          // ignore
+        }
+
+        const spineIndex = rendition?.currentLocation?.()?.start?.index ?? 0;
+        const pos: ReadingPosition = {
+          chapterIndex: spineIndex,
+          currentPage,
+          totalPages,
+          progress,
+          currentLocation: cfi,
+        };
+        lastProgressRef.current = progress;
+        lastPositionRef.current = pos;
+        onProgressChange(progress, pos);
+      } catch {
+        // ignore
+      }
+    };
+
+    const onVis = () => {
+      if (document.visibilityState === 'hidden') flushNow();
+    };
+    const onPageHide = () => flushNow();
+    document.addEventListener('visibilitychange', onVis);
+    window.addEventListener('pagehide', onPageHide);
+    return () => {
+      document.removeEventListener('visibilitychange', onVis);
+      window.removeEventListener('pagehide', onPageHide);
+      flushNow();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [book.id, onProgressChange]);
 
   // 加载阅读器
   useEffect(() => {
@@ -1452,8 +2317,8 @@ export default function ReaderEPUBPro({
       lastY: touch.clientY,
     };
     
-    // 移动端PWA模式：在中心区域长按显示导航栏
-    if (isMobile && isPWA && isInCenterArea) {
+    // 移动端：在中心区域长按显示导航栏（PWA/浏览器保持一致）
+    if (isMobile && isInCenterArea) {
       longPressTimerRef.current = setTimeout(() => {
         showBars();
         // 触觉反馈（如果支持）
@@ -1462,7 +2327,7 @@ export default function ReaderEPUBPro({
         }
       }, longPressThreshold);
     }
-  }, [loading, isMobile, isPWA, showBars]);
+  }, [loading, isMobile, showBars]);
 
   // 处理触摸移动（检测滑动）
   const handleTouchMove = useCallback((e: React.TouchEvent) => {
@@ -1495,9 +2360,14 @@ export default function ReaderEPUBPro({
     touchMoveRef.current.lastX = touch.clientX;
     touchMoveRef.current.lastY = touch.clientY;
     
-    // 滑动翻页：只有在用户选择滑动翻页模式时才阻止默认行为
-    if (settings.pageTurnMethod === 'swipe' && moveX > 10 && moveX > moveY * 1.5) {
-      e.preventDefault();
+    // 滑动翻页：只有在用户选择滑动翻页模式时才阻止默认行为（避免页面滚动/选中干扰）
+    if (settings.pageTurnMethod === 'swipe') {
+      // 根据翻页模式阻止对应方向的默认滚动
+      if (settings.pageTurnMode === 'horizontal') {
+        if (moveX > 10 && moveX > moveY * 1.2) e.preventDefault();
+      } else {
+        if (moveY > 10 && moveY > moveX * 1.2) e.preventDefault();
+      }
     }
   }, [settings.pageTurnMethod]);
 
@@ -1508,23 +2378,30 @@ export default function ReaderEPUBPro({
     const moveX = touchMoveRef.current.maxMoveX;
     const moveY = touchMoveRef.current.maxMoveY;
     const deltaX = touchMoveRef.current.lastX - touchStartRef.current.clientX;
-    
-    // 滑动翻页的条件：
-    // 1. 水平滑动距离 > 50px（足够的滑动距离）
-    // 2. 水平滑动距离 > 垂直滑动距离 * 1.5（明确的横向滑动）
-    // 3. 滑动方向明确（向左或向右）
-    if (moveX > 50 && moveX > moveY * 1.5) {
-      if (deltaX < -30) {
-        // 向左滑动 - 下一页
-        return 'next';
-      } else if (deltaX > 30) {
-        // 向右滑动 - 上一页
-        return 'prev';
+    const deltaY = touchMoveRef.current.lastY - touchStartRef.current.clientY;
+
+    // 防误触阈值
+    const PRIMARY_THRESHOLD = 70; // 主方向最小滑动距离
+    const DIRECTION_RATIO = 1.3;  // 主方向需要明显大于副方向
+    const DIRECTION_MIN = 40;     // 方向判定最小 delta
+
+    // 支持两种滑动方式：
+    // - 横向：左→右 下一页；右→左 上一页
+    // - 纵向：下→上 下一页；上→下 上一页
+    if (settings.pageTurnMode === 'horizontal') {
+      if (moveX > PRIMARY_THRESHOLD && moveX > moveY * DIRECTION_RATIO) {
+        if (deltaX > DIRECTION_MIN) return 'next'; // 左向右：下一页
+        if (deltaX < -DIRECTION_MIN) return 'prev'; // 右向左：上一页
+      }
+    } else {
+      if (moveY > PRIMARY_THRESHOLD && moveY > moveX * DIRECTION_RATIO) {
+        if (deltaY < -DIRECTION_MIN) return 'next'; // 下向上：下一页
+        if (deltaY > DIRECTION_MIN) return 'prev';  // 上向下：上一页
       }
     }
     
     return null;
-  }, []);
+  }, [settings.pageTurnMode]);
 
   // PC端鼠标按下事件（用于长按检测）
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
@@ -1717,6 +2594,46 @@ export default function ReaderEPUBPro({
     }
   }, [loading, settings.clickToTurn, settings.pageTurnMode, settings.pageTurnMethod, checkSwipeGesture]);
 
+  // 处理 swipe 翻页（touch end）
+  const handleTouchEnd = useCallback((e: React.TouchEvent) => {
+    if (loading || !epubjsRenditionRef.current) return;
+    if (settings.pageTurnMethod !== 'swipe') {
+      // 非 swipe 模式，交给点击逻辑（兼容）
+      handleTouchClick(e);
+      return;
+    }
+
+    // 清除长按定时器
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+
+    const dir = checkSwipeGesture();
+    touchStartRef.current = null;
+    if (!dir) return;
+
+    // 防抖
+    const now = Date.now();
+    const debounceTime = 300;
+    if (now - pageTurnStateRef.current.lastPageTurnTime < debounceTime) return;
+    if (pageTurnStateRef.current.isTurningPage) return;
+    pageTurnStateRef.current.isTurningPage = true;
+    pageTurnStateRef.current.lastPageTurnTime = now;
+
+    try {
+      if (dir === 'prev') {
+        epubjsRenditionRef.current.prev();
+      } else {
+        epubjsRenditionRef.current.next();
+      }
+    } finally {
+      setTimeout(() => {
+        pageTurnStateRef.current.isTurningPage = false;
+      }, debounceTime);
+    }
+  }, [loading, settings.pageTurnMethod, checkSwipeGesture, handleTouchClick]);
+
   // 判断是否为PC端
   const isDesktop = typeof window !== 'undefined' && window.innerWidth >= 1024;
   
@@ -1828,12 +2745,17 @@ export default function ReaderEPUBPro({
   return (
     <div
       className="relative h-full w-full overflow-hidden"
+      onContextMenu={(e) => {
+        // 屏蔽浏览器默认右键菜单（阅读器内交互由应用接管）
+        e.preventDefault();
+      }}
       style={{ 
         backgroundColor: themeStyles.bg,
         touchAction: 'manipulation',
+        // 屏蔽 iOS/Safari 长按系统菜单（仍允许选中文字）
         WebkitTouchCallout: 'none',
-        WebkitUserSelect: 'none',
-        userSelect: 'none',
+        WebkitUserSelect: 'text',
+        userSelect: 'text',
         // 确保内容区域不会被安全区域遮挡（左右边距）
         paddingLeft: 'env(safe-area-inset-left, 0px)',
         paddingRight: 'env(safe-area-inset-right, 0px)',
@@ -1882,7 +2804,7 @@ export default function ReaderEPUBPro({
           <div
             onTouchStart={handleTouchStart}
             onTouchMove={handleTouchMove}
-            onTouchEnd={handleTouchClick}
+            onTouchEnd={handleTouchEnd}
             onMouseDown={handleMouseDown}
             onMouseMove={handleMouseMove}
             onMouseUp={handleMouseUp}
@@ -1895,8 +2817,9 @@ export default function ReaderEPUBPro({
               right: 0,
               bottom: 0,
               zIndex: 10,
-              pointerEvents: 'auto',
-              touchAction: 'pan-y', // 允许垂直滚动，但可以在代码中阻止横向滚动
+              // 关键：不要挡住 EPUB iframe 的文字选择
+              pointerEvents: 'none',
+              touchAction: 'manipulation',
               cursor: 'pointer',
               // 完全透明，不影响显示
               backgroundColor: 'transparent',

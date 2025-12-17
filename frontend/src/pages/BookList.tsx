@@ -29,6 +29,7 @@ interface BookItem {
   created_at?: string;
   uploader_id?: string;
   uploader_username?: string;
+  category?: string;
 }
 
 type ViewMode = 'grid' | 'list';
@@ -36,6 +37,10 @@ type SortOption = 'created_at' | 'title' | 'author' | 'rating';
 type SortOrder = 'desc' | 'asc';
 
 export default function BookList() {
+  const isNoteBook = (b: BookItem) => {
+    const title = (b?.title || '').toString();
+    return b?.category === '笔记' || title.includes('[笔记]');
+  };
   const { isAuthenticated } = useAuthStore();
   const navigate = useNavigate();
   const [books, setBooks] = useState<BookItem[]>([]);
@@ -85,6 +90,18 @@ export default function BookList() {
       }
     });
   }, []);
+
+  // 监听“书籍列表变更”事件（如：导出笔记生成新书），强制刷新列表
+  useEffect(() => {
+    const onBooksChanged = () => {
+      // 直接从网络刷新（内部已处理离线与缓存兜底）
+      fetchAllData();
+      fetchBookCategories();
+    };
+    window.addEventListener('__books_changed', onBooksChanged as any);
+    return () => window.removeEventListener('__books_changed', onBooksChanged as any);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAuthenticated]);
 
   // 监听网络状态变化：从离线恢复时自动刷新
   useEffect(() => {
@@ -432,6 +449,11 @@ export default function BookList() {
               </div>
             );
           })()}
+          {isNoteBook(book) && (
+            <div className="absolute top-2 left-2 px-2 py-0.5 rounded-md text-[10px] font-bold tracking-wide bg-black/70 text-white backdrop-blur">
+              笔记
+            </div>
+          )}
           {book.rating && (
             <div className="absolute top-1 right-1 bg-black/60 backdrop-blur-sm text-white text-[10px] px-1.5 py-0.5 rounded-full flex items-center gap-0.5">
               <span>⭐</span>
@@ -461,7 +483,7 @@ export default function BookList() {
       }}
       className="group flex gap-3 sm:gap-4 p-3 sm:p-4 bg-white dark:bg-gray-800 rounded-lg hover:shadow-md transition-all border border-gray-200 dark:border-gray-700 cursor-pointer"
     >
-      <div className="w-16 h-24 sm:w-20 sm:h-28 flex-shrink-0 bg-gradient-to-br from-gray-100 to-gray-200 dark:from-gray-700 dark:to-gray-800 rounded overflow-hidden aspect-[3/4]">
+      <div className="w-16 h-24 sm:w-20 sm:h-28 flex-shrink-0 bg-gradient-to-br from-gray-100 to-gray-200 dark:from-gray-700 dark:to-gray-800 rounded overflow-hidden aspect-[3/4] relative">
         {(() => {
           const coverUrl = getCoverUrl(book.cover_url);
           return coverUrl ? (
@@ -492,6 +514,11 @@ export default function BookList() {
             </div>
           );
         })()}
+        {isNoteBook(book) && (
+          <div className="absolute top-1 left-1 px-1.5 py-0.5 rounded-md text-[10px] font-bold tracking-wide bg-black/70 text-white backdrop-blur">
+            笔记
+          </div>
+        )}
       </div>
       <div className="flex-1 min-w-0">
         <h3 className="font-semibold text-sm sm:text-base mb-1 text-gray-900 dark:text-gray-100 group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors line-clamp-2 break-words" title={book.title}>
@@ -707,6 +734,11 @@ export default function BookList() {
                               </div>
                             );
                           })()}
+                          {isNoteBook(book) && (
+                            <div className="absolute top-2 left-2 px-2 py-0.5 rounded-md text-[10px] font-bold tracking-wide bg-black/70 text-white backdrop-blur">
+                              笔记
+                            </div>
+                          )}
                           {book.rating && (
                             <div className="absolute top-1 right-1 bg-purple-600/80 backdrop-blur-sm text-white text-[10px] px-1.5 py-0.5 rounded-full flex items-center gap-0.5">
                               <span>⭐</span>

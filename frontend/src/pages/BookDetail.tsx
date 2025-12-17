@@ -12,6 +12,7 @@ import toast from 'react-hot-toast';
 import { Book, Plus, Trash2, Edit, ArrowLeft, Star, Tag, Globe, Download, Send, RefreshCw, FileText, X, Search, Check, ChevronDown, Clock, BookOpen, Heart, Lock, Upload, Link as LinkIcon } from 'lucide-react';
 import { getCoverUrl } from '../utils/coverHelper';
 import CategoryCombobox from '../components/CategoryCombobox';
+import { offlineDataCache } from '../utils/offlineDataCache';
 
 interface BookDetail {
   id: string;
@@ -74,6 +75,9 @@ export default function BookDetail() {
   const [autoExtractAttempted, setAutoExtractAttempted] = useState(false); // 标记是否已尝试过自动提取封面
   const [extractCoverFailed, setExtractCoverFailed] = useState(false); // 标记提取封面是否失败
   const [bookCategories, setBookCategories] = useState<string[]>([]);
+  const [exportingNotes, setExportingNotes] = useState(false);
+  const [creatingNoteBook, setCreatingNoteBook] = useState(false);
+  const [showNotesModal, setShowNotesModal] = useState(false);
 
   useEffect(() => {
     if (id) {
@@ -208,6 +212,167 @@ export default function BookDetail() {
       }
     } finally {
       setLoading(false);
+    }
+  };
+
+  const buildNotesMarkdown = (bookInfo: BookDetail, notes: any[], highlights: any[]) => {
+    const title = bookInfo.title || '未命名书籍';
+    const author = bookInfo.author || '';
+    const now = new Date().toLocaleString('zh-CN');
+
+    const md: string[] = [];
+    md.push(`# ${title} [笔记]`);
+    if (author) md.push(`- 作者：${author}`);
+    md.push(`- 导出时间：${now}`);
+    md.push('');
+    md.push('---');
+    md.push('');
+
+    md.push('## 高亮');
+    if (!highlights?.length) {
+      md.push('');
+      md.push('（无高亮）');
+    } else {
+      md.push('');
+      highlights
+        .filter((h) => !h.deleted_at)
+        .forEach((h: any, idx: number) => {
+          const text = (h.selected_text || '').toString().trim();
+          md.push(`- ${idx + 1}. ${text ? text : '（无文本）'}`);
+        });
+    }
+
+    md.push('');
+    md.push('## 笔记');
+    if (!notes?.length) {
+      md.push('');
+      md.push('（无笔记）');
+    } else {
+      md.push('');
+      notes.forEach((n: any, idx: number) => {
+        const content = (n.content || '').toString().trim();
+        const sel = (n.selected_text || '').toString().trim();
+        const page = n.page_number != null ? `第${n.page_number}页` : '';
+        const chapter = n.chapter_index != null ? `章节${n.chapter_index}` : '';
+        const loc = [chapter, page].filter(Boolean).join(' / ');
+        md.push(`### ${idx + 1}. ${loc || '位置未知'}`);
+        if (sel) {
+          md.push('');
+          md.push(`> ${sel.replace(/\n/g, '\n> ')}`);
+        }
+        md.push('');
+        md.push(content || '（空）');
+        md.push('');
+      });
+    }
+
+    md.push('---');
+    md.push('');
+    md.push('> 由 读士私人书库（ReadKnows）自动导出');
+    md.push('');
+    return md.join('\n');
+  };
+
+  const downloadTextFile = (fileName: string, content: string) => {
+    const blob = new Blob([content], { type: 'text/markdown;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = fileName;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  const fetchNotesAndHighlights = async () => {
+    if (!id) throw new Error('缺少书籍ID');
+    const [notesRes, hlRes] = await Promise.all([
+      api.get(`/notes/book/${id}`),
+      api.get(`/highlights/book/${id}`),
+    ]);
+    const notes = notesRes.data?.notes || [];
+    const highlights = hlRes.data?.highlights || [];
+    return { notes, highlights };
+  };
+
+  const handleExportNotesMarkdown = async () => {
+    if (!isAuthenticated) {
+      toast.error('请先登录');
+      return;
+    }
+    if (!book) return;
+    setExportingNotes(true);
+    try {
+      const { notes, highlights } = await fetchNotesAndHighlights();
+      const md = buildNotesMarkdown(book, notes, highlights);
+      const safeName = `${book.title || '未命名书籍'}-笔记.md`.replace(/[\\/:*?"<>|]/g, '_');
+      downloadTextFile(safeName, md);
+      toast.success('已导出 Markdown');
+    } catch (e: any) {
+      console.error('导出笔记失败:', e);
+      toast.error(e?.response?.data?.error || e?.message || '导出失败');
+    } finally {
+      setExportingNotes(false);
+    }
+  };
+
+  // 导出为 Markdown 并上传为“我的私人书籍”
+  const handleExportAndCreatePrivateBook = async () => {
+    if (!isAuthenticated) {
+      toast.error('请先登录');
+      return;
+    }
+    if (!book) return;
+    setCreatingNoteBook(true);
+    try {
+      const { notes, highlights } = await fetchNotesAndHighlights();
+      const md = buildNotesMarkdown(book, notes, highlights);
+      const baseTitle = `${book.title || '未命名书籍'}[笔记]`;
+      const fileName = `${baseTitle}.md`.replace(/[\\/:*?"<>|]/g, '_');
+      const file = new File([md], fileName, { type: 'text/markdown;charset=utf-8' });
+
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('isPublic', 'false'); // 私有
+      formData.append('autoConvertTxt', 'false');
+      formData.append('autoConvertMobi', 'false');
+      formData.append('category', '笔记');
+      formData.append('title', baseTitle);
+      // 导出 md 笔记书：作者使用当前登录用户
+      if (user?.username) formData.append('author', user.username);
+      // 封面复用原书封面（前端显示时叠加“笔记”角标）
+      if (book.cover_url) formData.append('coverUrl', book.cover_url);
+
+      const uploadRes = await api.post('/books/upload', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+
+      // 兜底：确保加入书架（后端通常会自动添加私有书，但遇到“已存在”分支可能不会）
+      const newBookId = uploadRes.data?.book?.id;
+      if (newBookId) {
+        try {
+          await api.post('/shelf/add', { bookId: newBookId });
+        } catch {
+          // ignore
+        }
+      }
+
+      // 清理列表缓存并通知各页面刷新（否则会一直看到旧缓存）
+      try {
+        await offlineDataCache.deleteByPrefix('/api/books');
+        await offlineDataCache.deleteByPrefix('/api/shelf/my');
+      } catch {
+        // ignore
+      }
+      window.dispatchEvent(new CustomEvent('__books_changed'));
+
+      toast.success('已生成并添加到我的书架（私有 / 笔记）');
+    } catch (e: any) {
+      console.error('生成私人笔记书失败:', e);
+      toast.error(e?.response?.data?.error || e?.message || '生成失败');
+    } finally {
+      setCreatingNoteBook(false);
     }
   };
 
@@ -987,7 +1152,7 @@ export default function BookDetail() {
                   </button>
                   
                   {/* 操作按钮 */}
-                  <div className={`grid gap-1.5 md:gap-2 ${canDelete() ? 'grid-cols-5' : 'grid-cols-4'}`}>
+                  <div className={`grid gap-1.5 md:gap-2 ${canDelete() ? 'grid-cols-6' : 'grid-cols-5'}`}>
                     {inShelf ? (
                       <button
                         onClick={handleRemoveFromShelf}
@@ -1014,6 +1179,15 @@ export default function BookDetail() {
                     >
                       <Download className="w-3.5 h-3.5 md:w-4 md:h-4 transition-transform group-hover:scale-110" />
                       <span className="text-[9px] md:text-[10px] font-medium">下载</span>
+                    </button>
+                    <button
+                      onClick={() => setShowNotesModal(true)}
+                      disabled={exportingNotes || creatingNoteBook}
+                      className="group bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 hover:border-cyan-300 dark:hover:border-cyan-700 text-gray-700 dark:text-gray-300 hover:text-cyan-600 dark:hover:text-cyan-400 rounded-lg py-2 md:py-2.5 flex flex-col items-center justify-center gap-1 transition-all duration-200 hover:shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                      title="笔记（导出 / 导入为私人书籍）"
+                    >
+                      <FileText className={`w-3.5 h-3.5 md:w-4 md:h-4 transition-transform ${exportingNotes ? 'animate-pulse' : 'group-hover:scale-110'}`} />
+                      <span className="text-[9px] md:text-[10px] font-medium">笔记</span>
                     </button>
                     <button
                       onClick={handleFetchDoubanInfo}
@@ -1627,6 +1801,70 @@ export default function BookDetail() {
                   替换封面
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 笔记：导出 / 导入方式选择 */}
+      {showNotesModal && (
+        <div
+          className="fixed inset-0 z-[9999] flex items-center justify-center p-4"
+          onPointerDown={() => setShowNotesModal(false)}
+        >
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
+          <div
+            className="relative w-full max-w-sm rounded-2xl border border-gray-200/70 dark:border-gray-700/60 bg-white dark:bg-gray-900 shadow-xl p-4"
+            onPointerDown={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+            }}
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <div className="text-base font-semibold text-gray-900 dark:text-gray-100">读书笔记</div>
+                <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                  请选择：导出仅下载，或导入为新的私人书籍（笔记）。
+                </div>
+              </div>
+              <button
+                className="p-2 rounded-lg text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 hover:bg-gray-100/70 dark:hover:bg-gray-800/60"
+                onClick={() => setShowNotesModal(false)}
+                aria-label="关闭"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="mt-4 grid grid-cols-1 gap-2">
+              <button
+                disabled={exportingNotes || creatingNoteBook}
+                onClick={async () => {
+                  setShowNotesModal(false);
+                  await handleExportNotesMarkdown();
+                }}
+                className="w-full flex items-center justify-center gap-2 rounded-xl bg-cyan-600 hover:bg-cyan-700 text-white py-3 text-sm font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <FileText className="w-4 h-4" />
+                导出（仅下载）
+              </button>
+              <button
+                disabled={exportingNotes || creatingNoteBook}
+                onClick={async () => {
+                  setShowNotesModal(false);
+                  await handleExportAndCreatePrivateBook();
+                }}
+                className="w-full flex items-center justify-center gap-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white py-3 text-sm font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <Upload className="w-4 h-4" />
+                导入为私人书籍
+              </button>
+              <button
+                onClick={() => setShowNotesModal(false)}
+                className="w-full rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 hover:bg-gray-50 dark:hover:bg-gray-800 text-gray-700 dark:text-gray-200 py-2.5 text-sm"
+              >
+                取消
+              </button>
             </div>
           </div>
         </div>
