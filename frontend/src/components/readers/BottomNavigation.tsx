@@ -184,12 +184,7 @@ export default function BottomNavigation({
         )}
 
         <button
-          onClick={() => {
-            const themes: ReadingSettings['theme'][] = ['light', 'dark', 'sepia', 'green'];
-            const currentIndex = themes.indexOf(settings.theme);
-            const nextIndex = (currentIndex + 1) % themes.length;
-            onSettingsChange({ ...settings, theme: themes[nextIndex] });
-          }}
+          onClick={onToggleSettings}
           className="flex flex-col items-center gap-0.5 p-2 rounded-lg transition-colors"
           style={{
             color: themeStyles.text,

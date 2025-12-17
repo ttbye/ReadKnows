@@ -85,6 +85,8 @@ export default function ReaderTXTPro({
   const hideBarsTimerRef = useRef<NodeJS.Timeout | null>(null);
   const progressSaveTimerRef = useRef<NodeJS.Timeout | null>(null);
   const timeUpdateTimerRef = useRef<NodeJS.Timeout | null>(null);
+  // 记录“稳定锚点”：用行号来跨字号/跨设备恢复位置（比页码稳定）
+  const anchorLineRef = useRef<number | null>(null);
 
   // 更新时间
   useEffect(() => {
@@ -113,6 +115,45 @@ export default function ReaderTXTPro({
 
     return () => {
       delete (window as any).__txtGoToPage;
+    };
+  }, [pages]);
+
+  // 暴露“跳转到指定进度/位置”给外部（供跨设备进度跳转）
+  useEffect(() => {
+    (window as any).__readerGoToPosition = (pos: any) => {
+      try {
+        // 优先使用 txtline:<line>
+        const loc = pos?.currentLocation || pos?.currentPosition;
+        let line: number | null = null;
+        if (typeof loc === 'string' && loc.startsWith('txtline:')) {
+          const n = parseInt(loc.substring('txtline:'.length), 10);
+          if (!isNaN(n)) line = n;
+        } else if (typeof pos?.scrollTop === 'number' && !isNaN(pos.scrollTop) && pos.scrollTop >= 0) {
+          // 兼容：scrollTop 字段存了行号
+          line = Math.round(pos.scrollTop);
+        }
+
+        if (line != null && pages.length > 0) {
+          const p = pages.find((pg) => pg.startLine <= line! && pg.endLine >= line!);
+          if (p) {
+            setCurrentPageIndex(pages.indexOf(p));
+            return true;
+          }
+        }
+
+        // 兜底：按 progress 定位
+        if (typeof pos?.progress === 'number' && !isNaN(pos.progress) && pages.length > 0) {
+          const idx = Math.max(0, Math.min(pages.length - 1, Math.round(pos.progress * pages.length) - 1));
+          setCurrentPageIndex(idx);
+          return true;
+        }
+      } catch {
+        // ignore
+      }
+      return false;
+    };
+    return () => {
+      delete (window as any).__readerGoToPosition;
     };
   }, [pages]);
 
@@ -333,17 +374,46 @@ export default function ReaderTXTPro({
     setPages(allPages);
     setTotalPages(allPages.length);
 
-    // 恢复阅读位置
+    // 恢复阅读位置：
+    // 1) 优先使用当前阅读锚点（行号）——用于字体/容器变化后的重新分页，不应回跳到旧 initialPosition
+    // 2) 其次使用 initialPosition.currentLocation（txtline:xxx）
+    // 3) 再用 initialPosition.progress（跨设备更稳定）
+    // 4) 最后才用 initialPosition.currentPage（最不稳定：会受字号影响）
     if (allPages.length > 0) {
-      if (initialPosition && initialPosition.currentPage) {
-        const targetPageIndex = Math.min(
-          initialPosition.currentPage - 1,
-          allPages.length - 1
-        );
-        setCurrentPageIndex(Math.max(0, targetPageIndex));
+      let targetIndex = 0;
+
+      const tryFindByLine = (line: number) => {
+        if (Number.isFinite(line) && line >= 0) {
+          const p = allPages.find((pg) => pg.startLine <= line && pg.endLine >= line);
+          if (p) return allPages.indexOf(p);
+        }
+        return null;
+      };
+
+      // 1) 当前锚点（优先，解决“调整字号后页码不重算/回跳上一页”）
+      if (anchorLineRef.current != null) {
+        const idx = tryFindByLine(anchorLineRef.current);
+        if (idx != null) targetIndex = idx;
       } else {
-        setCurrentPageIndex(0);
+        // 2) initialPosition.currentLocation: txtline:<lineIndex>
+        const loc = (initialPosition as any)?.currentLocation;
+        if (typeof loc === 'string' && loc.startsWith('txtline:')) {
+          const line = parseInt(loc.substring('txtline:'.length), 10);
+          const idx = tryFindByLine(line);
+          if (idx != null) targetIndex = idx;
+        } else {
+          // 3) initialPosition.progress（跨终端字号不同仍然稳定）
+          const p = initialPosition?.progress;
+          if (typeof p === 'number' && !isNaN(p) && p > 0) {
+            targetIndex = Math.max(0, Math.min(allPages.length - 1, Math.round(p * allPages.length) - 1));
+          } else if (initialPosition?.currentPage) {
+            // 4) 最后兜底：页码（1-based）
+            targetIndex = Math.max(0, Math.min(allPages.length - 1, initialPosition.currentPage - 1));
+          }
+        }
       }
+
+      setCurrentPageIndex(targetIndex);
     }
   }, [textLines, containerSize, settings, initialPosition]);
 
@@ -454,6 +524,8 @@ export default function ReaderTXTPro({
     if (!currentPage) return;
 
     const progress = Math.min(1, Math.max(0, currentPage.pageNumber / totalPages));
+    // 更新稳定锚点：用当前页的起始行号（跨字号/跨设备可复原）
+    anchorLineRef.current = currentPage.startLine;
 
     // 防抖保存进度
     if (progressSaveTimerRef.current) {
@@ -465,12 +537,49 @@ export default function ReaderTXTPro({
         currentPage: currentPage.pageNumber,
         totalPages: totalPages,
         progress: progress,
-        scrollTop: 0,
+        // 用 startLine 存在 scroll_top 字段，便于后端保存（比 0 更有意义）
+        scrollTop: currentPage.startLine,
+        // 关键：用 currentLocation 保存稳定位置（跨字号/跨设备不乱）
+        currentLocation: `txtline:${currentPage.startLine}`,
       };
       
       onProgressChange(progress, position);
     }, 500);
   }, [currentPageIndex, pages, totalPages, onProgressChange]);
+
+  // 组件卸载/切后台时：立即 flush 一次进度（避免“重新打开回到上一页”）
+  useEffect(() => {
+    const flushNow = () => {
+      try {
+        if (progressSaveTimerRef.current) {
+          clearTimeout(progressSaveTimerRef.current);
+          progressSaveTimerRef.current = null;
+        }
+        if (pages.length === 0 || totalPages === 0) return;
+        const currentPage = pages[currentPageIndex];
+        if (!currentPage) return;
+        const progress = Math.min(1, Math.max(0, currentPage.pageNumber / totalPages));
+        onProgressChange(progress, {
+          currentPage: currentPage.pageNumber,
+          totalPages,
+          progress,
+          scrollTop: currentPage.startLine,
+          currentLocation: `txtline:${currentPage.startLine}`,
+        });
+      } catch {
+        // ignore
+      }
+    };
+
+    const onVis = () => {
+      if (document.visibilityState === 'hidden') flushNow();
+    };
+    document.addEventListener('visibilitychange', onVis);
+    return () => {
+      document.removeEventListener('visibilitychange', onVis);
+      flushNow();
+    };
+  }, [pages, totalPages, currentPageIndex, onProgressChange]);
 
   // 搜索功能
   const performSearch = useCallback((term: string) => {

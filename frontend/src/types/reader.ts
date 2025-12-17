@@ -105,8 +105,9 @@ export const defaultSettings: ReadingSettings = {
   brightness: 100,
   margin: 20,
   textIndent: 2,
-  pageTurnMode: 'vertical',
-  pageTurnMethod: 'click',
+  // 默认：左右滑动翻页
+  pageTurnMode: 'horizontal',
+  pageTurnMethod: 'swipe',
   clickToTurn: true,
   showBottomInfoBar: true,
   readerWidth: 'centered',

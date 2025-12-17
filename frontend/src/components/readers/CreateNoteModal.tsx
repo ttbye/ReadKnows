@@ -13,6 +13,7 @@ interface CreateNoteModalProps {
   isVisible: boolean;
   bookId: string;
   selectedText: string;
+  selectedCfiRange?: string;
   currentPage: number;
   chapterIndex?: number;
   onClose: () => void;
@@ -23,6 +24,7 @@ export default function CreateNoteModal({
   isVisible,
   bookId,
   selectedText,
+  selectedCfiRange,
   currentPage,
   chapterIndex,
   onClose,
@@ -69,6 +71,14 @@ export default function CreateNoteModal({
       });
       toast.success('笔记创建成功');
       setNoteContent('');
+      // 触发高亮（EPUB），仅本次会话内
+      if (selectedCfiRange && (window as any).__epubHighlight) {
+        try {
+          (window as any).__epubHighlight(selectedCfiRange);
+        } catch (e) {
+          // ignore
+        }
+      }
       onSuccess?.();
       onClose();
     } catch (error: any) {
@@ -96,7 +106,8 @@ export default function CreateNoteModal({
 
   return (
     <div 
-      className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[100] p-2 sm:p-4"
+      // 遮罩背景改为不透明，避免“背景透出”影响阅读/对比度
+      className="fixed inset-0 bg-black flex items-start justify-center z-[100] p-2 sm:p-4"
       onClick={(e) => {
         // 点击背景关闭
         if (e.target === e.currentTarget) {
@@ -105,14 +116,14 @@ export default function CreateNoteModal({
       }}
       style={{
         // 确保在移动端也能正确显示，考虑安全区域
-        paddingTop: 'max(env(safe-area-inset-top, 0px), 8px)',
+        paddingTop: 'calc(env(safe-area-inset-top, 0px) + 12px)',
         paddingBottom: 'max(env(safe-area-inset-bottom, 0px), 8px)',
         paddingLeft: 'max(env(safe-area-inset-left, 0px), 8px)',
         paddingRight: 'max(env(safe-area-inset-right, 0px), 8px)',
       }}
     >
       <div 
-        className="card-gradient rounded-lg w-full max-w-lg max-h-[calc(100vh-2rem)] sm:max-h-[90vh] flex flex-col shadow-xl"
+        className="rounded-lg w-full max-w-lg max-h-[calc(100vh-2rem)] sm:max-h-[90vh] flex flex-col shadow-xl bg-white dark:bg-gray-900"
         onClick={(e) => e.stopPropagation()}
         onKeyDown={handleKeyDown}
         style={{

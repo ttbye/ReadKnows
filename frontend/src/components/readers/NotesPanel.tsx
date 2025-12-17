@@ -4,10 +4,11 @@
  * 显示当前书籍的所有笔记，支持添加、编辑、删除笔记
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { StickyNote, Plus, X, Edit, Trash2, Save } from 'lucide-react';
 import api from '../../utils/api';
 import toast from 'react-hot-toast';
+import { ReadingSettings } from '../../types/reader';
 
 interface Note {
   id: string;
@@ -28,6 +29,7 @@ interface NotesPanelProps {
   isVisible: boolean;
   onClose: () => void;
   onNoteClick?: (note: Note) => void;
+  theme?: ReadingSettings['theme'];
 }
 
 export default function NotesPanel({
@@ -38,6 +40,7 @@ export default function NotesPanel({
   isVisible,
   onClose,
   onNoteClick,
+  theme = 'light',
 }: NotesPanelProps) {
   const [notes, setNotes] = useState<Note[]>([]);
   const [loading, setLoading] = useState(false);
@@ -52,6 +55,57 @@ export default function NotesPanel({
       fetchNotes();
     }
   }, [isVisible, bookId]);
+
+  const themeStyles = useMemo(() => {
+    return (
+      {
+        light: {
+          panelBg: '#ffffff',
+          panelText: '#111827',
+          border: 'rgba(229,231,235,0.7)',
+          subText: '#6b7280',
+          listBg: 'rgba(249,250,251,0.75)',
+          cardBg: 'rgba(255,255,255,0.92)',
+          overlay: 'rgba(0,0,0,0.55)',
+          quoteBg: 'rgba(219,234,254,0.85)',
+          quoteText: '#4b5563',
+        },
+        dark: {
+          panelBg: '#111827',
+          panelText: '#f9fafb',
+          border: 'rgba(31,41,55,0.85)',
+          subText: '#d1d5db',
+          listBg: 'rgba(3,7,18,0.35)',
+          cardBg: 'rgba(17,24,39,0.78)',
+          overlay: 'rgba(0,0,0,0.55)',
+          quoteBg: 'rgba(30,58,138,0.22)',
+          quoteText: '#d1d5db',
+        },
+        sepia: {
+          panelBg: '#f4e4bc',
+          panelText: '#5c4b37',
+          border: 'rgba(212,196,156,0.9)',
+          subText: 'rgba(92,75,55,0.75)',
+          listBg: 'rgba(244,228,188,0.85)',
+          cardBg: 'rgba(255,255,255,0.55)',
+          overlay: 'rgba(0,0,0,0.45)',
+          quoteBg: 'rgba(255,255,255,0.35)',
+          quoteText: 'rgba(92,75,55,0.8)',
+        },
+        green: {
+          panelBg: '#c8e6c9',
+          panelText: '#2e7d32',
+          border: 'rgba(165,214,167,0.95)',
+          subText: 'rgba(46,125,50,0.75)',
+          listBg: 'rgba(200,230,201,0.85)',
+          cardBg: 'rgba(255,255,255,0.55)',
+          overlay: 'rgba(0,0,0,0.45)',
+          quoteBg: 'rgba(255,255,255,0.35)',
+          quoteText: 'rgba(46,125,50,0.8)',
+        },
+      } as const
+    )[theme];
+  }, [theme]);
 
   useEffect(() => {
     if (showCreateModal && selectedText) {
@@ -152,25 +206,48 @@ export default function NotesPanel({
 
   return (
     <>
-      <div className="fixed inset-0 bg-black bg-opacity-50 z-40" onClick={onClose} />
-      <div className="fixed right-0 top-0 bottom-0 w-full max-w-md bg-white dark:bg-gray-800 shadow-xl z-50 flex flex-col">
+      <div
+        className="fixed inset-0 backdrop-blur-[1px] z-40"
+        style={{ backgroundColor: themeStyles.overlay }}
+        onClick={onClose}
+      />
+      <div
+        className="fixed right-0 top-0 bottom-0 w-full max-w-md shadow-2xl z-50 flex flex-col border-l"
+        style={{
+          // 预留顶部工具栏（48px）+ 顶部安全区域
+          paddingTop: 'calc(env(safe-area-inset-top, 0px) + 48px)',
+          // 预留底部导航栏空间 + 底部安全区域（避免内容被遮挡）
+          paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 82px)',
+          backgroundColor: themeStyles.panelBg,
+          color: themeStyles.panelText,
+          borderLeftColor: themeStyles.border,
+        }}
+      >
         {/* 头部 */}
-        <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-700">
-          <h2 className="text-lg font-bold flex items-center gap-2">
+        <div
+          className="flex items-center justify-between px-4 py-3 border-b backdrop-blur-md"
+          style={{
+            borderBottomColor: themeStyles.border,
+            backgroundColor: 'rgba(255,255,255,0.12)',
+          }}
+        >
+          <h2 className="text-base font-semibold flex items-center gap-2">
             <StickyNote className="w-5 h-5" />
             笔记
           </h2>
           <div className="flex items-center gap-2">
             <button
               onClick={openCreateModal}
-              className="p-2 text-blue-600 dark:text-blue-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
+              className="p-2 rounded-lg transition-colors"
+              style={{ color: theme === 'dark' ? '#60a5fa' : '#2563eb' }}
               title="新建笔记"
             >
               <Plus className="w-5 h-5" />
             </button>
             <button
               onClick={onClose}
-              className="p-2 text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 rounded-lg transition-colors"
+              className="p-2 rounded-lg transition-colors"
+              style={{ color: themeStyles.subText }}
             >
               <X className="w-5 h-5" />
             </button>
@@ -178,7 +255,7 @@ export default function NotesPanel({
         </div>
 
         {/* 笔记列表 */}
-        <div className="flex-1 overflow-y-auto p-4">
+        <div className="flex-1 overflow-y-auto p-4" style={{ backgroundColor: themeStyles.listBg }}>
           {loading ? (
             <div className="text-center py-12">
               <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
@@ -186,25 +263,35 @@ export default function NotesPanel({
           ) : notes.length === 0 ? (
             <div className="text-center py-12">
               <StickyNote className="w-16 h-16 text-gray-400 mx-auto mb-4" />
-              <p className="text-gray-500 dark:text-gray-400">还没有笔记</p>
+              <p style={{ color: themeStyles.subText }}>还没有笔记</p>
             </div>
           ) : (
             <div className="space-y-3">
               {notes.map((note) => (
                 <div
                   key={note.id}
-                  className="bg-gray-50 dark:bg-gray-900 rounded-lg p-3 border border-gray-200 dark:border-gray-700 hover:shadow-md transition-shadow cursor-pointer"
+                  className="rounded-xl p-3 border hover:shadow-md transition-shadow cursor-pointer"
                   onClick={() => onNoteClick?.(note)}
+                  style={{
+                    backgroundColor: themeStyles.cardBg,
+                    borderColor: themeStyles.border,
+                  }}
                 >
                   {note.selected_text && (
-                    <div className="mb-2 p-2 bg-blue-50 dark:bg-blue-900/20 rounded text-sm text-gray-600 dark:text-gray-400 italic border-l-2 border-blue-500">
+                    <div
+                      className="mb-2 p-2 rounded-lg text-sm italic border-l-2 border-blue-500"
+                      style={{
+                        backgroundColor: themeStyles.quoteBg,
+                        color: themeStyles.quoteText,
+                      }}
+                    >
                       "{note.selected_text}"
                     </div>
                   )}
-                  <p className="text-gray-700 dark:text-gray-300 mb-2 line-clamp-3 whitespace-pre-wrap">
+                  <p className="mb-2 line-clamp-3 whitespace-pre-wrap" style={{ color: themeStyles.panelText }}>
                     {note.content}
                   </p>
-                  <div className="flex items-center justify-between text-xs text-gray-500 dark:text-gray-400">
+                  <div className="flex items-center justify-between text-xs" style={{ color: themeStyles.subText }}>
                     <span>
                       {note.page_number && `第 ${note.page_number} 页`}
                       {note.page_number && note.chapter_index !== undefined && ' · '}
@@ -212,13 +299,14 @@ export default function NotesPanel({
                     </span>
                     <span>{new Date(note.created_at).toLocaleDateString('zh-CN')}</span>
                   </div>
-                  <div className="flex items-center justify-end gap-2 mt-2 pt-2 border-t border-gray-200 dark:border-gray-700">
+                  <div className="flex items-center justify-end gap-2 mt-2 pt-2 border-t" style={{ borderTopColor: themeStyles.border }}>
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
                         openEditModal(note);
                       }}
-                      className="p-1.5 text-gray-600 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
+                      className="p-1.5 transition-colors"
+                      style={{ color: themeStyles.subText }}
                       title="编辑"
                     >
                       <Edit className="w-4 h-4" />
@@ -228,7 +316,8 @@ export default function NotesPanel({
                         e.stopPropagation();
                         handleDeleteNote(note.id);
                       }}
-                      className="p-1.5 text-gray-600 dark:text-gray-400 hover:text-red-600 dark:hover:text-red-400 transition-colors"
+                      className="p-1.5 transition-colors"
+                      style={{ color: themeStyles.subText }}
                       title="删除"
                     >
                       <Trash2 className="w-4 h-4" />

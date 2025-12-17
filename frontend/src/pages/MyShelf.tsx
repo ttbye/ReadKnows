@@ -41,6 +41,7 @@ interface BookItem {
   cover_url?: string;
   file_type: string;
   rating?: number;
+  category?: string;
 }
 
 export default function MyShelf() {
@@ -105,6 +106,22 @@ export default function MyShelf() {
       }
     });
   }, [sortBy, sortOrder, isAuthenticated]);
+
+  // 监听“书籍列表变更”事件（如：导出笔记生成新书），强制刷新书架
+  useEffect(() => {
+    const onBooksChanged = () => {
+      if (offlineDataCache.isOnline()) {
+        fetchShelf();
+        if (isAuthenticated) fetchRecentReadBooks();
+      } else {
+        // 离线：尽量用缓存重载
+        loadFromCache().catch(() => undefined);
+      }
+    };
+    window.addEventListener('__books_changed', onBooksChanged as any);
+    return () => window.removeEventListener('__books_changed', onBooksChanged as any);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAuthenticated, sortBy, sortOrder]);
 
   // 监听网络状态变化：从离线恢复时自动刷新
   useEffect(() => {
@@ -313,27 +330,34 @@ export default function MyShelf() {
             {(() => {
               const coverUrl = getCoverUrl(book.cover_url);
               return coverUrl ? (
-                <img
-                  src={coverUrl}
-                  alt={book.title}
-                  className="w-full h-full object-cover object-center group-hover:scale-105 transition-transform duration-300"
-                  style={{ minWidth: '100%', minHeight: '100%' }}
-                  onError={(e) => {
-                    const target = e.target as HTMLImageElement;
-                    target.style.display = 'none';
-                    const parent = target.parentElement;
-                    if (parent) {
-                      parent.innerHTML = `
-                        <div class="w-full h-full flex items-center justify-center">
-                          <svg class="w-12 h-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"></path>
-                          </svg>
-                        </div>
-                      `;
-                    }
-                  }}
-                  loading="lazy"
-                />
+                <>
+                  <img
+                    src={coverUrl}
+                    alt={book.title}
+                    className="w-full h-full object-cover object-center group-hover:scale-105 transition-transform duration-300"
+                    style={{ minWidth: '100%', minHeight: '100%' }}
+                    onError={(e) => {
+                      const target = e.target as HTMLImageElement;
+                      target.style.display = 'none';
+                      const parent = target.parentElement;
+                      if (parent) {
+                        parent.innerHTML = `
+                          <div class="w-full h-full flex items-center justify-center">
+                            <svg class="w-12 h-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"></path>
+                            </svg>
+                          </div>
+                        `;
+                      }
+                    }}
+                    loading="lazy"
+                  />
+                  {book.category === '笔记' && (
+                    <div className="absolute top-2 left-2 px-2 py-0.5 rounded-md text-[10px] font-bold tracking-wide bg-black/70 text-white backdrop-blur">
+                      笔记
+                    </div>
+                  )}
+                </>
               ) : (
                 <div className="w-full h-full flex items-center justify-center">
                   <Book className="w-12 h-12 text-gray-400 dark:text-gray-500" />
@@ -384,27 +408,34 @@ export default function MyShelf() {
           {(() => {
             const coverUrl = getCoverUrl(book.cover_url);
             return coverUrl ? (
-              <img
-                src={coverUrl}
-                alt={book.title}
-                className="w-full h-full object-cover object-center group-hover:scale-105 transition-transform duration-300"
-                style={{ minWidth: '100%', minHeight: '100%' }}
-                onError={(e) => {
-                  const target = e.target as HTMLImageElement;
-                  target.style.display = 'none';
-                  const parent = target.parentElement;
-                  if (parent) {
-                    parent.innerHTML = `
-                      <div class="w-full h-full flex items-center justify-center">
-                        <svg class="w-12 h-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"></path>
-                        </svg>
-                      </div>
-                    `;
-                  }
-                }}
-                loading="lazy"
-              />
+              <>
+                <img
+                  src={coverUrl}
+                  alt={book.title}
+                  className="w-full h-full object-cover object-center group-hover:scale-105 transition-transform duration-300"
+                  style={{ minWidth: '100%', minHeight: '100%' }}
+                  onError={(e) => {
+                    const target = e.target as HTMLImageElement;
+                    target.style.display = 'none';
+                    const parent = target.parentElement;
+                    if (parent) {
+                      parent.innerHTML = `
+                        <div class="w-full h-full flex items-center justify-center">
+                          <svg class="w-12 h-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"></path>
+                          </svg>
+                        </div>
+                      `;
+                    }
+                  }}
+                  loading="lazy"
+                />
+                {book.category === '笔记' && (
+                  <div className="absolute top-2 left-2 px-2 py-0.5 rounded-md text-[10px] font-bold tracking-wide bg-black/70 text-white backdrop-blur">
+                    笔记
+                  </div>
+                )}
+              </>
             ) : (
               <div className="w-full h-full flex items-center justify-center">
                 <Book className="w-12 h-12 text-gray-400 dark:text-gray-500" />
@@ -573,6 +604,25 @@ export default function MyShelf() {
       {isAuthenticated && recentReadBooks.length > 0 && (
         <HorizontalBookList title="最近阅读" books={recentReadBooks} />
       )}
+
+      {/* 我的笔记（从书架中筛选分类=笔记的书籍） */}
+      {(() => {
+        const noteBooks: BookItem[] = (books || [])
+          .filter((b) => (b.category || '未分类') === '笔记')
+          .map((b) => ({
+            id: b.id,
+            title: b.title,
+            author: b.author,
+            cover_url: b.cover_url,
+            file_type: b.file_type,
+            rating: b.rating,
+            category: b.category,
+          }));
+
+        return noteBooks.length > 0 ? (
+          <HorizontalBookList title="我的笔记" books={noteBooks} />
+        ) : null;
+      })()}
 
       <div className="mb-4">
         {/* 视图切换和排序 */}

@@ -273,6 +273,16 @@ router.post('/upload', authenticateToken, upload.single('file'), async (req: Aut
           author: '未知作者',
         };
       }
+    } else if (fileExt === '.md') {
+      // Markdown：优先使用用户传入的标题/作者，否则用文件名
+      metadata = {
+        title: req.body.title || path.basename(fileName, '.md'),
+        author: req.body.author || '未知作者',
+        description: req.body.description || null,
+        // 支持前端传入封面（复用原书封面）
+        // 注意：这里存的是 cover_url（通常是 /books/...），不强制校验文件是否存在
+        cover_url: req.body.coverUrl || null,
+      };
     } else if (fileExt === '.pdf') {
       // PDF格式：先提取元数据
       try {
@@ -409,6 +419,20 @@ router.post('/upload', authenticateToken, upload.single('file'), async (req: Aut
         '该书籍已存在（相同hash）',
         existingBook.id
       );
+      // 如果请求为私有书籍：即使书籍已存在，也确保加入用户书架
+      if (!isPublic) {
+        try {
+          const main = db.prepare('SELECT id, parent_book_id FROM books WHERE id = ?').get(existingBook.id) as any;
+          const mainBookId = main?.parent_book_id || existingBook.id;
+          const shelfId = uuidv4();
+          db.prepare(`
+            INSERT OR IGNORE INTO user_shelves (id, user_id, book_id)
+            VALUES (?, ?, ?)
+          `).run(shelfId, userId, mainBookId);
+        } catch (e) {
+          console.warn('私有请求：将已存在书籍加入书架失败:', e);
+        }
+      }
       // 返回已存在的书籍信息，而不是错误
       return res.json({ 
         message: '该书籍已存在',
@@ -420,8 +444,9 @@ router.post('/upload', authenticateToken, upload.single('file'), async (req: Aut
     const category = selectedCategory || metadata.category || '未分类';
 
     // 获取最终标题和作者（用于去重检查）
-    const finalTitle = metadata.title || '未知标题';
-    const finalAuthor = metadata.author || '未知作者';
+    // 获取最终标题和作者（允许上传时手动指定，避免 md 等格式变成“未知标题/作者”导致重复与难以查找）
+    const finalTitle = metadata.title || req.body.title || '未知标题';
+    const finalAuthor = metadata.author || req.body.author || '未知作者';
     const finalFileType = fileExt.substring(1); // 去掉点号
 
     // 检查同一本书同格式是否已存在（避免重复上传）
@@ -441,6 +466,20 @@ router.post('/upload', authenticateToken, upload.single('file'), async (req: Aut
         `该书籍的${finalFileType.toUpperCase()}格式已存在`,
         sameFormatBook.id
       );
+      // 如果请求为私有书籍：即使同格式已存在，也确保加入用户书架
+      if (!isPublic) {
+        try {
+          const main = db.prepare('SELECT id, parent_book_id FROM books WHERE id = ?').get(sameFormatBook.id) as any;
+          const mainBookId = main?.parent_book_id || sameFormatBook.id;
+          const shelfId = uuidv4();
+          db.prepare(`
+            INSERT OR IGNORE INTO user_shelves (id, user_id, book_id)
+            VALUES (?, ?, ?)
+          `).run(shelfId, userId, mainBookId);
+        } catch (e) {
+          console.warn('私有请求：将已存在书籍加入书架失败:', e);
+        }
+      }
       // 返回已存在的书籍信息
       return res.json({ 
         message: `该书籍的${finalFileType.toUpperCase()}格式已存在`,

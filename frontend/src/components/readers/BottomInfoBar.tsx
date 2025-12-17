@@ -111,6 +111,12 @@ export default function BottomInfoBar({
   };
 
   const styles = getResponsiveStyles();
+  const isEpub = book.file_type === 'epub';
+  const pct = (() => {
+    const p = typeof position.progress === 'number' ? position.progress : 0;
+    const v = Number.isFinite(p) ? p : 0;
+    return Math.min(100, Math.max(0, v * 100));
+  })();
 
   return (
     <div
@@ -166,7 +172,7 @@ export default function BottomInfoBar({
             letterSpacing: '0.01em',
           }}
         >
-          {position.currentPage} / {position.totalPages}
+          {isEpub ? `${pct.toFixed(2)}%` : `${position.currentPage} / ${position.totalPages}`}
         </div>
 
         {/* 右侧：当前时间 */}

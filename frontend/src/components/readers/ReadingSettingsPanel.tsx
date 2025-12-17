@@ -127,20 +127,68 @@ export default function ReadingSettingsPanel({
                     {settings.fontSize}px
                   </span>
                 </div>
+                {/* 快捷调节：- / + + 常用预设 */}
+                <div className="flex items-center gap-2 mb-2">
+                  <button
+                    onClick={() => updateSetting('fontSize', Math.max(18, settings.fontSize - 1))}
+                    className="w-10 h-9 rounded-lg border flex items-center justify-center font-bold transition-all hover:scale-[1.02] active:scale-[0.98]"
+                    style={{
+                      background: settings.theme === 'dark' ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)',
+                      borderColor: themeStyles.border,
+                      color: themeStyles.text,
+                    }}
+                    aria-label="减小字体"
+                  >
+                    −
+                  </button>
+                  <button
+                    onClick={() => updateSetting('fontSize', Math.min(48, settings.fontSize + 1))}
+                    className="w-10 h-9 rounded-lg border flex items-center justify-center font-bold transition-all hover:scale-[1.02] active:scale-[0.98]"
+                    style={{
+                      background: settings.theme === 'dark' ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)',
+                      borderColor: themeStyles.border,
+                      color: themeStyles.text,
+                    }}
+                    aria-label="增大字体"
+                  >
+                    +
+                  </button>
+                  <div className="flex-1 flex flex-wrap gap-1.5 justify-end">
+                    {[18, 20, 22, 24, 28, 32, 36, 40, 48].map((size) => (
+                      <button
+                        key={size}
+                        onClick={() => updateSetting('fontSize', size)}
+                        className="px-2 py-1 rounded-md border text-[10px] font-semibold transition-all hover:scale-[1.03] active:scale-[0.98]"
+                        style={{
+                          background: settings.fontSize === size
+                            ? (settings.theme === 'dark'
+                                ? 'linear-gradient(135deg, #4a9eff 0%, #2563eb 100%)'
+                                : 'linear-gradient(135deg, #1890ff 0%, #0d5fbf 100%)')
+                            : (settings.theme === 'dark' ? 'rgba(255,255,255,0.02)' : 'rgba(0,0,0,0.01)'),
+                          borderColor: settings.fontSize === size ? 'transparent' : themeStyles.border,
+                          color: settings.fontSize === size ? '#fff' : themeStyles.text,
+                        }}
+                        aria-label={`设置字体大小 ${size}px`}
+                      >
+                        {size}
+                      </button>
+                    ))}
+                  </div>
+                </div>
                 <input
                   type="range"
-                  min="12"
-                  max="32"
+                  min="18"
+                  max="48"
                   value={settings.fontSize}
                   onChange={(e) => updateSetting('fontSize', parseInt(e.target.value))}
                   className="w-full h-2 rounded-lg appearance-none cursor-pointer"
                   style={{
-                    background: `linear-gradient(to right, ${settings.theme === 'dark' ? '#4a9eff' : '#1890ff'} 0%, ${settings.theme === 'dark' ? '#4a9eff' : '#1890ff'} ${((settings.fontSize - 12) / 20) * 100}%, ${themeStyles.border} ${((settings.fontSize - 12) / 20) * 100}%, ${themeStyles.border} 100%)`,
+                    background: `linear-gradient(to right, ${settings.theme === 'dark' ? '#4a9eff' : '#1890ff'} 0%, ${settings.theme === 'dark' ? '#4a9eff' : '#1890ff'} ${((settings.fontSize - 18) / 30) * 100}%, ${themeStyles.border} ${((settings.fontSize - 18) / 30) * 100}%, ${themeStyles.border} 100%)`,
                   }}
                 />
                 <div className="flex justify-between text-[10px] mt-1" style={{ opacity: 0.5 }}>
-                  <span>12px 小</span>
-                  <span>32px 大</span>
+                  <span>18px 小</span>
+                  <span>48px 大</span>
                 </div>
               </div>
 
@@ -284,45 +332,133 @@ export default function ReadingSettingsPanel({
 
             {/* 主题 */}
           <div className="mb-4">
-            <label className="block text-sm font-semibold mb-2">主题</label>
-            <div className="grid grid-cols-4 gap-1.5 md:gap-2">
+            <label className="block text-sm font-semibold mb-3">阅读主题</label>
+            <div className="grid grid-cols-4 gap-2 md:gap-3">
               {([
-                { value: 'light', label: '浅色', preview: '#ffffff', border: '#e5e7eb' },
-                { value: 'dark', label: '深色', preview: '#1a1a1a', border: '#374151' },
-                { value: 'sepia', label: '护眼', preview: '#f4e4bc', border: '#d4c49c' },
-                { value: 'green', label: '绿色', preview: '#c8e6c9', border: '#a5d6a7' }
+                { 
+                  value: 'light', 
+                  label: '浅色', 
+                  preview: '#ffffff', 
+                  border: '#e5e7eb',
+                  textColor: '#000000',
+                  description: '经典白底黑字'
+                },
+                { 
+                  value: 'dark', 
+                  label: '深色', 
+                  preview: '#1a1a1a', 
+                  border: '#374151',
+                  textColor: '#ffffff',
+                  description: '夜间护眼'
+                },
+                { 
+                  value: 'sepia', 
+                  label: '护眼', 
+                  preview: '#f4e4bc', 
+                  border: '#d4c49c',
+                  textColor: '#5c4b37',
+                  description: '纸质质感'
+                },
+                { 
+                  value: 'green', 
+                  label: '绿色', 
+                  preview: '#c8e6c9', 
+                  border: '#a5d6a7',
+                  textColor: '#2e7d32',
+                  description: '清新护眼'
+                }
               ] as const).map((theme) => (
                 <button
                   key={theme.value}
                   onClick={() => updateSetting('theme', theme.value)}
-                  className={`px-2 py-2 rounded-lg transition-all flex flex-col items-center gap-1.5 ${
+                  className={`relative p-3 md:p-4 rounded-xl transition-all duration-200 flex flex-col items-center gap-2 ${
                     settings.theme === theme.value
-                      ? 'shadow-lg scale-[1.05]'
-                      : 'hover:scale-[1.02]'
+                      ? 'ring-2 ring-offset-2'
+                      : 'hover:scale-[1.03] active:scale-[0.98]'
                   }`}
                   style={{
                     backgroundColor: theme.preview,
                     border: settings.theme === theme.value 
-                      ? '2px solid #1890ff' 
-                      : `1px solid ${theme.border}`,
+                      ? `2px solid ${settings.theme === 'dark' ? '#4a9eff' : '#1890ff'}` 
+                      : `1.5px solid ${theme.border}`,
                     boxShadow: settings.theme === theme.value 
-                      ? '0 0 0 3px rgba(24, 144, 255, 0.2), 0 4px 12px rgba(0, 0, 0, 0.15)'
-                      : 'none',
+                      ? `0 0 0 4px ${settings.theme === 'dark' ? 'rgba(74, 158, 255, 0.15)' : 'rgba(24, 144, 255, 0.15)'}, 0 4px 16px rgba(0, 0, 0, 0.12)`
+                      : '0 2px 8px rgba(0, 0, 0, 0.08)',
+                    ringColor: settings.theme === theme.value 
+                      ? (settings.theme === 'dark' ? '#4a9eff' : '#1890ff')
+                      : 'transparent',
                   }}
                 >
+                  {/* 选中标记 */}
+                  {settings.theme === theme.value && (
+                    <div 
+                      className="absolute -top-1 -right-1 w-6 h-6 rounded-full flex items-center justify-center shadow-lg"
+                      style={{
+                        backgroundColor: settings.theme === 'dark' ? '#4a9eff' : '#1890ff',
+                      }}
+                    >
+                      <svg className="w-4 h-4 text-white" fill="currentColor" viewBox="0 0 20 20">
+                        <path
+                          fillRule="evenodd"
+                          d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
+                          clipRule="evenodd"
+                        />
+                      </svg>
+                    </div>
+                  )}
+                  
+                  {/* 主题预览卡片 */}
                   <div 
-                    className="w-8 h-8 md:w-10 md:h-10 rounded-lg shadow-md flex items-center justify-center text-xl"
+                    className="w-full h-16 md:h-20 rounded-lg shadow-inner flex items-center justify-center relative overflow-hidden"
                     style={{ 
                       backgroundColor: theme.preview,
-                      border: `2px solid ${theme.border}`,
-                      color: theme.value === 'light' ? '#000' : theme.value === 'dark' ? '#fff' : '#5c4b37'
+                      border: `1px solid ${theme.border}`,
                     }}
                   >
-                    Aa
+                    {/* 模拟文本行 */}
+                    <div className="absolute inset-0 flex flex-col justify-center px-2 py-1 gap-1">
+                      <div 
+                        className="h-1.5 rounded-full"
+                        style={{ 
+                          backgroundColor: theme.textColor,
+                          opacity: 0.8,
+                          width: '85%'
+                        }}
+                      />
+                      <div 
+                        className="h-1.5 rounded-full"
+                        style={{ 
+                          backgroundColor: theme.textColor,
+                          opacity: 0.6,
+                          width: '100%'
+                        }}
+                      />
+                      <div 
+                        className="h-1.5 rounded-full"
+                        style={{ 
+                          backgroundColor: theme.textColor,
+                          opacity: 0.5,
+                          width: '70%'
+                        }}
+                      />
+                    </div>
                   </div>
-                  <span className="text-[10px] md:text-xs font-semibold" style={{
-                    color: theme.value === 'light' ? '#000' : theme.value === 'dark' ? '#fff' : '#5c4b37'
-                  }}>{theme.label}</span>
+                  
+                  {/* 主题名称和描述 */}
+                  <div className="flex flex-col items-center gap-0.5 w-full">
+                    <span 
+                      className="text-xs md:text-sm font-bold" 
+                      style={{ color: theme.textColor }}
+                    >
+                      {theme.label}
+                    </span>
+                    <span 
+                      className="text-[10px] opacity-70" 
+                      style={{ color: theme.textColor }}
+                    >
+                      {theme.description}
+                    </span>
+                  </div>
                 </button>
               ))}
             </div>
@@ -344,7 +480,15 @@ export default function ReadingSettingsPanel({
             <label className="block text-sm font-semibold mb-2">翻页方式</label>
             <div className="grid grid-cols-2 gap-1.5 md:gap-2">
               <button
-                onClick={() => updateSetting('pageTurnMethod', 'swipe')}
+                onClick={() => {
+                  // 切换到滑动翻页时，默认使用“左右滑动翻页”
+                  onSettingsChange({
+                    ...settings,
+                    pageTurnMethod: 'swipe',
+                    pageTurnMode: 'horizontal',
+                    keyboardShortcuts: { ...settings.keyboardShortcuts },
+                  });
+                }}
                 className={`px-3 py-2.5 md:py-3 rounded-lg border transition-all ${
                   settings.pageTurnMethod === 'swipe'
                     ? 'shadow-lg scale-[1.02]'
@@ -389,6 +533,63 @@ export default function ReadingSettingsPanel({
               </button>
             </div>
           </div>
+
+          {/* 滑动翻页模式（滑动翻页时有效） */}
+          {settings.pageTurnMethod === 'swipe' && (
+            <div className="mb-4">
+              <label className="block text-sm font-semibold mb-2">滑动翻页模式</label>
+              <div className="grid grid-cols-2 gap-1.5 md:gap-2">
+                <button
+                  onClick={() => updateSetting('pageTurnMode', 'horizontal')}
+                  className={`px-3 py-2.5 md:py-3 rounded-lg border transition-all ${
+                    settings.pageTurnMode === 'horizontal'
+                      ? 'shadow-lg scale-[1.02]'
+                      : 'hover:scale-[1.02]'
+                  }`}
+                  style={{
+                    background: settings.pageTurnMode === 'horizontal' 
+                      ? (settings.theme === 'dark' 
+                          ? 'linear-gradient(135deg, #4a9eff 0%, #2563eb 100%)'
+                          : 'linear-gradient(135deg, #1890ff 0%, #0d5fbf 100%)')
+                      : (settings.theme === 'dark' ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)'),
+                    borderColor: settings.pageTurnMode === 'horizontal' ? 'transparent' : themeStyles.border,
+                    color: settings.pageTurnMode === 'horizontal' ? '#fff' : themeStyles.text,
+                  }}
+                >
+                  <div className="text-center">
+                    <div className="text-sm font-bold mb-0.5">左右滑动翻页</div>
+                    <div className="text-[10px] md:text-xs" style={{ opacity: settings.pageTurnMode === 'horizontal' ? 0.9 : 0.6 }}>
+                      左→右下一页 · 右→左上一页
+                    </div>
+                  </div>
+                </button>
+                <button
+                  onClick={() => updateSetting('pageTurnMode', 'vertical')}
+                  className={`px-3 py-2.5 md:py-3 rounded-lg border transition-all ${
+                    settings.pageTurnMode === 'vertical'
+                      ? 'shadow-lg scale-[1.02]'
+                      : 'hover:scale-[1.02]'
+                  }`}
+                  style={{
+                    background: settings.pageTurnMode === 'vertical' 
+                      ? (settings.theme === 'dark' 
+                          ? 'linear-gradient(135deg, #4a9eff 0%, #2563eb 100%)'
+                          : 'linear-gradient(135deg, #1890ff 0%, #0d5fbf 100%)')
+                      : (settings.theme === 'dark' ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)'),
+                    borderColor: settings.pageTurnMode === 'vertical' ? 'transparent' : themeStyles.border,
+                    color: settings.pageTurnMode === 'vertical' ? '#fff' : themeStyles.text,
+                  }}
+                >
+                  <div className="text-center">
+                    <div className="text-sm font-bold mb-0.5">上滑翻页</div>
+                    <div className="text-[10px] md:text-xs" style={{ opacity: settings.pageTurnMode === 'vertical' ? 0.9 : 0.6 }}>
+                      下→上下一页 · 上→下上一页
+                    </div>
+                  </div>
+                </button>
+              </div>
+            </div>
+          )}
 
           {/* 翻页模式（点击翻页时有效） */}
           {settings.pageTurnMethod === 'click' && (
