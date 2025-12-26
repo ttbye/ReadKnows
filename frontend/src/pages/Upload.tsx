@@ -58,6 +58,9 @@ export default function Upload() {
   const [deleteSource, setDeleteSource] = useState(false); // 是否删除源文件
   const [bookCategories, setBookCategories] = useState<string[]>([]);
   
+  // 免责声明同意状态
+  const [agreedToDisclaimer, setAgreedToDisclaimer] = useState(false);
+  
   // 导入历史
   const [importHistory, setImportHistory] = useState<ImportHistoryItem[]>([]);
   const [showHistory, setShowHistory] = useState(false);
@@ -166,6 +169,12 @@ export default function Upload() {
 
   // 批量上传本地文件
   const handleBatchUpload = async () => {
+    // 检查是否同意免责声明
+    if (!agreedToDisclaimer) {
+      toast.error('请先阅读并同意免责声明');
+      return;
+    }
+    
     const selectedFiles = localFiles.filter((f) => f.selected);
     if (selectedFiles.length === 0) {
       toast.error('请至少选择一个文件');
@@ -192,6 +201,7 @@ export default function Upload() {
           formData.append('isPublic', String(isPublic));
           formData.append('autoConvertTxt', String(autoConvertTxt));
           formData.append('autoConvertMobi', String(autoConvertMobi));
+          formData.append('autoFetchDouban', String(autoFetchDouban));
           formData.append('category', category);
 
           await api.post('/books/upload', formData, {
@@ -288,6 +298,12 @@ export default function Upload() {
   };
 
   const handleImportAll = async () => {
+    // 检查是否同意免责声明
+    if (!agreedToDisclaimer) {
+      toast.error('请先阅读并同意免责声明');
+      return;
+    }
+    
     const selectedFiles = scannedFiles.filter((f) => f.selected);
     if (selectedFiles.length === 0) {
       toast.error('请至少选择一个文件');
@@ -432,6 +448,63 @@ export default function Upload() {
           <div>
             <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">导入选项</h2>
             <p className="text-sm text-gray-600 dark:text-gray-400">这些选项适用于所有导入方式（批量选择和目录扫描）</p>
+          </div>
+        </div>
+        
+        {/* 免责声明 */}
+        <div className="mb-4 p-4 rounded-lg border-2 border-red-300 dark:border-red-700 bg-red-50 dark:bg-red-900/20">
+          <div className="flex items-start gap-3 mb-3">
+            <div className="text-red-600 dark:text-red-400 mt-0.5 flex-shrink-0">
+              <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+              </svg>
+            </div>
+            <div className="flex-1">
+              <p className="text-sm font-bold text-red-800 dark:text-red-200 mb-2">
+                重要免责声明
+              </p>
+              <div className="text-xs text-red-700 dark:text-red-300 leading-relaxed space-y-2">
+                <p>
+                  <strong>1. 内容合规性：</strong>用户保证上传的所有书籍内容均符合国家法律法规，不包含任何违法违规、色情、暴力、恐怖主义、极端主义、分裂国家、颠覆国家政权等禁止性内容。
+                </p>
+                <p>
+                  <strong>2. 隐私保护：</strong>用户不得上传涉及个人隐私、商业秘密、他人肖像权、名誉权等合法权益的内容。不得上传包含他人身份证号、手机号、地址等敏感信息的文档。
+                </p>
+                <p>
+                  <strong>3. 知识产权：</strong>用户保证上传的内容不侵犯任何第三方的著作权、商标权、专利权等知识产权。如因上传内容侵犯他人权益，由用户承担全部法律责任。
+                </p>
+                <p>
+                  <strong>4. 责任承担：</strong>用户明确知晓并同意，因上传违规内容导致的一切法律后果、经济损失、行政处罚等均由用户个人承担全部责任，与平台无关。
+                </p>
+                <p>
+                  <strong>5. 内容审查：</strong>平台保留对上传内容进行审查的权利，如发现违规内容，平台有权立即删除并可能采取进一步措施。
+                </p>
+                <p>
+                  <strong>6. 用户承诺：</strong>用户承诺已充分理解上述条款，并保证严格遵守。如违反上述规定，用户愿意承担一切法律责任。
+                </p>
+              </div>
+            </div>
+          </div>
+          
+          {/* 同意复选框 */}
+          <div className="mt-3 pt-3 border-t border-red-200 dark:border-red-800">
+            <label className="flex items-start gap-2 cursor-pointer group">
+              <input
+                type="checkbox"
+                checked={agreedToDisclaimer}
+                onChange={(e) => setAgreedToDisclaimer(e.target.checked)}
+                className="w-5 h-5 mt-0.5 rounded border-red-300 dark:border-red-700 text-red-600 focus:ring-red-500 focus:ring-2"
+                required
+              />
+              <span className="text-sm font-semibold text-red-800 dark:text-red-200 group-hover:text-red-900 dark:group-hover:text-red-100 transition-colors">
+                我已仔细阅读并完全理解上述免责声明，同意遵守所有规定，并愿意承担因违反规定而产生的一切法律责任。
+              </span>
+            </label>
+            {!agreedToDisclaimer && (
+              <p className="text-xs text-red-600 dark:text-red-400 mt-2 ml-7">
+                ⚠️ 必须同意免责声明才能上传书籍
+              </p>
+            )}
           </div>
         </div>
         
@@ -657,8 +730,8 @@ export default function Upload() {
               </span>
               <button
                 onClick={handleBatchUpload}
-                disabled={batchUploading || selectedLocalCount === 0}
-                className="btn btn-primary bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700"
+                disabled={batchUploading || selectedLocalCount === 0 || !agreedToDisclaimer}
+                className="btn btn-primary bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {batchUploading ? (
                   <>
@@ -770,8 +843,8 @@ export default function Upload() {
               </span>
               <button
                 onClick={handleImportAll}
-                disabled={importing || selectedCount === 0}
-                className="btn btn-primary"
+                disabled={importing || selectedCount === 0 || !agreedToDisclaimer}
+                className="btn btn-primary disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {importing ? (
                   <>

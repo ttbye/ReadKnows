@@ -13,6 +13,7 @@
   "dependencies": {
     "@tailwindcss/typography": "^0.5.19",
     "axios": "^1.6.2",
+    "docx-preview": "^0.3.7",
     "epubjs": "^0.3.88",
     "jszip": "^3.10.1",
     "lucide-react": "^0.303.0",
@@ -27,6 +28,7 @@
     "react-router-dom": "^6.21.1",
     "rehype-raw": "^7.0.0",
     "remark-gfm": "^4.0.1",
+    "xlsx": "^0.18.5",
     "zustand": "^4.4.7"
   },
   "optionalDependencies": {

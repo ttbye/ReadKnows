@@ -27,12 +27,14 @@ interface BookDetail {
   file_path: string;
   file_name: string;
   file_type: string;
+  file_size?: number;
   rating?: number;
   tags?: string;
   category?: string;
   language?: string;
   uploader_id?: string;
   uploader_username?: string;
+  uploader_nickname?: string;
   created_at?: string;
   is_public?: number;
   parent_book_id?: string;
@@ -44,6 +46,16 @@ interface BookDetailModalProps {
   onClose: () => void;
   onBookUpdated?: () => void; // 书籍更新后的回调
 }
+
+// 去除HTML标签的函数
+const stripHtmlTags = (html: string): string => {
+  if (!html) return '';
+  // 创建一个临时div元素来解析HTML
+  const tmp = document.createElement('div');
+  tmp.innerHTML = html;
+  // 获取纯文本内容
+  return tmp.textContent || tmp.innerText || '';
+};
 
 export default function BookDetailModal({ bookId, isOpen, onClose, onBookUpdated }: BookDetailModalProps) {
   const navigate = useNavigate();
@@ -428,6 +440,9 @@ export default function BookDetailModal({ bookId, isOpen, onClose, onBookUpdated
     const readingBookId = selectedFormatId || book.id;
     const readingBook = formats.find(f => f.id === readingBookId) || book;
     
+    // 立即关闭模态框，确保退出阅读后不会回到模态框
+    onClose();
+    
     // 检查并下载书籍到本地缓存（支持离线）
     try {
       const ext = readingBook.file_name?.split('.').pop()?.toLowerCase() || readingBook.file_type;
@@ -457,18 +472,15 @@ export default function BookDetailModal({ bookId, isOpen, onClose, onBookUpdated
       // 继续导航，即使离线存储失败
     }
     
-    // 先关闭模态框
-    onClose();
-    
     // 使用 setTimeout 确保模态框关闭动画完成后再导航
     setTimeout(() => {
-      // 先导航到书籍详细页面
-      navigate(`/books/${book.id}`);
-      // 然后立即导航到阅读页面，这样返回时会回到书籍详细页面
+      // 先导航到书籍详细页面（非模态框版本）
+      navigate(`/books/${book.id}`, { replace: false });
+      // 然后立即导航到阅读页面，这样返回时会回到书籍详细页面（非模态框版本）
       setTimeout(() => {
-        navigate(`/reader/${readingBookId}`);
+        navigate(`/reader/${readingBookId}`, { replace: false });
       }, 50);
-    }, 100);
+    }, 150);
   };
 
   const handleExtractCover = async () => {
@@ -1250,14 +1262,21 @@ export default function BookDetailModal({ bookId, isOpen, onClose, onBookUpdated
                     {/* 书籍简介 - 扁平化显示，限制字数 */}
                     {book.description && (
                       <p className="text-xs text-gray-500 dark:text-gray-400 leading-relaxed mb-1.5 md:mb-3 line-clamp-2">
-                        {book.description.length > 100 ? `${book.description.substring(0, 100)}...` : book.description}
+                        {(() => {
+                          const cleanDescription = stripHtmlTags(book.description);
+                          return cleanDescription.length > 100 ? `${cleanDescription.substring(0, 100)}...` : cleanDescription;
+                        })()}
                       </p>
                     )}
                     {/* 上传者和上传日期 */}
-                    {(book.uploader_username || book.created_at) && (
+                    {((book.uploader_nickname || book.uploader_username) || book.created_at || book.file_size) && (
                       <div className="text-xs text-gray-400 dark:text-gray-500 mb-1.5 md:mb-3">
-                        {book.uploader_username && <span>上传者: {book.uploader_username}</span>}
-                        {book.uploader_username && book.created_at && <span> · </span>}
+                        {(book.uploader_nickname || book.uploader_username) && (
+                          <span className="text-gray-500 dark:text-gray-400">
+                            {book.uploader_nickname || book.uploader_username}
+                          </span>
+                        )}
+                        {(book.uploader_nickname || book.uploader_username) && (book.created_at || book.file_size) && <span> · </span>}
                         {book.created_at && (
                           <span>上传时间: {new Date(book.created_at).toLocaleString('zh-CN', {
                             year: 'numeric',
@@ -1266,6 +1285,16 @@ export default function BookDetailModal({ bookId, isOpen, onClose, onBookUpdated
                             hour: '2-digit',
                             minute: '2-digit'
                           })}</span>
+                        )}
+                        {book.created_at && book.file_size && <span> · </span>}
+                        {book.file_size && (
+                          <span>文件大小: {(() => {
+                            const size = book.file_size;
+                            if (size < 1024) return `${size} B`;
+                            if (size < 1024 * 1024) return `${(size / 1024).toFixed(2)} KB`;
+                            if (size < 1024 * 1024 * 1024) return `${(size / (1024 * 1024)).toFixed(2)} MB`;
+                            return `${(size / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+                          })()}</span>
                         )}
                       </div>
                     )}
@@ -1533,6 +1562,25 @@ export default function BookDetailModal({ bookId, isOpen, onClose, onBookUpdated
                       </div>
                     </div>
                   </div>
+                  {book.file_size && (
+                    <div className="group flex items-center gap-1 md:gap-2 p-1.5 md:p-3 bg-gradient-to-br from-teal-50 via-white to-teal-50 dark:from-teal-900/20 dark:via-gray-800 dark:to-teal-900/20 rounded-lg border border-teal-100 dark:border-teal-800/50">
+                      <div className="flex-shrink-0 w-5 h-5 md:w-8 md:h-8 rounded-lg bg-gradient-to-br from-teal-500 to-teal-600 dark:from-teal-600 dark:to-teal-700 flex items-center justify-center">
+                        <Download className="w-2.5 h-2.5 md:w-4 md:h-4 text-white" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-[9px] md:text-xs font-medium text-gray-500 dark:text-gray-400 mb-0">文件大小</div>
+                        <div className="text-[8px] md:text-sm font-semibold text-gray-900 dark:text-gray-100 leading-tight">
+                          {(() => {
+                            const size = book.file_size;
+                            if (size < 1024) return `${size} B`;
+                            if (size < 1024 * 1024) return `${(size / 1024).toFixed(2)} KB`;
+                            if (size < 1024 * 1024 * 1024) return `${(size / (1024 * 1024)).toFixed(2)} MB`;
+                            return `${(size / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+                          })()}
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {/* 标签 */}

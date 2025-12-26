@@ -115,22 +115,37 @@ check_docker_registry() {
 
 # 获取项目根目录
 get_project_root() {
+    # 获取脚本所在目录
     SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-    echo "$SCRIPT_DIR"
+    
+    # 如果脚本在 sh/ 目录下，返回上一级目录（项目根目录）
+    if [ "$(basename "$SCRIPT_DIR")" = "sh" ]; then
+        echo "$(dirname "$SCRIPT_DIR")"
+    # 如果脚本在 tts-service 目录下，返回上一级目录（项目根目录）
+    elif [ "$(basename "$SCRIPT_DIR")" = "tts-service" ]; then
+        echo "$(dirname "$SCRIPT_DIR")"
+    # 否则返回脚本所在目录
+    else
+        echo "$SCRIPT_DIR"
+    fi
 }
 
 # 检测操作系统平台
 detect_platform() {
     local platform=""
+    local uname_s=$(uname -s)
     
     # 检测 macOS
-    if [ "$(uname -s)" = "Darwin" ]; then
+    if [ "$uname_s" = "Darwin" ]; then
         platform="macos"
     # 检测 Windows (WSL 或 Git Bash)
-    elif [ -n "$WSL_DISTRO_NAME" ] || [ -n "$WSLENV" ] || [ "$(uname -s)" = "MINGW64_NT" ] || [ "$(uname -s)" = "MSYS_NT" ]; then
+    elif [ -n "$WSL_DISTRO_NAME" ] || [ -n "$WSLENV" ] || \
+         echo "$uname_s" | grep -qE "^MINGW(64|32)_NT" || \
+         echo "$uname_s" | grep -qE "^MSYS_NT" || \
+         echo "$uname_s" | grep -qE "^CYGWIN_NT"; then
         platform="windows"
     # 检测 Linux/群晖（群晖也使用 Linux 配置）
-    elif [ "$(uname -s)" = "Linux" ]; then
+    elif [ "$uname_s" = "Linux" ]; then
         platform="linux"
     else
         platform="unknown"
@@ -296,7 +311,7 @@ select_compose_file() {
             fi
             ;;
     esac
-    
+    # if [-n "$Auto-test-c"]
     # 如果自动选择成功，询问用户是否确认
     if [ -n "$AUTO_SELECTED_FILE" ] && [ -f "$AUTO_SELECTED_FILE" ]; then
         print_success "已自动选择配置文件: $AUTO_SELECTED_NAME"
@@ -380,6 +395,12 @@ AI_MODEL=llama2
 # 如果ollama在宿主机上，使用: http://host.docker.internal:11434
 # 如果ollama在局域网其他机器上，使用: http://192.168.1.100:11434
 OLLAMA_URL=http://host.docker.internal:11434
+
+# TTS配置（可选）
+# Qwen3-TTS API密钥（如果需要使用Qwen3-TTS，需要配置此密钥）
+# 获取方式：访问 https://dashscope.console.aliyun.com/ 申请API密钥
+QWEN3_TTS_API_KEY=
+QWEN3_TTS_API_URL=https://dashscope.aliyuncs.com/api/v1/services/audio/tts
 EOF
     
     print_success ".env 文件已创建: $ENV_FILE"
@@ -763,55 +784,689 @@ init_admin() {
     fi
 }
 
+# 本地开发运行
+start_dev() {
+    print_header "本地开发运行"
+    
+    PROJECT_ROOT=$(get_project_root)
+    START_SCRIPT="$PROJECT_ROOT/sh/start.sh"
+    
+    # 如果未找到脚本，尝试在兼容路径搜索
+    if [ ! -f "$START_SCRIPT" ]; then
+        ALT_PATHS=(
+            "./sh/start.sh"
+            "../sh/start.sh"
+            "$PROJECT_ROOT/start.sh"
+        )
+        for p in "${ALT_PATHS[@]}"; do
+            if [ -f "$p" ]; then
+                START_SCRIPT="$p"
+                break
+            fi
+        done
+    fi
+    
+    if [ ! -f "$START_SCRIPT" ]; then
+        print_error "未找到启动脚本: start.sh"
+        print_info "尝试路径: $PROJECT_ROOT/sh/start.sh 及兼容路径"
+        echo ""
+        read -p "按回车键返回主菜单..."
+        return
+    fi
+    
+    print_info "执行启动脚本: $START_SCRIPT"
+    echo ""
+    print_warning "这将启动本地开发环境（前端、后端、TTS API）"
+    print_info "按 Ctrl+C 可以停止服务"
+    echo ""
+    read -p "按回车键开始启动..."
+    
+    bash "$START_SCRIPT"
+    
+    echo ""
+    read -p "按回车键返回..."
+}
+
+# 导出镜像子菜单
+show_export_images_menu() {
+    while true; do
+        print_header "Docker 镜像导出"
+        echo ""
+        print_info "请选择要导出的镜像:"
+        echo "  1) 导出前端镜像"
+        echo "  2) 导出后端镜像"
+        echo "  3) 导出 TTS API 服务镜像"
+        echo "  4) 导出 TTS API Lite 服务镜像"
+        echo "  5) 导出全部镜像"
+        echo "  0) 返回主菜单"
+        echo ""
+        read -p "请输入选项 (0-5): " export_choice
+        
+        case $export_choice in
+            1)
+                export_single_image "frontend"
+                ;;
+            2)
+                export_single_image "backend"
+                ;;
+            3)
+                export_single_image "tts-api"
+                ;;
+            4)
+                export_single_image "tts-api-lite"
+                ;;
+            5)
+                export_images
+                ;;
+            0)
+                return
+                ;;
+            *)
+                print_warning "无效选项，请重新选择"
+                sleep 1
+                ;;
+        esac
+    done
+}
+
+# 导出单个镜像
+export_single_image() {
+    local image_type=$1
+    PROJECT_ROOT=$(get_project_root)
+    EXPORT_DIR="$PROJECT_ROOT/docker-images"
+    mkdir -p "$EXPORT_DIR"
+    
+    print_header "导出 ${image_type} 镜像"
+    
+    # 确定镜像名称
+    case $image_type in
+        frontend)
+            IMAGE_NAME="ttbye/readknows-frontend:latest"
+            EXPORT_FILE="$EXPORT_DIR/readknows-frontend-latest.tar.gz"
+            ;;
+        backend)
+            IMAGE_NAME="ttbye/readknows-backend:latest"
+            EXPORT_FILE="$EXPORT_DIR/readknows-backend-latest.tar.gz"
+            ;;
+        tts-api)
+            IMAGE_NAME="ttbye/tts-api:latest"
+            EXPORT_FILE="$EXPORT_DIR/tts-api-latest.tar.gz"
+            ;;
+        tts-api-lite)
+            IMAGE_NAME="ttbye/tts-api-lite:latest"
+            EXPORT_FILE="$EXPORT_DIR/tts-api-lite-latest.tar.gz"
+            ;;
+        *)
+            print_error "未知的镜像类型: $image_type"
+            echo ""
+            read -p "按回车键返回..."
+            return
+            ;;
+    esac
+    
+    # 检查镜像是否存在
+    if ! docker images --format "{{.Repository}}:{{.Tag}}" | grep -q "^${IMAGE_NAME}$"; then
+        print_error "镜像不存在: $IMAGE_NAME"
+        echo ""
+        read -p "按回车键返回..."
+        return
+    fi
+    
+    print_info "正在导出镜像: $IMAGE_NAME"
+    
+    if docker save "$IMAGE_NAME" | gzip > "$EXPORT_FILE"; then
+        FILE_SIZE=$(du -h "$EXPORT_FILE" | cut -f1)
+        print_success "镜像导出成功: $(basename "$EXPORT_FILE") ($FILE_SIZE)"
+    else
+        print_error "镜像导出失败"
+        rm -f "$EXPORT_FILE" 2>/dev/null || true
+    fi
+    
+    echo ""
+    read -p "按回车键返回..."
+}
+
+# 导入镜像子菜单
+show_import_images_menu() {
+    while true; do
+        print_header "Docker 镜像导入"
+        echo ""
+        print_info "请选择要导入的镜像:"
+        echo "  1) 导入前端镜像"
+        echo "  2) 导入后端镜像"
+        echo "  3) 导入 TTS API 服务镜像"
+        echo "  4) 导入 TTS API Lite 服务镜像"
+        echo "  5) 导入全部镜像"
+        echo "  0) 返回主菜单"
+        echo ""
+        read -p "请输入选项 (0-5): " import_choice
+        
+        case $import_choice in
+            1)
+                import_single_image "frontend"
+                ;;
+            2)
+                import_single_image "backend"
+                ;;
+            3)
+                import_single_image "tts-api"
+                ;;
+            4)
+                import_single_image "tts-api-lite"
+                ;;
+            5)
+                import_images
+                ;;
+            0)
+                return
+                ;;
+            *)
+                print_warning "无效选项，请重新选择"
+                sleep 1
+                ;;
+        esac
+    done
+}
+
+# 导入单个镜像
+import_single_image() {
+    local image_type=$1
+    PROJECT_ROOT=$(get_project_root)
+    IMAGE_DIR="$PROJECT_ROOT/docker-images"
+    
+    print_header "导入 ${image_type} 镜像"
+    
+    # 确定镜像文件名
+    case $image_type in
+        frontend)
+            IMAGE_FILE="$IMAGE_DIR/readknows-frontend-latest.tar.gz"
+            ;;
+        backend)
+            IMAGE_FILE="$IMAGE_DIR/readknows-backend-latest.tar.gz"
+            ;;
+        tts-api)
+            IMAGE_FILE="$IMAGE_DIR/tts-api-latest.tar.gz"
+            ;;
+        tts-api-lite)
+            IMAGE_FILE="$IMAGE_DIR/tts-api-lite-latest.tar.gz"
+            ;;
+        *)
+            print_error "未知的镜像类型: $image_type"
+            echo ""
+            read -p "按回车键返回..."
+            return
+            ;;
+    esac
+    
+    if [ ! -f "$IMAGE_FILE" ]; then
+        print_error "镜像文件不存在: $IMAGE_FILE"
+        echo ""
+        read -p "按回车键返回..."
+        return
+    fi
+    
+    print_info "正在导入镜像: $(basename "$IMAGE_FILE")"
+    print_info "这可能需要几分钟时间，请耐心等待..."
+    
+    if gunzip -c "$IMAGE_FILE" | docker load; then
+        print_success "镜像导入成功"
+    else
+        print_error "镜像导入失败"
+    fi
+    
+    echo ""
+    read -p "按回车键返回..."
+}
+
+# 删除镜像子菜单
+show_delete_images_menu() {
+    while true; do
+        print_header "删除 Docker 镜像"
+        echo ""
+        print_info "请选择要删除的镜像:"
+        echo "  1) 删除前端镜像"
+        echo "  2) 删除后端镜像"
+        echo "  3) 删除 TTS API 服务镜像"
+        echo "  4) 删除 TTS API Lite 服务镜像"
+        echo "  5) 删除全部镜像"
+        echo "  0) 返回主菜单"
+        echo ""
+        read -p "请输入选项 (0-5): " delete_choice
+        
+        case $delete_choice in
+            1)
+                delete_single_image "frontend"
+                ;;
+            2)
+                delete_single_image "backend"
+                ;;
+            3)
+                delete_single_image "tts-api"
+                ;;
+            4)
+                delete_single_image "tts-api-lite"
+                ;;
+            5)
+                delete_all_images
+                ;;
+            0)
+                return
+                ;;
+            *)
+                print_warning "无效选项，请重新选择"
+                sleep 1
+                ;;
+        esac
+    done
+}
+
+# 删除单个镜像
+delete_single_image() {
+    local image_type=$1
+    
+    print_header "删除 ${image_type} 镜像"
+    
+    # 确定镜像名称
+    case $image_type in
+        frontend)
+            IMAGE_NAME="ttbye/readknows-frontend:latest"
+            CONTAINER_NAME="readknows-frontend"
+            ;;
+        backend)
+            IMAGE_NAME="ttbye/readknows-backend:latest"
+            CONTAINER_NAME="readknows-backend"
+            ;;
+        tts-api)
+            IMAGE_NAME="ttbye/tts-api:latest"
+            CONTAINER_NAME="readknow-tts-api"
+            ;;
+        tts-api-lite)
+            IMAGE_NAME="ttbye/tts-api-lite:latest"
+            CONTAINER_NAME="readknow-tts-api-lite"
+            ;;
+        *)
+            print_error "未知的镜像类型: $image_type"
+            echo ""
+            read -p "按回车键返回..."
+            return
+            ;;
+    esac
+    
+    # 检查镜像是否存在
+    if ! docker images --format "{{.Repository}}:{{.Tag}}" | grep -q "^${IMAGE_NAME}$"; then
+        print_warning "镜像不存在: $IMAGE_NAME"
+        echo ""
+        read -p "按回车键返回..."
+        return
+    fi
+    
+    # 检查容器
+    if docker ps -a --format "{{.Names}}" | grep -qE "^${CONTAINER_NAME}$"; then
+        print_warning "发现相关容器: $CONTAINER_NAME"
+        read -p "是否先删除容器? (Y/n，默认: Y): " delete_container
+        delete_container=${delete_container:-y}
+        if [ "$delete_container" = "y" ] || [ "$delete_container" = "Y" ]; then
+            docker stop "$CONTAINER_NAME" 2>/dev/null || true
+            docker rm "$CONTAINER_NAME" 2>/dev/null || true
+            print_success "容器已删除"
+        fi
+    fi
+    
+    echo ""
+    print_warning "此操作将永久删除镜像: $IMAGE_NAME"
+    read -p "确认删除? (y/N，默认: N): " confirm_delete
+    confirm_delete=${confirm_delete:-n}
+    
+    if [ "$confirm_delete" != "y" ] && [ "$confirm_delete" != "Y" ]; then
+        print_info "已取消删除"
+        echo ""
+        read -p "按回车键返回..."
+        return
+    fi
+    
+    if docker rmi "$IMAGE_NAME" 2>/dev/null; then
+        print_success "镜像删除成功"
+    else
+        print_warning "普通删除失败，尝试强制删除..."
+        if docker rmi -f "$IMAGE_NAME" 2>/dev/null; then
+            print_success "镜像强制删除成功"
+        else
+            print_error "镜像删除失败"
+        fi
+    fi
+    
+    echo ""
+    read -p "按回车键返回..."
+}
+
+# 删除全部镜像
+delete_all_images() {
+    print_header "删除全部 Docker 镜像"
+    
+    BACKEND_IMAGE="ttbye/readknows-backend:latest"
+    FRONTEND_IMAGE="ttbye/readknows-frontend:latest"
+    TTS_IMAGE="ttbye/tts-api:latest"
+    TTS_LITE_IMAGE="ttbye/tts-api-lite:latest"
+    
+    echo ""
+    print_info "将删除以下镜像:"
+    
+    IMAGES_TO_DELETE=()
+    if docker images --format "{{.Repository}}:{{.Tag}}" | grep -q "^${BACKEND_IMAGE}$"; then
+        echo "  - $BACKEND_IMAGE"
+        IMAGES_TO_DELETE+=("$BACKEND_IMAGE")
+    fi
+    if docker images --format "{{.Repository}}:{{.Tag}}" | grep -q "^${FRONTEND_IMAGE}$"; then
+        echo "  - $FRONTEND_IMAGE"
+        IMAGES_TO_DELETE+=("$FRONTEND_IMAGE")
+    fi
+    if docker images --format "{{.Repository}}:{{.Tag}}" | grep -q "^${TTS_IMAGE}$"; then
+        echo "  - $TTS_IMAGE"
+        IMAGES_TO_DELETE+=("$TTS_IMAGE")
+    fi
+    if docker images --format "{{.Repository}}:{{.Tag}}" | grep -q "^${TTS_LITE_IMAGE}$"; then
+        echo "  - $TTS_LITE_IMAGE"
+        IMAGES_TO_DELETE+=("$TTS_LITE_IMAGE")
+    fi
+    
+    if [ ${#IMAGES_TO_DELETE[@]} -eq 0 ]; then
+        print_warning "未找到任何镜像"
+        echo ""
+        read -p "按回车键返回..."
+        return
+    fi
+    
+    echo ""
+    print_warning "此操作将永久删除上述所有 Docker 镜像，无法恢复！"
+    print_warning "如果容器正在运行，将自动停止并删除容器。"
+    echo ""
+    read -p "确认删除? (y/N，默认: N): " confirm_delete
+    confirm_delete=${confirm_delete:-n}
+    
+    if [ "$confirm_delete" != "y" ] && [ "$confirm_delete" != "Y" ]; then
+        print_info "已取消删除"
+        echo ""
+        read -p "按回车键返回..."
+        return
+    fi
+    
+    # 删除相关容器
+    CONTAINERS=("readknows-backend" "readknows-frontend" "readknow-tts-api" "readknow-tts-api-lite")
+    for container in "${CONTAINERS[@]}"; do
+        if docker ps -a --format "{{.Names}}" | grep -qE "^${container}$"; then
+            print_info "停止并删除容器: $container"
+            docker stop "$container" 2>/dev/null || true
+            docker rm "$container" 2>/dev/null || true
+        fi
+    done
+    
+    sleep 1
+    
+    # 删除镜像
+    DELETED_COUNT=0
+    for image in "${IMAGES_TO_DELETE[@]}"; do
+        print_info "正在删除镜像: $image"
+        if docker rmi "$image" 2>/dev/null || docker rmi -f "$image" 2>/dev/null; then
+            print_success "镜像删除成功: $image"
+            DELETED_COUNT=$((DELETED_COUNT + 1))
+        else
+            print_warning "镜像删除失败: $image"
+        fi
+    done
+    
+    echo ""
+    if [ $DELETED_COUNT -gt 0 ]; then
+        print_success "删除完成！共删除 $DELETED_COUNT 个镜像"
+    else
+        print_warning "未删除任何镜像"
+    fi
+    
+    echo ""
+    read -p "按回车键返回..."
+}
+
+# 其他功能子菜单
+show_other_menu() {
+    while true; do
+        print_header "其他功能"
+        echo ""
+        print_info "请选择功能:"
+        echo "  1) 安装 Calibre"
+        echo "  2) 下载 CosyVoice 模型"
+        echo "  3) 下载 IndexTTS2 模型"
+        echo "  4) 管理员账号初始化（用户名：books，密码：books）"
+        echo "  5) 删除已导出的镜像文件 (docker-images 目录)"
+        echo "  6) 删除 TTS-API-Lite 服务"
+        echo "  0) 返回主菜单"
+        echo ""
+        read -p "请输入选项 (0-6): " other_choice
+        
+        case $other_choice in
+            1)
+                install_calibre_standalone
+                ;;
+            2)
+                download_cosyvoice_model
+                ;;
+            3)
+                download_indextts2_model
+                ;;
+            4)
+                init_admin_with_defaults
+                ;;
+            5)
+                delete_exported_images
+                ;;
+            6)
+                remove_tts_api_lite
+                ;;
+            0)
+                return
+                ;;
+            *)
+                print_warning "无效选项，请重新选择"
+                sleep 1
+                ;;
+        esac
+    done
+}
+
+# 下载 CosyVoice 模型
+download_cosyvoice_model() {
+    print_header "下载 CosyVoice 模型"
+    
+    PROJECT_ROOT=$(get_project_root)
+    TTS_API_DIR="$PROJECT_ROOT/tts-api"
+    
+    if [ ! -d "$TTS_API_DIR" ]; then
+        print_error "未找到 TTS API 目录: $TTS_API_DIR"
+        echo ""
+        read -p "按回车键返回..."
+        return
+    fi
+    
+    DOWNLOAD_SCRIPT="$TTS_API_DIR/scripts/download-cosyvoice.py"
+    
+    if [ ! -f "$DOWNLOAD_SCRIPT" ]; then
+        print_error "未找到下载脚本: $DOWNLOAD_SCRIPT"
+        echo ""
+        read -p "按回车键返回..."
+        return
+    fi
+    
+    PLATFORM=$(detect_platform)
+    TTS_PATHS=$(get_tts_api_paths "$PLATFORM")
+    MODELS_DIR="${TTS_PATHS%%|*}"
+    
+    print_info "模型目录: $MODELS_DIR/cosyvoice"
+    echo ""
+    
+    cd "$TTS_API_DIR"
+    if python3 "$DOWNLOAD_SCRIPT" "$MODELS_DIR/cosyvoice"; then
+        print_success "CosyVoice 模型下载完成"
+    else
+        print_error "CosyVoice 模型下载失败"
+    fi
+    
+    echo ""
+    read -p "按回车键返回..."
+}
+
+# 下载 IndexTTS2 模型
+download_indextts2_model() {
+    print_header "下载 IndexTTS2 模型"
+    
+    PROJECT_ROOT=$(get_project_root)
+    TTS_API_DIR="$PROJECT_ROOT/tts-api"
+    
+    if [ ! -d "$TTS_API_DIR" ]; then
+        print_error "未找到 TTS API 目录: $TTS_API_DIR"
+        echo ""
+        read -p "按回车键返回..."
+        return
+    fi
+    
+    DOWNLOAD_SCRIPT="$TTS_API_DIR/scripts/download-indextts2.py"
+    
+    if [ ! -f "$DOWNLOAD_SCRIPT" ]; then
+        print_error "未找到下载脚本: $DOWNLOAD_SCRIPT"
+        echo ""
+        read -p "按回车键返回..."
+        return
+    fi
+    
+    PLATFORM=$(detect_platform)
+    TTS_PATHS=$(get_tts_api_paths "$PLATFORM")
+    MODELS_DIR="${TTS_PATHS%%|*}"
+    
+    print_info "模型目录: $MODELS_DIR/indextts2"
+    echo ""
+    
+    cd "$TTS_API_DIR"
+    if python3 "$DOWNLOAD_SCRIPT" "$MODELS_DIR/indextts2"; then
+        print_success "IndexTTS2 模型下载完成"
+    else
+        print_error "IndexTTS2 模型下载失败"
+    fi
+    
+    echo ""
+    read -p "按回车键返回..."
+}
+
+# 使用默认值初始化管理员
+init_admin_with_defaults() {
+    print_header "管理员账号初始化"
+    
+    PROJECT_ROOT=$(get_project_root)
+    SCRIPT_PATH="$PROJECT_ROOT/sh/init-admin.sh"
+    
+    if [ ! -f "$SCRIPT_PATH" ]; then
+        print_error "未找到脚本: $SCRIPT_PATH"
+        echo ""
+        read -p "按回车键返回..."
+        return
+    fi
+    
+    print_info "将使用默认值初始化管理员账号"
+    print_info "用户名: books"
+    print_info "密码: books"
+    echo ""
+    read -p "确认初始化? (Y/n，默认: Y): " confirm
+    confirm=${confirm:-y}
+    
+    if [ "$confirm" != "y" ] && [ "$confirm" != "Y" ]; then
+        print_info "已取消"
+        echo ""
+        read -p "按回车键返回..."
+        return
+    fi
+    
+    # 检查后端容器是否运行
+    if ! docker ps --format "{{.Names}}" | grep -qE "^(readknows-backend|knowbooks-backend)$"; then
+        print_error "后端容器未运行，请先启动后端服务"
+        echo ""
+        read -p "按回车键返回..."
+        return
+    fi
+    
+    # 获取容器名称
+    BACKEND_CONTAINER=$(docker ps --format "{{.Names}}" | grep -E "^(readknows-backend|knowbooks-backend)$" | head -1)
+    
+    print_info "正在初始化管理员账户..."
+    
+    # 执行初始化（使用默认值：books/books）
+    if docker exec "$BACKEND_CONTAINER" node scripts/initAdmin.js books admin@readknows.local books 2>&1; then
+        print_success "管理员账户初始化成功！"
+        echo ""
+        print_info "账户信息："
+        echo "  用户名: books"
+        echo "  邮箱: admin@readknows.local"
+        echo "  密码: books"
+        echo ""
+        print_warning "请妥善保管密码，首次登录后请及时修改！"
+    else
+        print_error "管理员账户初始化失败"
+        print_info "请检查后端容器是否正常运行"
+    fi
+    
+    echo ""
+    read -p "按回车键返回..."
+}
+
 # 显示主菜单
 show_main_menu() {
     while true; do
         print_header "ReadKnows (读士私人书库) 安装工具"
         echo ""
         print_info "请选择功能:"
-        echo "  1) 开始安装"
-        echo "  2) 导入 Images 镜像 (执行: sh/Dockerimport-images.sh)"
-        echo "  3) 导出 Images 镜像 (执行: sh/Dockerexport-images.sh)"
-        echo "  4) 安装 Calibre (执行: sh/install-calibre.sh)"
-        echo "  5) 初始化用户账号 (执行: sh/init-admin.sh)"
-        echo "  6) 删除已导出的镜像文件 (docker-images 目录)"
-        echo "  7) 删除 Docker 中的镜像 (便于重新完整打包)"
-        echo "  0) 退出"
+        echo "  1) 安装系统（前、后端）"
+        echo "  2) 安装服务（TTS-API）"
+        echo "  3) 安装服务（TTS-API-Lite）"
+        echo "  4) 开发运行（执行: sh/start.sh）"
+        echo "  5) Docker镜像导出"
+        echo "  6) Docker镜像导入"
+        echo "  7) 删除Docker镜像"
+        echo "  8) 其他功能"
+        echo "  9) 退出"
         echo ""
-        read -p "请输入选项 (0-7，默认: 1): " menu_choice
+        read -p "请输入选项 (1-9，默认: 1): " menu_choice
         menu_choice=${menu_choice:-1}
         
         case $menu_choice in
             1)
-                # 开始安装
+                # 安装系统（前、后端）
                 run_installation
                 break
                 ;;
             2)
-                # 导入镜像
-                import_images
+                # 安装服务（TTS-API）
+                install_tts_service
                 ;;
             3)
-                # 导出镜像
-                export_images
+                # 安装服务（TTS-API-Lite）
+                install_tts_api_lite
                 ;;
             4)
-                # 安装 Calibre
-                install_calibre_standalone
+                # 开发运行
+                start_dev
                 ;;
             5)
-                # 初始化用户账号
-                init_admin_standalone
+                # Docker镜像导出
+                show_export_images_menu
                 ;;
             6)
-                # 删除已导出的镜像文件
-                delete_exported_images
+                # Docker镜像导入
+                show_import_images_menu
                 ;;
             7)
-                # 删除 Docker 中的镜像
-                delete_docker_images
+                # 删除Docker镜像
+                show_delete_images_menu
                 ;;
-            0)
+            8)
+                # 其他功能
+                show_other_menu
+                ;;
+            9)
                 print_info "已退出"
                 exit 0
                 ;;
@@ -828,15 +1483,39 @@ import_images() {
     PROJECT_ROOT=$(get_project_root)
     SCRIPT_PATH="$PROJECT_ROOT/sh/Dockerimport-images.sh"
     
+    # 如果未找到脚本，尝试在兼容路径搜索
+    if [ ! -f "$SCRIPT_PATH" ]; then
+        ALT_PATHS=(
+            "./sh/Dockerimport-images.sh"
+            "../sh/Dockerimport-images.sh"
+            "$(dirname "$PROJECT_ROOT")/sh/Dockerimport-images.sh"
+        )
+        for p in "${ALT_PATHS[@]}"; do
+            if [ -f "$p" ]; then
+                SCRIPT_PATH="$p"
+                break
+            fi
+        done
+        # 仍未找到，使用 find 搜索（限定深度，避免过慢）
+        if [ ! -f "$SCRIPT_PATH" ]; then
+            FOUND_PATH=$(find "$(dirname "$PROJECT_ROOT")" -maxdepth 3 -type f -name "Dockerimport-images.sh" 2>/dev/null | head -1)
+            if [ -n "$FOUND_PATH" ]; then
+                SCRIPT_PATH="$FOUND_PATH"
+            fi
+        fi
+    fi
+    
     if [ -f "$SCRIPT_PATH" ]; then
-        print_info "执行镜像导入脚本..."
+        print_info "执行镜像导入脚本: $SCRIPT_PATH"
         bash "$SCRIPT_PATH"
         print_success "镜像导入完成"
     else
-        print_error "未找到脚本: $SCRIPT_PATH"
+        print_error "未找到脚本: Dockerimport-images.sh"
+        print_info "尝试路径: $PROJECT_ROOT/sh/Dockerimport-images.sh 及兼容路径"
+        print_info "请确认脚本已复制到项目根目录的 sh/ 目录后重试。"
     fi
     echo ""
-    read -p "按回车键返回主菜单..."
+    read -p "按回车键返回..."
 }
 
 # 导出镜像
@@ -844,15 +1523,39 @@ export_images() {
     PROJECT_ROOT=$(get_project_root)
     SCRIPT_PATH="$PROJECT_ROOT/sh/Dockerexport-images.sh"
     
+    # 如果未找到脚本，尝试在兼容路径搜索
+    if [ ! -f "$SCRIPT_PATH" ]; then
+        ALT_PATHS=(
+            "./sh/Dockerexport-images.sh"
+            "../sh/Dockerexport-images.sh"
+            "$(dirname "$PROJECT_ROOT")/sh/Dockerexport-images.sh"
+        )
+        for p in "${ALT_PATHS[@]}"; do
+            if [ -f "$p" ]; then
+                SCRIPT_PATH="$p"
+                break
+            fi
+        done
+        # 仍未找到，使用 find 搜索（限定深度，避免过慢）
+        if [ ! -f "$SCRIPT_PATH" ]; then
+            FOUND_PATH=$(find "$(dirname "$PROJECT_ROOT")" -maxdepth 3 -type f -name "Dockerexport-images.sh" 2>/dev/null | head -1)
+            if [ -n "$FOUND_PATH" ]; then
+                SCRIPT_PATH="$FOUND_PATH"
+            fi
+        fi
+    fi
+    
     if [ -f "$SCRIPT_PATH" ]; then
-        print_info "执行镜像导出脚本..."
+        print_info "执行镜像导出脚本: $SCRIPT_PATH"
         bash "$SCRIPT_PATH"
         print_success "镜像导出完成"
     else
-        print_error "未找到脚本: $SCRIPT_PATH"
+        print_error "未找到脚本: Dockerexport-images.sh"
+        print_info "尝试路径: $PROJECT_ROOT/sh/Dockerexport-images.sh 及兼容路径"
+        print_info "请确认脚本已复制到项目根目录的 sh/ 目录后重试。"
     fi
     echo ""
-    read -p "按回车键返回主菜单..."
+    read -p "按回车键返回..."
 }
 
 # 独立安装 Calibre
@@ -891,7 +1594,7 @@ install_calibre_standalone() {
         print_info "请确认脚本已复制到项目根目录的 sh/ 目录后重试。"
     fi
     echo ""
-    read -p "按回车键返回主菜单..."
+    read -p "按回车键返回..."
 }
 
 # 独立初始化管理员
@@ -907,7 +1610,747 @@ init_admin_standalone() {
         print_error "未找到脚本: $SCRIPT_PATH"
     fi
     echo ""
-    read -p "按回车键返回主菜单..."
+    read -p "按回车键返回..."
+}
+
+# 获取 TTS API 模型和临时目录路径（根据平台）
+get_tts_api_paths() {
+    local platform=$1
+    local models_dir=""
+    local temp_dir=""
+    
+    case $platform in
+        macos)
+            models_dir="/Users/ttbye/ReadKnows/tts/models"
+            temp_dir="/Users/ttbye/ReadKnows/tts/temp"
+            ;;
+        linux)
+            models_dir="/volume5/docker/ReadKnows/tts-models"
+            temp_dir="/volume5/docker/ReadKnows/tts-temp"
+            ;;
+        windows)
+            models_dir="D:\\Docker\\ReadKnows\\tts-models"
+            temp_dir="D:\\Docker\\ReadKnows\\tts-temp"
+            ;;
+        *)
+            # 默认使用项目目录下的相对路径
+            PROJECT_ROOT=$(get_project_root)
+            models_dir="$PROJECT_ROOT/tts-api/models"
+            temp_dir="$PROJECT_ROOT/tts-api/temp"
+            ;;
+    esac
+    
+    echo "$models_dir|$temp_dir"
+}
+
+# 安装 TTS API 服务
+install_tts_service() {
+    print_header "安装 TTS API 服务"
+    
+    PROJECT_ROOT=$(get_project_root)
+    TTS_API_DIR="$PROJECT_ROOT/tts-api"
+    
+    if [ ! -d "$TTS_API_DIR" ]; then
+        print_error "未找到 TTS API 目录: $TTS_API_DIR"
+        echo ""
+        read -p "按回车键返回主菜单..."
+        return
+    fi
+    
+    # 检测平台
+    PLATFORM=$(detect_platform)
+    
+    # 如果平台检测失败，尝试手动检测
+    if [ "$PLATFORM" = "unknown" ]; then
+        print_warning "自动平台检测失败，尝试手动检测..."
+        UNAME_S=$(uname -s)
+        if [ "$UNAME_S" = "Darwin" ]; then
+            PLATFORM="macos"
+        elif [ "$UNAME_S" = "Linux" ]; then
+            PLATFORM="linux"
+        elif [ -n "$WSL_DISTRO_NAME" ] || [ -n "$WSLENV" ] || echo "$UNAME_S" | grep -qE "^MINGW(64|32)_NT" || echo "$UNAME_S" | grep -qE "^MSYS_NT" || echo "$UNAME_S" | grep -qE "^CYGWIN_NT"; then
+            PLATFORM="windows"
+        else
+            print_warning "无法自动检测平台，请手动选择"
+            echo ""
+            echo "  1) Linux"
+            echo "  2) macOS"
+            echo "  3) Windows"
+            echo "  4) Synology NAS"
+            echo ""
+            read -p "请选择平台 (1-4，默认: 1): " platform_choice
+            platform_choice=${platform_choice:-1}
+            case $platform_choice in
+                1) PLATFORM="linux" ;;
+                2) PLATFORM="macos" ;;
+                3) PLATFORM="windows" ;;
+                4) PLATFORM="synology" ;;
+                *) PLATFORM="linux" ;;
+            esac
+        fi
+    fi
+    
+    print_info "检测到平台: $PLATFORM"
+    
+    # 获取 TTS API 路径
+    TTS_PATHS=$(get_tts_api_paths "$PLATFORM")
+    TTS_MODELS_DIR="${TTS_PATHS%%|*}"
+    TTS_TEMP_DIR="${TTS_PATHS#*|}"
+    
+    print_info "TTS 模型目录: $TTS_MODELS_DIR"
+    print_info "TTS 临时目录: $TTS_TEMP_DIR"
+    
+    # 创建目录
+    mkdir -p "$TTS_MODELS_DIR" "$TTS_TEMP_DIR"
+    
+    # 检查 Docker 是否运行
+    if ! docker info &> /dev/null; then
+        print_error "Docker 服务未运行，请启动 Docker 服务"
+        echo ""
+        read -p "按回车键返回主菜单..."
+        return
+    fi
+    
+    # 检查端口占用
+    if command -v lsof &> /dev/null; then
+        if lsof -Pi :5050 -sTCP:LISTEN -t >/dev/null 2>&1; then
+            print_warning "端口 5050 已被占用"
+            read -p "是否继续? (Y/n，默认: Y): " continue_install
+            continue_install=${continue_install:-y}
+            if [ "$continue_install" != "y" ] && [ "$continue_install" != "Y" ]; then
+                print_info "已取消安装"
+                echo ""
+                read -p "按回车键返回主菜单..."
+                return
+            fi
+        fi
+    fi
+    
+    # 检查是否已有 TTS API 容器
+    if docker ps -a --format "{{.Names}}" | grep -qE "^readknow-tts-api$"; then
+        print_warning "发现已存在的 TTS API 容器"
+        read -p "是否停止并删除现有容器? (Y/n，默认: Y): " remove_existing
+        remove_existing=${remove_existing:-y}
+        if [ "$remove_existing" = "y" ] || [ "$remove_existing" = "Y" ]; then
+            print_info "停止并删除现有容器..."
+            docker stop readknow-tts-api 2>/dev/null || true
+            docker rm readknow-tts-api 2>/dev/null || true
+            print_success "现有容器已删除"
+        fi
+    fi
+    
+    # 选择 docker-compose 文件（从 sh 目录查找）
+    SH_DIR="$PROJECT_ROOT/sh"
+    TTS_COMPOSE_FILE=""
+    case $PLATFORM in
+        macos)
+            if [ -f "$SH_DIR/docker-compose-TTS-MACOS.yml" ]; then
+                TTS_COMPOSE_FILE="$SH_DIR/docker-compose-TTS-MACOS.yml"
+            elif [ -f "$SH_DIR/docker-compose-TTS-macos.yml" ]; then
+                TTS_COMPOSE_FILE="$SH_DIR/docker-compose-TTS-macos.yml"
+            fi
+            ;;
+        linux)
+            if [ -f "$SH_DIR/docker-compose-TTS-Linux.yml" ]; then
+                TTS_COMPOSE_FILE="$SH_DIR/docker-compose-TTS-Linux.yml"
+            elif [ -f "$SH_DIR/docker-compose-TTS-linux.yml" ]; then
+                TTS_COMPOSE_FILE="$SH_DIR/docker-compose-TTS-linux.yml"
+            fi
+            ;;
+        windows)
+            if [ -f "$SH_DIR/docker-compose-TTS-WINDOWS.yml" ]; then
+                TTS_COMPOSE_FILE="$SH_DIR/docker-compose-TTS-WINDOWS.yml"
+            elif [ -f "$SH_DIR/docker-compose-TTS-windows.yml" ]; then
+                TTS_COMPOSE_FILE="$SH_DIR/docker-compose-TTS-windows.yml"
+            fi
+            ;;
+        synology)
+            if [ -f "$SH_DIR/docker-compose-TTS-Synology.yml" ]; then
+                TTS_COMPOSE_FILE="$SH_DIR/docker-compose-TTS-Synology.yml"
+            elif [ -f "$SH_DIR/docker-compose-TTS-synology.yml" ]; then
+                TTS_COMPOSE_FILE="$SH_DIR/docker-compose-TTS-synology.yml"
+            fi
+            ;;
+    esac
+    
+    # 如果没有找到平台特定的文件，尝试查找通用文件
+    if [ -z "$TTS_COMPOSE_FILE" ]; then
+        # 尝试查找通用 TTS compose 文件
+        if [ -f "$SH_DIR/docker-compose-TTS.yml" ]; then
+            TTS_COMPOSE_FILE="$SH_DIR/docker-compose-TTS.yml"
+        elif [ -f "$TTS_API_DIR/docker-compose.yml" ]; then
+            TTS_COMPOSE_FILE="$TTS_API_DIR/docker-compose.yml"
+        else
+            print_error "未找到 TTS API docker-compose 文件"
+            print_info "请确认以下文件之一存在："
+            echo "  - $SH_DIR/docker-compose-TTS-Linux.yml"
+            echo "  - $SH_DIR/docker-compose-TTS-MACOS.yml"
+            echo "  - $SH_DIR/docker-compose-TTS-WINDOWS.yml"
+            echo "  - $SH_DIR/docker-compose-TTS-Synology.yml"
+            echo ""
+            read -p "按回车键返回主菜单..."
+            return
+        fi
+    fi
+    
+    print_info "使用配置文件: $TTS_COMPOSE_FILE"
+    
+    # 切换到 sh 目录（docker-compose 文件所在目录）
+    cd "$SH_DIR"
+    
+    # 检查镜像是否已存在（加快安装速度）
+    TTS_IMAGE="ttbye/tts-api:latest"
+    COMPOSE_FILE_NAME=$(basename "$TTS_COMPOSE_FILE")
+    
+    # 确保 COMPOSE_CMD 已设置
+    if [ -z "$COMPOSE_CMD" ]; then
+        if command -v docker-compose &> /dev/null; then
+            COMPOSE_CMD="docker-compose"
+        elif docker compose version &> /dev/null 2>&1; then
+            COMPOSE_CMD="docker compose"
+        else
+            print_error "未找到 Docker Compose"
+            echo ""
+            read -p "按回车键返回主菜单..."
+            return
+        fi
+    fi
+    
+    # 构建 docker compose 命令数组（处理空格问题）
+    if [ "$COMPOSE_CMD" = "docker-compose" ]; then
+        COMPOSE_ARGS=("docker-compose" "-f" "$COMPOSE_FILE_NAME")
+    else
+        COMPOSE_ARGS=("docker" "compose" "-f" "$COMPOSE_FILE_NAME")
+    fi
+    
+    if docker images --format "{{.Repository}}:{{.Tag}}" | grep -qE "^${TTS_IMAGE}$"; then
+        print_info "检测到 TTS API 镜像已存在，跳过构建"
+        print_info "直接启动服务..."
+        "${COMPOSE_ARGS[@]}" up -d
+    else
+        print_info "开始构建 TTS API 镜像..."
+        print_warning "构建过程可能需要 5-15 分钟，具体取决于网络速度"
+        print_info "构建步骤包括："
+        echo "  1. 下载基础镜像（python:3.11-slim）"
+        echo "  2. 安装系统依赖（FFmpeg、Git、Git LFS）"
+        echo "  3. 安装 Python 依赖包"
+        echo "  4. 复制源代码"
+        echo ""
+        
+        # 预拉取基础镜像以加快构建
+        read -p "是否先预拉取基础镜像以加快构建? (Y/n，默认: Y): " pre_pull
+        pre_pull=${pre_pull:-y}
+        if [ "$pre_pull" = "y" ] || [ "$pre_pull" = "Y" ]; then
+            print_info "正在预拉取基础镜像..."
+            docker pull python:3.11-slim > /dev/null 2>&1 || print_warning "拉取 python:3.11-slim 失败，将在构建时自动下载"
+            print_success "基础镜像预拉取完成"
+            echo ""
+        fi
+        
+        print_info "开始构建镜像，请耐心等待..."
+        print_info "提示: 您可以按 Ctrl+C 中断构建，然后稍后重新运行此脚本继续"
+        echo ""
+        
+        # 使用 buildx 并行构建（如果可用）
+        if docker buildx version &> /dev/null 2>&1; then
+            print_info "检测到 Docker Buildx，将使用并行构建..."
+            "${COMPOSE_ARGS[@]}" build
+        else
+            "${COMPOSE_ARGS[@]}" build
+        fi
+        
+        if [ $? -eq 0 ]; then
+            print_success "镜像构建完成"
+            print_info "启动服务..."
+            "${COMPOSE_ARGS[@]}" up -d
+        else
+            print_error "镜像构建失败"
+            echo ""
+            read -p "按回车键返回主菜单..."
+            return
+        fi
+    fi
+    
+    if [ $? -eq 0 ]; then
+        print_success "TTS API 服务启动成功"
+        echo ""
+        print_info "等待服务就绪..."
+        sleep 5
+        
+        # 测试服务健康状态
+        max_attempts=15
+        attempt=0
+        while [ $attempt -lt $max_attempts ]; do
+            if curl -f http://localhost:5050/health &> /dev/null 2>&1; then
+                print_success "TTS API 服务已就绪"
+                echo ""
+                print_info "服务信息:"
+                echo "  服务地址: http://localhost:5050"
+                echo "  健康检查: http://localhost:5050/health"
+                echo "  模型列表: http://localhost:5050/api/tts/models"
+                echo "  语音列表: http://localhost:5050/api/tts/voices"
+                echo "  测试页面: http://localhost:5050/test"
+                echo ""
+                print_info "常用命令:"
+                echo "  查看日志: docker logs -f readknow-tts-api"
+                echo "  停止服务: docker stop readknow-tts-api"
+                echo "  重启服务: docker restart readknow-tts-api"
+                echo "  删除服务: 运行 install.sh，选择选项 7: 删除 TTS API 服务"
+                echo ""
+                print_warning "请在系统设置中配置 TTS 服务器地址和端口"
+                break
+            fi
+            attempt=$((attempt + 1))
+            echo -n "."
+            sleep 2
+        done
+        
+        if [ $attempt -ge $max_attempts ]; then
+            print_warning "服务启动超时，但可能仍在运行中"
+            print_info "请检查日志: docker logs readknow-tts-api"
+        fi
+    else
+        print_error "TTS API 服务启动失败"
+    fi
+    
+    echo ""
+    read -p "按回车键返回..."
+}
+
+# 删除 TTS API 服务
+remove_tts_api() {
+    print_header "删除 TTS API 服务"
+    
+    # 检查 Docker 是否运行
+    if ! docker info &> /dev/null; then
+        print_error "Docker 服务未运行"
+        echo ""
+        read -p "按回车键返回主菜单..."
+        return
+    fi
+    
+    # 检查容器是否存在
+    if ! docker ps -a --format "{{.Names}}" | grep -qE "^readknow-tts-api$"; then
+        print_warning "未找到 TTS API 容器"
+        echo ""
+        read -p "按回车键返回主菜单..."
+        return
+    fi
+    
+    # 检查容器状态
+    CONTAINER_STATUS=$(docker ps --format "{{.Names}}" | grep -qE "^readknow-tts-api$" && echo "running" || echo "stopped")
+    
+    echo ""
+    print_info "容器状态: $CONTAINER_STATUS"
+    print_warning "此操作将停止并删除 TTS API 容器，但不会删除模型文件"
+    echo ""
+    read -p "确认删除? (y/N，默认: N): " confirm_delete
+    confirm_delete=${confirm_delete:-n}
+    
+    if [ "$confirm_delete" != "y" ] && [ "$confirm_delete" != "Y" ]; then
+        print_info "已取消删除"
+        echo ""
+        read -p "按回车键返回..."
+        return
+    fi
+    
+    # 停止容器
+    if [ "$CONTAINER_STATUS" = "running" ]; then
+        print_info "正在停止容器..."
+        docker stop readknow-tts-api 2>/dev/null || true
+        sleep 2
+    fi
+    
+    # 删除容器
+    print_info "正在删除容器..."
+    if docker rm readknow-tts-api 2>/dev/null; then
+        print_success "容器已删除"
+    else
+        print_error "容器删除失败，尝试强制删除..."
+        docker rm -f readknow-tts-api 2>/dev/null || true
+        if docker ps -a --format "{{.Names}}" | grep -qE "^readknow-tts-api$"; then
+            print_error "容器删除失败"
+        else
+            print_success "容器已强制删除"
+                fi
+            fi
+            
+    # 询问是否删除镜像
+    echo ""
+    read -p "是否同时删除 TTS API 镜像? (y/N，默认: N): " delete_image
+    delete_image=${delete_image:-n}
+    
+    if [ "$delete_image" = "y" ] || [ "$delete_image" = "Y" ]; then
+        TTS_IMAGE="ttbye/tts-api:latest"
+        if docker images --format "{{.Repository}}:{{.Tag}}" | grep -qE "^${TTS_IMAGE}$"; then
+            print_info "正在删除镜像: $TTS_IMAGE"
+            if docker rmi "$TTS_IMAGE" 2>/dev/null; then
+                print_success "镜像已删除"
+            else
+                print_warning "镜像删除失败（可能被其他容器使用）"
+            fi
+        else
+            print_info "镜像不存在，跳过删除"
+        fi
+    fi
+    
+    echo ""
+    print_success "TTS API 服务删除完成"
+    echo ""
+    read -p "按回车键返回..."
+    }
+    
+# 安装 TTS-API-Lite 服务
+install_tts_api_lite() {
+    print_header "安装 TTS-API-Lite 服务"
+    
+    PROJECT_ROOT=$(get_project_root)
+    TTS_API_LITE_DIR="$PROJECT_ROOT/TTS-API-Lite"
+    
+    if [ ! -d "$TTS_API_LITE_DIR" ]; then
+        print_error "未找到 TTS-API-Lite 目录: $TTS_API_LITE_DIR"
+        echo ""
+        read -p "按回车键返回主菜单..."
+        return
+    fi
+    
+    # 检测平台
+    PLATFORM=$(detect_platform)
+    
+    # 如果平台检测失败，尝试手动检测
+    if [ "$PLATFORM" = "unknown" ]; then
+        print_warning "自动平台检测失败，尝试手动检测..."
+        UNAME_S=$(uname -s)
+        if [ "$UNAME_S" = "Darwin" ]; then
+            PLATFORM="macos"
+        elif [ "$UNAME_S" = "Linux" ]; then
+            PLATFORM="linux"
+        elif [ -n "$WSL_DISTRO_NAME" ] || [ -n "$WSLENV" ] || echo "$UNAME_S" | grep -qE "^MINGW(64|32)_NT" || echo "$UNAME_S" | grep -qE "^MSYS_NT" || echo "$UNAME_S" | grep -qE "^CYGWIN_NT"; then
+            PLATFORM="windows"
+        else
+            print_warning "无法自动检测平台，请手动选择"
+            echo ""
+            echo "  1) Linux"
+            echo "  2) macOS"
+            echo "  3) Windows"
+            echo "  4) Synology NAS"
+            echo ""
+            read -p "请选择平台 (1-4，默认: 1): " platform_choice
+            platform_choice=${platform_choice:-1}
+            case $platform_choice in
+                1) PLATFORM="linux" ;;
+                2) PLATFORM="macos" ;;
+                3) PLATFORM="windows" ;;
+                4) PLATFORM="synology" ;;
+                *) PLATFORM="linux" ;;
+            esac
+        fi
+    fi
+    
+    print_info "检测到平台: $PLATFORM"
+    
+    # 检查 Docker 是否运行
+    if ! docker info &> /dev/null; then
+        print_error "Docker 服务未运行，请启动 Docker 服务"
+        echo ""
+        read -p "按回车键返回主菜单..."
+        return
+    fi
+    
+    # 检查端口占用（Lite 使用 5051）
+    if command -v lsof &> /dev/null; then
+        if lsof -Pi :5051 -sTCP:LISTEN -t >/dev/null 2>&1; then
+            print_warning "端口 5051 已被占用"
+            read -p "是否继续? (Y/n，默认: Y): " continue_install
+            continue_install=${continue_install:-y}
+            if [ "$continue_install" != "y" ] && [ "$continue_install" != "Y" ]; then
+                print_info "已取消安装"
+        echo ""
+                read -p "按回车键返回主菜单..."
+                return
+            fi
+        fi
+    fi
+    
+    # 检查是否已有 TTS-API-Lite 容器
+    if docker ps -a --format "{{.Names}}" | grep -qE "^readknow-tts-api-lite$"; then
+        print_warning "发现已存在的 TTS-API-Lite 容器"
+        read -p "是否停止并删除现有容器? (Y/n，默认: Y): " remove_existing
+        remove_existing=${remove_existing:-y}
+        if [ "$remove_existing" = "y" ] || [ "$remove_existing" = "Y" ]; then
+            print_info "停止并删除现有容器..."
+            docker stop readknow-tts-api-lite 2>/dev/null || true
+            docker rm readknow-tts-api-lite 2>/dev/null || true
+            print_success "现有容器已删除"
+        fi
+    fi
+    
+    # 选择 docker-compose 文件（从 sh 目录查找）
+    SH_DIR="$PROJECT_ROOT/sh"
+    TTS_LITE_COMPOSE_FILE=""
+    case $PLATFORM in
+        macos)
+            if [ -f "$SH_DIR/docker-compose-TTS-Lite-MACOS.yml" ]; then
+                TTS_LITE_COMPOSE_FILE="$SH_DIR/docker-compose-TTS-Lite-MACOS.yml"
+            fi
+            ;;
+        linux)
+            if [ -f "$SH_DIR/docker-compose-TTS-Lite-Linux.yml" ]; then
+                TTS_LITE_COMPOSE_FILE="$SH_DIR/docker-compose-TTS-Lite-Linux.yml"
+            fi
+            ;;
+        windows)
+            if [ -f "$SH_DIR/docker-compose-TTS-Lite-WINDOWS.yml" ]; then
+                TTS_LITE_COMPOSE_FILE="$SH_DIR/docker-compose-TTS-Lite-WINDOWS.yml"
+            fi
+            ;;
+        synology)
+            if [ -f "$SH_DIR/docker-compose-TTS-Lite-Synology.yml" ]; then
+                TTS_LITE_COMPOSE_FILE="$SH_DIR/docker-compose-TTS-Lite-Synology.yml"
+            fi
+            ;;
+    esac
+    
+    if [ -z "$TTS_LITE_COMPOSE_FILE" ]; then
+        print_error "未找到 TTS-API-Lite docker-compose 文件"
+        print_info "请确认以下文件之一存在："
+        echo "  - $SH_DIR/docker-compose-TTS-Lite-Linux.yml"
+        echo "  - $SH_DIR/docker-compose-TTS-Lite-MACOS.yml"
+        echo "  - $SH_DIR/docker-compose-TTS-Lite-WINDOWS.yml"
+        echo "  - $SH_DIR/docker-compose-TTS-Lite-Synology.yml"
+    echo ""
+        read -p "按回车键返回主菜单..."
+        return
+    fi
+    
+    print_info "使用配置文件: $TTS_LITE_COMPOSE_FILE"
+    
+    # 切换到 sh 目录
+    cd "$SH_DIR"
+    
+    # 检查镜像是否已存在
+    TTS_LITE_IMAGE="ttbye/tts-api-lite:latest"
+    COMPOSE_FILE_NAME=$(basename "$TTS_LITE_COMPOSE_FILE")
+    
+    # 确保 COMPOSE_CMD 已设置
+    if [ -z "$COMPOSE_CMD" ]; then
+        if command -v docker-compose &> /dev/null; then
+            COMPOSE_CMD="docker-compose"
+        elif docker compose version &> /dev/null 2>&1; then
+            COMPOSE_CMD="docker compose"
+        else
+            print_error "未找到 Docker Compose"
+    echo ""
+            read -p "按回车键返回主菜单..."
+            return
+        fi
+    fi
+    
+    # 构建 docker compose 命令数组
+    if [ "$COMPOSE_CMD" = "docker-compose" ]; then
+        COMPOSE_ARGS=("docker-compose" "-f" "$COMPOSE_FILE_NAME")
+    else
+        COMPOSE_ARGS=("docker" "compose" "-f" "$COMPOSE_FILE_NAME")
+    fi
+    
+    if docker images --format "{{.Repository}}:{{.Tag}}" | grep -qE "^${TTS_LITE_IMAGE}$"; then
+        print_info "检测到 TTS-API-Lite 镜像已存在，跳过构建"
+        print_info "直接启动服务..."
+        "${COMPOSE_ARGS[@]}" up -d
+    else
+        print_info "开始构建 TTS-API-Lite 镜像..."
+        print_info "轻量级版本构建速度较快，通常只需 2-5 分钟"
+        print_info "构建步骤包括："
+        echo "  1. 下载基础镜像（python:3.11-slim）"
+        echo "  2. 安装系统依赖（FFmpeg）"
+        echo "  3. 安装 Python 依赖包（仅在线 TTS）"
+        echo "  4. 复制源代码"
+        echo ""
+        
+        # 预拉取基础镜像
+        read -p "是否先预拉取基础镜像以加快构建? (Y/n，默认: Y): " pre_pull
+        pre_pull=${pre_pull:-y}
+        if [ "$pre_pull" = "y" ] || [ "$pre_pull" = "Y" ]; then
+            print_info "正在预拉取基础镜像..."
+            docker pull python:3.11-slim > /dev/null 2>&1 || print_warning "拉取 python:3.11-slim 失败，将在构建时自动下载"
+            print_success "基础镜像预拉取完成"
+            echo ""
+        fi
+        
+        print_info "开始构建镜像，请耐心等待..."
+        echo ""
+        
+        # 使用 buildx 并行构建（如果可用）
+        if docker buildx version &> /dev/null 2>&1; then
+            print_info "检测到 Docker Buildx，将使用并行构建..."
+            "${COMPOSE_ARGS[@]}" build
+        else
+            "${COMPOSE_ARGS[@]}" build
+        fi
+        
+        if [ $? -eq 0 ]; then
+            print_success "镜像构建完成"
+            print_info "启动服务..."
+            "${COMPOSE_ARGS[@]}" up -d
+        else
+            print_error "镜像构建失败"
+            echo ""
+            read -p "按回车键返回主菜单..."
+            return
+        fi
+    fi
+    
+    if [ $? -eq 0 ]; then
+        print_success "TTS-API-Lite 服务启动成功"
+        echo ""
+        print_info "等待服务就绪..."
+        sleep 5
+        
+        # 测试服务健康状态
+        max_attempts=15
+        attempt=0
+        while [ $attempt -lt $max_attempts ]; do
+            if curl -f http://localhost:5051/health &> /dev/null 2>&1; then
+                print_success "TTS-API-Lite 服务已就绪"
+                echo ""
+                print_info "服务信息:"
+                echo "  服务地址: http://localhost:5051"
+                echo "  健康检查: http://localhost:5051/health"
+                echo "  模型列表: http://localhost:5051/api/tts/models"
+                echo "  语音列表: http://localhost:5051/api/tts/voices"
+                echo "  测试页面: http://localhost:5051/test"
+                echo ""
+                print_info "常用命令:"
+                echo "  查看日志: docker logs -f readknow-tts-api-lite"
+                echo "  停止服务: docker stop readknow-tts-api-lite"
+                echo "  重启服务: docker restart readknow-tts-api-lite"
+                echo "  删除服务: 运行 install.sh，选择选项 8 → 删除 TTS-API-Lite 服务"
+                echo ""
+                print_warning "注意: TTS-API-Lite 使用端口 5051（与完整版 TTS-API 的 5050 不同）"
+                print_warning "请在系统设置中配置 TTS 服务器地址和端口为 5051"
+                break
+            fi
+            attempt=$((attempt + 1))
+            echo -n "."
+            sleep 2
+        done
+        
+        if [ $attempt -ge $max_attempts ]; then
+            print_warning "服务启动超时，但可能仍在运行中"
+            print_info "请检查日志: docker logs readknow-tts-api-lite"
+        fi
+    else
+        print_error "TTS-API-Lite 服务启动失败"
+    fi
+    
+    echo ""
+    read -p "按回车键返回..."
+}
+
+# 删除 TTS-API-Lite 服务
+remove_tts_api_lite() {
+    print_header "删除 TTS-API-Lite 服务"
+    
+    # 检查 Docker 是否运行
+    if ! docker info &> /dev/null; then
+        print_error "Docker 服务未运行"
+        echo ""
+        read -p "按回车键返回主菜单..."
+        return
+    fi
+    
+    # 检查容器是否存在
+    if ! docker ps -a --format "{{.Names}}" | grep -qE "^readknow-tts-api-lite$"; then
+        print_warning "未找到 TTS-API-Lite 容器"
+        echo ""
+        read -p "按回车键返回主菜单..."
+        return
+    fi
+    
+    # 检查容器状态
+    CONTAINER_STATUS=$(docker ps --format "{{.Names}}" | grep -qE "^readknow-tts-api-lite$" && echo "running" || echo "stopped")
+    
+    echo ""
+    print_info "容器状态: $CONTAINER_STATUS"
+    print_warning "此操作将停止并删除 TTS-API-Lite 容器"
+        echo ""
+    read -p "确认删除? (y/N，默认: N): " confirm_delete
+    confirm_delete=${confirm_delete:-n}
+    
+    if [ "$confirm_delete" != "y" ] && [ "$confirm_delete" != "Y" ]; then
+        print_info "已取消删除"
+        echo ""
+        read -p "按回车键返回..."
+        return
+    fi
+    
+    # 停止容器
+    if [ "$CONTAINER_STATUS" = "running" ]; then
+        print_info "正在停止容器..."
+        docker stop readknow-tts-api-lite 2>/dev/null || true
+        sleep 2
+    fi
+    
+    # 删除容器
+    print_info "正在删除容器..."
+    if docker rm readknow-tts-api-lite 2>/dev/null; then
+        print_success "容器已删除"
+    else
+        print_error "容器删除失败，尝试强制删除..."
+        docker rm -f readknow-tts-api-lite 2>/dev/null || true
+        if docker ps -a --format "{{.Names}}" | grep -qE "^readknow-tts-api-lite$"; then
+            print_error "容器删除失败"
+        else
+            print_success "容器已强制删除"
+        fi
+    fi
+    
+    # 询问是否删除镜像
+        echo ""
+    read -p "是否同时删除 TTS-API-Lite 镜像? (y/N，默认: N): " delete_image
+    delete_image=${delete_image:-n}
+    
+    if [ "$delete_image" = "y" ] || [ "$delete_image" = "Y" ]; then
+        TTS_LITE_IMAGE="ttbye/tts-api-lite:latest"
+        if docker images --format "{{.Repository}}:{{.Tag}}" | grep -qE "^${TTS_LITE_IMAGE}$"; then
+            print_info "正在删除镜像: $TTS_LITE_IMAGE"
+            if docker rmi "$TTS_LITE_IMAGE" 2>/dev/null; then
+                print_success "镜像已删除"
+            else
+                print_warning "镜像删除失败（可能被其他容器使用）"
+            fi
+        else
+            print_info "镜像不存在，跳过删除"
+        fi
+    fi
+    
+    echo ""
+    print_success "TTS-API-Lite 服务删除完成"
+    echo ""
+    read -p "按回车键返回..."
+}
+
+# 下载 TTS 模型（已废弃，保留兼容性）
+download_tts_models() {
+    print_header "下载 TTS 模型"
+    
+    print_warning "此功能已废弃"
+    print_info "TTS API 服务会在首次启动时自动下载所需模型"
+    print_info "如果需要手动管理模型，请直接操作模型目录"
+    
+    PROJECT_ROOT=$(get_project_root)
+    PLATFORM=$(detect_platform)
+    TTS_PATHS=$(get_tts_api_paths "$PLATFORM")
+    MODELS_DIR="${TTS_PATHS%%|*}"
+    
+    print_info "模型目录: $MODELS_DIR"
+    print_info "请将模型文件放置到以下目录："
+    echo "  - IndexTTS2: $MODELS_DIR/indextts2/"
+    echo "  - CosyVoice: $MODELS_DIR/cosyvoice/"
+    echo "  - MultiTTS: $MODELS_DIR/multitts/"
+    
+    echo ""
+    read -p "按回车键返回..."
 }
 
 # 删除已导出的镜像文件
@@ -920,7 +2363,7 @@ delete_exported_images() {
     if [ ! -d "$IMAGE_DIR" ]; then
         print_warning "镜像目录不存在: $IMAGE_DIR"
         echo ""
-        read -p "按回车键返回主菜单..."
+        read -p "按回车键返回..."
         return
     fi
     
@@ -930,7 +2373,7 @@ delete_exported_images() {
     if [ -z "$IMAGE_FILES" ]; then
         print_info "未找到镜像文件"
         echo ""
-        read -p "按回车键返回主菜单..."
+        read -p "按回车键返回..."
         return
     fi
     
@@ -951,7 +2394,7 @@ delete_exported_images() {
     if [ "$confirm_delete" != "y" ] && [ "$confirm_delete" != "Y" ]; then
         print_info "已取消删除"
         echo ""
-        read -p "按回车键返回主菜单..."
+        read -p "按回车键返回..."
         return
     fi
     
@@ -995,7 +2438,7 @@ delete_exported_images() {
     fi
     
     echo ""
-    read -p "按回车键返回主菜单..."
+    read -p "按回车键返回..."
 }
 
 # 删除 Docker 中的镜像
@@ -1080,7 +2523,7 @@ delete_docker_images() {
     if [ "$confirm_delete" != "y" ] && [ "$confirm_delete" != "Y" ]; then
         print_info "已取消删除"
         echo ""
-        read -p "按回车键返回主菜单..."
+        read -p "按回车键返回..."
         return
     fi
     
@@ -1213,7 +2656,7 @@ delete_docker_images() {
     fi
     
     echo ""
-    read -p "按回车键返回主菜单..."
+    read -p "按回车键返回..."
 }
 
 # 执行安装流程

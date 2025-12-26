@@ -4,20 +4,39 @@
  * 提供统一的阅读器界面，包括顶部工具栏、底部导航栏、目录等
  */
 
-import { useState, useEffect, useRef, useCallback } from 'react';
-import { ArrowLeft, Settings } from 'lucide-react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { ArrowLeft, Settings, X } from 'lucide-react';
 import { ReaderConfig, ReadingPosition, TOCItem } from '../../types/reader';
+
+// 书签接口
+interface Bookmark {
+  id: string;
+  bookId: string;
+  fileType: string;
+  position: {
+    progress?: number;
+    currentPage?: number;
+    chapterIndex?: number;
+    cfi?: string; // EPUB CFI
+    currentLocation?: string; // 通用位置标识
+  };
+  preview?: string;
+  createdAt: number;
+}
 import ReaderEPUBPro from './formats/ReaderEPUBPro';
 import ReaderPDFPro from './formats/ReaderPDFPro';
 import ReaderTXTPro from './formats/ReaderTXTPro';
 import ReaderOfficePro from './formats/ReaderOfficePro';
 import BottomNavigation from './BottomNavigation';
+import TTSFloatingButton from './TTSFloatingButton';
 import BottomInfoBar, { getInfoBarHeight } from './BottomInfoBar';
 import TOCPanel from './TOCPanel';
+import SideTOCPanel from './SideTOCPanel';
 import ReadingSettingsPanel from './ReadingSettingsPanel';
 import NotesPanel from './NotesPanel';
 import TextSelectionToolbar from './TextSelectionToolbar';
 import CreateNoteModal from './CreateNoteModal';
+import BookmarkPanel from './BookmarkPanel';
 import toast from 'react-hot-toast';
 import { useAuthStore } from '../../store/authStore';
 import { addOrUpdateLocalHighlight, deleteLocalHighlight, generateHighlightId, getLocalHighlights, hasLocalHighlight, refreshHighlightsFromServer, syncHighlightQueue } from '../../utils/highlights';
@@ -27,8 +46,16 @@ export default function ReaderContainer({ config }: { config: ReaderConfig }) {
   const { isAuthenticated } = useAuthStore();
   const [showBottomNav, setShowBottomNav] = useState(false); // 底部栏默认隐藏，只有点击设置时才显示
   const [showTOC, setShowTOC] = useState(false);
+  const [showSideTOC, setShowSideTOC] = useState(false); // 默认不显示左侧目录，用户需要手动打开
   const [showSettings, setShowSettings] = useState(false);
   const [showNotes, setShowNotes] = useState(false);
+  const [isTTSPlaying, setIsTTSPlaying] = useState(false);
+  const [isTTSMode, setIsTTSMode] = useState(false); // TTS模式状态（是否显示TTS控制面板）
+  const [ttsCurrentIndex, setTtsCurrentIndex] = useState(-1);
+  const [ttsTotalParagraphs, setTtsTotalParagraphs] = useState(0);
+  const [showTTSFloatingButton, setShowTTSFloatingButton] = useState(false); // TTS悬浮按钮显示状态
+  const wasSettingsOpenBeforeTTSRef = useRef(false); // 记录TTS播放前设置面板是否打开
+  const [showBookmarks, setShowBookmarks] = useState(false);
   const [selectedText, setSelectedText] = useState('');
   const [selectionPosition, setSelectionPosition] = useState<{ x: number; y: number } | null>(null);
   const [selectedCfiRange, setSelectedCfiRange] = useState<string | null>(null);
@@ -44,6 +71,8 @@ export default function ReaderContainer({ config }: { config: ReaderConfig }) {
   const [infoBarHeight, setInfoBarHeight] = useState(34); // 默认移动端高度
   const hideTimerRef = useRef<NodeJS.Timeout | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const bottomNavRef = useRef<HTMLDivElement | null>(null);
+  const showBottomNavigationRef = useRef<((isSettings?: boolean) => void) | null>(null);
   const lastEpubSelectionAtRef = useRef<number>(0);
   const { isOnline, checkAndResetOfflineFlag } = useNetworkStatus();
   const [bookHighlights, setBookHighlights] = useState<{ id: string; cfiRange: string }[]>([]);
@@ -51,6 +80,274 @@ export default function ReaderContainer({ config }: { config: ReaderConfig }) {
   // 同一阅读会话内：提示只弹一次；用户选择后不再弹，避免重复骚扰
   const remotePromptHandledRef = useRef(false);
   const remotePromptLastProgressRef = useRef<number>(0);
+  const [bookmarks, setBookmarks] = useState<Bookmark[]>([]);
+
+  // 监听底部导航栏显示/隐藏，触发重新分页和安全区域计算
+  useEffect(() => {
+    // 通知阅读器重新计算布局和安全区域
+    if ((window as any).__onBottomNavStateChange) {
+      (window as any).__onBottomNavStateChange();
+    }
+    // 延迟执行，确保 DOM 更新完成
+    const timer = setTimeout(() => {
+      if ((window as any).__onBottomNavStateChange) {
+        (window as any).__onBottomNavStateChange();
+      }
+    }, 100);
+    return () => clearTimeout(timer);
+  }, [showBottomNav]);
+
+  // 监听TTS播放状态，切换面板
+  useEffect(() => {
+    // 注册TTS播放状态回调
+    (window as any).__onTTSStart = () => {
+      setIsTTSPlaying(true);
+      // 如果悬浮按钮显示中，隐藏它并显示底部导航栏，进入TTS模式
+      if (showTTSFloatingButton) {
+        setShowTTSFloatingButton(false);
+        setIsTTSMode(true); // 进入TTS模式
+        if (showBottomNavigationRef.current) {
+          showBottomNavigationRef.current();
+        }
+      } else if (!showBottomNav) {
+        // 显示底部导航栏（会切换为播放控制模式）
+        if (showBottomNavigationRef.current) {
+          showBottomNavigationRef.current();
+        }
+      }
+      // 通知阅读器重新计算底部安全区域并重新分页
+      if ((window as any).__onTTSStateChange) {
+        (window as any).__onTTSStateChange();
+      }
+    };
+
+    (window as any).__onTTSStop = () => {
+      setIsTTSPlaying(false);
+      setTtsCurrentIndex(-1);
+      setTtsTotalParagraphs(0);
+      // 如果正在显示TTS模式面板，关闭TTS模式
+      if (isTTSMode) {
+        setIsTTSMode(false);
+      }
+      // 隐藏悬浮按钮（用户主动停止播放后，关闭面板时不显示悬浮按钮）
+      setShowTTSFloatingButton(false);
+      // 底部导航栏会自动切换回正常模式（通过 isTTSMode={isTTSPlaying}）
+      // 通知阅读器重新计算底部安全区域并重新分页
+      if ((window as any).__onTTSStateChange) {
+        (window as any).__onTTSStateChange();
+      }
+    };
+
+    
+    // 定期检查TTS播放状态和段落信息（作为备用）
+    const checkInterval = setInterval(() => {
+      if ((window as any).__getTTSIsPlaying) {
+        const playing = (window as any).__getTTSIsPlaying();
+        if (playing !== isTTSPlaying) {
+          setIsTTSPlaying(playing);
+        }
+      }
+      if ((window as any).__getTTSCurrentIndex !== undefined) {
+        const index = (window as any).__getTTSCurrentIndex();
+        if (index !== ttsCurrentIndex) {
+          setTtsCurrentIndex(index);
+        }
+      }
+      if ((window as any).__getTTSTotalParagraphs !== undefined) {
+        const total = (window as any).__getTTSTotalParagraphs();
+        if (total !== ttsTotalParagraphs) {
+          setTtsTotalParagraphs(total);
+        }
+      }
+    }, 500);
+
+    return () => {
+      delete (window as any).__onTTSStart;
+      delete (window as any).__onTTSStop;
+      clearInterval(checkInterval);
+    };
+  }, [showSettings, isTTSPlaying, ttsCurrentIndex, ttsTotalParagraphs, showTTSFloatingButton, showBottomNav]);
+
+  // 加载书签
+  const loadBookmarks = useCallback(() => {
+    try {
+      const saved = localStorage.getItem(`bookmarks-${config.book.id}`);
+      if (saved) {
+        const parsed = JSON.parse(saved) as Bookmark[];
+        setBookmarks(parsed);
+      } else {
+        setBookmarks([]);
+      }
+    } catch (error) {
+      console.error('加载书签失败', error);
+      setBookmarks([]);
+    }
+  }, [config.book.id]);
+
+  // 保存书签到 localStorage
+  const saveBookmarks = useCallback((newBookmarks: Bookmark[]) => {
+    try {
+      localStorage.setItem(`bookmarks-${config.book.id}`, JSON.stringify(newBookmarks));
+      setBookmarks(newBookmarks);
+    } catch (error) {
+      console.error('保存书签失败', error);
+      toast.error('保存书签失败');
+    }
+  }, [config.book.id]);
+
+  // 检查当前位置是否有书签
+  const hasCurrentBookmark = useMemo(() => {
+    if (bookmarks.length === 0) return false;
+    
+    const currentProgress = currentPosition.progress || 0;
+    const currentPage = currentPosition.currentPage || 0;
+    const currentLocation = currentPosition.currentLocation;
+    
+    // 优先使用 currentLocation 匹配（EPUB CFI 或其他格式的位置标识）
+    if (currentLocation) {
+      const matched = bookmarks.some(b => {
+        if (b.position.currentLocation === currentLocation) return true;
+        if (b.position.cfi === currentLocation) return true;
+        return false;
+      });
+      if (matched) return true;
+    }
+    
+    // 对于有页码的格式（PDF/TXT），使用页码匹配
+    if (currentPage > 0 && (config.book.file_type === 'pdf' || config.book.file_type === 'txt')) {
+      const matched = bookmarks.some(b => {
+        if (b.position.currentPage === currentPage) return true;
+        return false;
+      });
+      if (matched) return true;
+    }
+    
+    // 兜底：使用 progress 匹配（允许 0.5% 的误差，因为翻页时 progress 可能有小幅变化）
+    return bookmarks.some(b => {
+      const bookmarkProgress = b.position.progress || 0;
+      return Math.abs(bookmarkProgress - currentProgress) < 0.005;
+    });
+  }, [bookmarks, currentPosition, config.book.file_type]);
+
+  // 添加或删除书签
+  const toggleBookmark = useCallback(() => {
+    const currentProgress = currentPosition.progress || 0;
+    const currentPage = currentPosition.currentPage || 0;
+    const currentChapterIndex = currentPosition.chapterIndex;
+    const currentLocation = currentPosition.currentLocation;
+    
+    // 获取当前位置的预览文本（如果有）
+    let preview = '';
+    try {
+      // TXT: 尝试获取当前页面内容
+      if (config.book.file_type === 'txt') {
+        const getCurrentPageInfo = (window as any).__getCurrentPageInfo;
+        if (getCurrentPageInfo) {
+          const pageInfo = getCurrentPageInfo();
+          if (pageInfo?.content) {
+            preview = pageInfo.content.substring(0, 50).replace(/\n/g, ' ') || '';
+          }
+        }
+      }
+      // EPUB/PDF: 使用章节标题或页码作为预览
+      if (currentPosition.chapterTitle) {
+        preview = currentPosition.chapterTitle.substring(0, 50);
+      } else if (currentPage > 0) {
+        preview = `第 ${currentPage} 页`;
+      }
+    } catch (e) {
+      // ignore
+    }
+    
+    if (hasCurrentBookmark) {
+      // 删除书签：使用相同的匹配逻辑
+      const newBookmarks = bookmarks.filter(b => {
+        // 优先匹配 currentLocation
+        if (currentLocation && (b.position.currentLocation === currentLocation || b.position.cfi === currentLocation)) {
+          return false;
+        }
+        // 匹配页码
+        if (currentPage > 0 && b.position.currentPage === currentPage) {
+          return false;
+        }
+        // 匹配 progress（允许 0.5% 误差）
+        const bookmarkProgress = b.position.progress || 0;
+        return Math.abs(bookmarkProgress - currentProgress) >= 0.005;
+      });
+      saveBookmarks(newBookmarks);
+      toast.success('书签已删除');
+    } else {
+      // 添加书签
+      const newBookmark: Bookmark = {
+        id: `bookmark-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+        bookId: config.book.id,
+        fileType: config.book.file_type || '',
+        position: {
+          progress: currentProgress,
+          currentPage: currentPage > 0 ? currentPage : undefined,
+          chapterIndex: currentChapterIndex !== undefined ? currentChapterIndex : undefined,
+          cfi: currentLocation && currentLocation.startsWith('epubcfi(') ? currentLocation : undefined,
+          currentLocation: currentLocation || undefined,
+        },
+        preview: preview || undefined,
+        createdAt: Date.now(),
+      };
+      
+      const newBookmarks = [...bookmarks, newBookmark].sort((a, b) => {
+        const progressA = a.position.progress || 0;
+        const progressB = b.position.progress || 0;
+        return progressA - progressB;
+      });
+      
+      saveBookmarks(newBookmarks);
+      toast.success('书签已添加');
+    }
+  }, [bookmarks, currentPosition, config.book, hasCurrentBookmark, saveBookmarks]);
+
+  // 初始化时加载书签
+  useEffect(() => {
+    loadBookmarks();
+  }, [loadBookmarks]);
+
+  // 跳转到书签位置
+  const goToBookmark = useCallback(async (bookmark: Bookmark) => {
+    try {
+      const pos: any = {
+        progress: bookmark.position.progress,
+        currentPage: bookmark.position.currentPage,
+        chapterIndex: bookmark.position.chapterIndex,
+        currentLocation: bookmark.position.currentLocation || bookmark.position.cfi,
+      };
+
+      // 使用全局跳转函数
+      if ((window as any).__readerGoToPosition) {
+        const success = await (window as any).__readerGoToPosition(pos);
+        if (success) {
+          setShowBookmarks(false);
+          toast.success('已跳转到书签位置');
+        } else {
+          toast.error('跳转失败，请稍后重试');
+        }
+      } else {
+        toast.error('阅读器未就绪，请稍后重试');
+      }
+    } catch (error) {
+      console.error('跳转到书签失败:', error);
+      toast.error('跳转失败');
+    }
+  }, []);
+
+  // 删除书签
+  const deleteBookmark = useCallback((bookmarkId: string) => {
+    const newBookmarks = bookmarks.filter(b => b.id !== bookmarkId);
+    saveBookmarks(newBookmarks);
+    toast.success('书签已删除');
+  }, [bookmarks, saveBookmarks]);
+
+  // 书签按钮点击处理：单击添加/删除
+  const handleBookmarkButtonClick = useCallback(() => {
+    toggleBookmark();
+  }, [toggleBookmark]);
   
   // 检测是否为移动设备
   const [isMobile, setIsMobile] = useState(false);
@@ -109,27 +406,34 @@ export default function ReaderContainer({ config }: { config: ReaderConfig }) {
   }, []);
 
   // 显示底部设置导航栏
-  const showBottomNavigation = useCallback(() => {
+  const showBottomNavigation = useCallback((isSettings = false) => {
     setShowBottomNav(true);
     
     // 清除之前的隐藏定时器
     if (hideTimerRef.current) {
       clearTimeout(hideTimerRef.current);
+      hideTimerRef.current = null;
     }
     
-    // 3秒后自动隐藏底部导航栏（顶部栏始终显示）
-    hideTimerRef.current = setTimeout(() => {
-      setShowBottomNav(false);
-    }, 3000);
+    // 不再自动隐藏，改为点击外部区域隐藏
   }, []);
+  
+  // 保存 showBottomNavigation 的引用到 ref
+  useEffect(() => {
+    showBottomNavigationRef.current = showBottomNavigation;
+  }, [showBottomNavigation]);
 
   // 隐藏底部导航栏
   const hideBottomNavigation = useCallback(() => {
+    // 如果正在播放 TTS，不允许隐藏面板
+    if (isTTSPlaying) {
+      return;
+    }
     setShowBottomNav(false);
     if (hideTimerRef.current) {
       clearTimeout(hideTimerRef.current);
     }
-  }, []);
+  }, [isTTSPlaying]);
 
   // 切换导航栏显示/隐藏
   const toggleNavigationBar = useCallback(() => {
@@ -142,28 +446,45 @@ export default function ReaderContainer({ config }: { config: ReaderConfig }) {
     }
   }, [showBottomNav, showBottomNavigation, hideBottomNavigation]);
 
-  // 处理点击屏幕中心区域（PC端用）
+  // 处理点击事件：点击非导航面板区域时隐藏导航栏
   const handleCenterClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
-    // 只处理直接点击容器的事件，不处理子元素的事件
-    if (e.target !== e.currentTarget) return;
+    // 如果导航栏未显示，不处理
+    if (!showBottomNav) return;
     
-    const rect = containerRef.current?.getBoundingClientRect();
-    if (!rect) return;
+    // 如果正在播放 TTS，不隐藏导航栏
+    if (isTTSPlaying) return;
     
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
+    // 检查点击的目标元素
+    const target = e.target as HTMLElement;
     
-    // 定义中心区域：屏幕中间 40% 的宽度和高度
-    const centerXStart = rect.width * 0.3;
-    const centerXEnd = rect.width * 0.7;
-    const centerYStart = rect.height * 0.3;
-    const centerYEnd = rect.height * 0.7;
-    
-    // 检查点击是否在中心区域
-    if (x >= centerXStart && x <= centerXEnd && y >= centerYStart && y <= centerYEnd) {
-      toggleNavigationBar();
+    // 如果点击的是导航栏本身或其子元素，不隐藏
+    if (bottomNavRef.current && bottomNavRef.current.contains(target)) {
+      return;
     }
-  }, [toggleNavigationBar]);
+    
+    // 如果点击的是设置面板或其子元素，不隐藏
+    const settingsPanel = document.querySelector('[data-settings-panel]');
+    if (settingsPanel && settingsPanel.contains(target)) {
+      return;
+    }
+    
+    // 如果点击的是其他面板（TOC、笔记等），不隐藏
+    const tocPanel = document.querySelector('[data-toc-panel]');
+    const notesPanel = document.querySelector('[data-notes-panel]');
+    const bookmarksPanel = document.querySelector('[data-bookmarks-panel]');
+    
+    if (
+      (tocPanel && tocPanel.contains(target)) ||
+      (notesPanel && notesPanel.contains(target)) ||
+      (bookmarksPanel && bookmarksPanel.contains(target))
+    ) {
+      return;
+    }
+    
+    // 点击的是阅读区域，隐藏导航栏
+    hideBottomNavigation();
+    setShowSettings(false);
+  }, [showBottomNav, isTTSPlaying, hideBottomNavigation]);
 
 
   // 处理进度变化
@@ -546,10 +867,10 @@ export default function ReaderContainer({ config }: { config: ReaderConfig }) {
   };
 
   const themeStyles = {
-    light: { bg: '#ffffff', text: '#000000' },
-    dark: { bg: '#1a1a1a', text: '#ffffff' },
-    sepia: { bg: '#f4e4bc', text: '#5c4b37' },
-    green: { bg: '#c8e6c9', text: '#2e7d32' },
+    light: { bg: '#ffffff', text: '#000000', border: '#e0e0e0' },
+    dark: { bg: '#1a1a1a', text: '#ffffff', border: '#404040' },
+    sepia: { bg: '#f4e4bc', text: '#5c4b37', border: '#d4c49c' },
+    green: { bg: '#c8e6c9', text: '#2e7d32', border: '#a5d6a7' },
   }[config.settings.theme];
 
   // 设置HTML和body的背景色为阅读器主题色（包括顶部安全区域）
@@ -776,13 +1097,13 @@ export default function ReaderContainer({ config }: { config: ReaderConfig }) {
         <div className="flex items-center justify-between px-4 h-full" style={{ minHeight: '48px' }}>
           <button
             onClick={config.onClose}
-            className="p-2 hover:bg-opacity-10 hover:bg-black dark:hover:bg-white dark:hover:bg-opacity-10 rounded-lg transition-colors"
+            className="p-2 hover:bg-opacity-10 hover:bg-black dark:hover:bg-white dark:hover:bg-opacity-10 rounded-lg transition-colors flex-shrink-0"
             aria-label="返回"
           >
             <ArrowLeft className="w-5 h-5" />
           </button>
 
-          <div className="flex-1 text-center px-4">
+          <div className="flex-1 text-center px-4 min-w-0">
             <h1 className="text-sm font-medium truncate max-w-xs mx-auto">
               {config.book.title || config.book.file_name}
             </h1>
@@ -838,7 +1159,7 @@ export default function ReaderContainer({ config }: { config: ReaderConfig }) {
             })()}
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-shrink-0">
             <button
               onClick={() => {
                 // 点击设置按钮时只显示/隐藏底部导航栏，不显示设置模态框
@@ -861,6 +1182,7 @@ export default function ReaderContainer({ config }: { config: ReaderConfig }) {
 
       {/* 阅读区域 - 响应式布局，留出顶部导航栏和底部信息栏空间 */}
       <div 
+        ref={containerRef}
         className="flex-1 relative overflow-hidden w-full" 
         style={{ 
           minHeight: 0,
@@ -877,16 +1199,34 @@ export default function ReaderContainer({ config }: { config: ReaderConfig }) {
           // - 如果显示设置导航栏：额外 + 82px（导航栏实际高度，不包含安全区域）
           // - 如果不显示信息栏但显示导航栏：82px + 安全区域（导航栏自己处理安全区域）
           // - 如果都不显示：安全区域（避免内容被系统UI遮挡）
+          // TTS播放时，底部导航栏始终显示，需要预留空间
           paddingBottom: config.settings.showBottomInfoBar
-            ? (showBottomNav 
+            ? ((showBottomNav || isTTSPlaying)
                 ? `calc(${infoBarHeight}px + 82px + clamp(10px, env(safe-area-inset-bottom, 10px), 34px))` 
                 : `calc(${infoBarHeight}px + clamp(10px, env(safe-area-inset-bottom, 10px), 34px))`)
-            : (showBottomNav 
+            : ((showBottomNav || isTTSPlaying)
                 ? `calc(82px + clamp(10px, env(safe-area-inset-bottom, 10px), 34px))` 
                 : 'clamp(10px, env(safe-area-inset-bottom, 10px), 34px)'),
         }}
       >
         {renderReader()}
+        
+        {/* TTS 悬浮按钮 - 放在阅读容器内 */}
+        <TTSFloatingButton
+          isVisible={showTTSFloatingButton}
+          onClick={() => {
+            // 点击悬浮按钮时，重新显示语音朗读面板
+            setShowTTSFloatingButton(false);
+            setIsTTSMode(true); // 进入TTS模式
+            showBottomNavigation(); // 显示底部导航栏
+            // 通知阅读器重新计算安全区域
+            if ((window as any).__onBottomNavStateChange) {
+              (window as any).__onBottomNavStateChange();
+            }
+          }}
+          theme={config.settings.theme}
+          containerRef={containerRef}
+        />
       </div>
 
       {/* 底部信息栏 - 根据设置显示/隐藏 */}
@@ -895,6 +1235,12 @@ export default function ReaderContainer({ config }: { config: ReaderConfig }) {
           book={config.book}
           position={currentPosition}
           settings={config.settings}
+          onToggleTOC={() => {
+            setShowTOC(!showTOC);
+            if (!showTOC) {
+              showBottomNavigation();
+            }
+          }}
         />
       )}
 
@@ -1041,29 +1387,176 @@ export default function ReaderContainer({ config }: { config: ReaderConfig }) {
           if (showBottomNav) {
             hideBottomNavigation();
           } else {
-            showBottomNavigation();
+            showBottomNavigation(true); // 设置模式，30秒后隐藏
           }
         }}
+        onClose={() => {
+          hideBottomNavigation();
+          setShowSettings(false);
+        }}
+        isSettingsMode={showSettings}
         onToggleNotes={() => {
           setShowNotes(!showNotes);
           showBottomNavigation();
         }}
-        onPageTurn={handlePageTurn}
-        onMouseEnter={() => {
-          if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
-        }}
-        onMouseLeave={() => {
-          if (showBottomNav) {
-            hideTimerRef.current = setTimeout(() => {
-              hideBottomNavigation();
-            }, 3000);
+        onToggleTTS={() => {
+          // 如果正在播放，停止播放并退出TTS模式
+          if (isTTSPlaying && (window as any).__stopPageTTS) {
+            (window as any).__stopPageTTS();
+            setIsTTSMode(false);
+          } else {
+            // 如果是EPUB格式，进入TTS模式并显示底部导航栏，不自动开始播放
+            // 用户需要点击播放按钮才会开始播放
+            if (config.book.file_type === 'epub') {
+              // 先停止所有其他播放进程
+              if ((window as any).__stopAllTTS) {
+                (window as any).__stopAllTTS();
+              }
+              // 进入TTS模式
+              setIsTTSMode(true);
+              // 显示底部导航栏（会切换为播放控制模式）
+              showBottomNavigation();
+              // 不自动开始播放，等待用户点击播放按钮
+            }
           }
         }}
+        onToggleBookmark={handleBookmarkButtonClick}
+        onToggleBookmarkPanel={() => {
+          setShowBookmarks(true);
+          showBottomNavigation();
+        }}
+        hasBookmark={hasCurrentBookmark}
+        isTTSMode={isTTSMode}
+        isTTSPlaying={isTTSPlaying}
+        ttsCurrentIndex={ttsCurrentIndex}
+        ttsTotalParagraphs={ttsTotalParagraphs}
+        onTTSPlayPause={() => {
+          // 确保底部导航栏保持显示
+          if (showBottomNavigationRef.current) {
+            showBottomNavigationRef.current();
+          }
+          // 清除任何隐藏定时器
+          if (hideTimerRef.current) {
+            clearTimeout(hideTimerRef.current);
+            hideTimerRef.current = null;
+          }
+          
+          if (isTTSPlaying && (window as any).__stopPageTTS) {
+            (window as any).__stopPageTTS();
+          } else if (!isTTSPlaying && config.book.file_type === 'epub' && (window as any).__startPageTTS) {
+            // 先停止所有其他播放进程
+            if ((window as any).__stopAllTTS) {
+              (window as any).__stopAllTTS();
+            }
+            setTimeout(() => {
+              (window as any).__startPageTTS();
+            }, 200); // 增加延迟确保停止完成
+          }
+        }}
+        onTTSPrev={() => {
+          // 确保底部导航栏保持显示
+          if (showBottomNavigationRef.current) {
+            showBottomNavigationRef.current();
+          }
+          // 清除任何隐藏定时器
+          if (hideTimerRef.current) {
+            clearTimeout(hideTimerRef.current);
+            hideTimerRef.current = null;
+          }
+          
+          // 播放前一个段落
+          if (config.book.file_type === 'epub' && (window as any).__prevParagraph) {
+            (window as any).__prevParagraph();
+          } else {
+            console.log('[TTS] 上一段落功能仅支持EPUB格式');
+          }
+        }}
+        onTTSNext={() => {
+          // 确保底部导航栏保持显示
+          if (showBottomNavigationRef.current) {
+            showBottomNavigationRef.current();
+          }
+          // 清除任何隐藏定时器
+          if (hideTimerRef.current) {
+            clearTimeout(hideTimerRef.current);
+            hideTimerRef.current = null;
+          }
+          
+          // 播放下一个段落
+          if (config.book.file_type === 'epub' && (window as any).__nextParagraph) {
+            (window as any).__nextParagraph();
+          } else {
+            console.log('[TTS] 下一段落功能仅支持EPUB格式');
+          }
+        }}
+        onTTSClose={() => {
+          // 关闭TTS模式
+          setIsTTSMode(false);
+          // 同时关闭设置面板
+          setShowSettings(false);
+          
+          // 如果正在播放，关闭面板时：
+          // 1. 不停止播放（继续播放）
+          // 2. 隐藏底部导航栏
+          // 3. 显示悬浮🎧按钮
+          // 4. 重新计算安全区域
+          if (isTTSPlaying) {
+            hideBottomNavigation();
+            setShowTTSFloatingButton(true);
+            // 通知阅读器重新计算安全区域
+            if ((window as any).__onBottomNavStateChange) {
+              (window as any).__onBottomNavStateChange();
+            }
+          } else {
+            // 如果没有播放，只是隐藏底部导航栏，不显示悬浮按钮
+            hideBottomNavigation();
+            setShowTTSFloatingButton(false);
+          }
+        }}
+        onTTSSpeedChange={(speed: number) => {
+          // 动态调整播放速度，不影响播放进程
+          // 更新设置
+          config.onSettingsChange({
+            ...config.settings,
+            tts_default_speed: { value: speed.toString() },
+          } as any);
+          // 通知阅读器更新播放速度（实时调整）
+          if ((window as any).__updateTTSPlaybackSpeed) {
+            (window as any).__updateTTSPlaybackSpeed(speed);
+          }
+        }}
+        onTTSModelChange={(model: string) => {
+          // 更新TTS引擎设置
+          config.onSettingsChange({
+            ...config.settings,
+            tts_default_model: { value: model },
+          } as any);
+        }}
+        onTTSVoiceChange={(voice: string) => {
+          // 更新TTS音色设置
+          config.onSettingsChange({
+            ...config.settings,
+            tts_default_voice: { value: voice },
+          } as any);
+        }}
+        onMouseEnter={() => {
+          // 鼠标进入导航栏时，清除任何隐藏定时器
+          if (hideTimerRef.current) {
+            clearTimeout(hideTimerRef.current);
+            hideTimerRef.current = null;
+          }
+        }}
+        onMouseLeave={() => {
+          // 鼠标离开导航栏时，不再自动隐藏
+          // 改为点击外部区域隐藏
+        }}
+        ref={bottomNavRef}
       />
 
       {/* 目录面板 */}
       {showTOC && (
-        <TOCPanel
+        <div data-toc-panel>
+          <TOCPanel
           toc={toc}
           currentChapter={currentPosition.chapterIndex || 0}
           onClose={() => setShowTOC(false)}
@@ -1086,25 +1579,106 @@ export default function ReaderContainer({ config }: { config: ReaderConfig }) {
                 const pageNumber = parseInt(pageMatch[1], 10);
                 (window as any).__txtGoToPage(pageNumber);
               }
+            } else if ((config.book.file_type === 'docx' || config.book.file_type === 'xlsx' || config.book.file_type === 'pptx') && href) {
+              // Office文档目录跳转：解析href中的页码
+              const pageMatch = href.match(/page=(\d+)/);
+              if (pageMatch && (window as any).__officeGoToPage) {
+                const pageNumber = parseInt(pageMatch[1], 10);
+                (window as any).__officeGoToPage(pageNumber);
+              }
             }
             setShowTOC(false);
           }}
         />
+        </div>
       )}
 
-      {/* 设置面板 */}
+      {/* PC端左侧目录面板 */}
+      {!isMobile && toc.length > 0 && (
+        <>
+          <SideTOCPanel
+            toc={toc}
+            currentPosition={currentPosition}
+            bookType={config.book.file_type}
+            themeStyles={themeStyles}
+            showSideTOC={showSideTOC}
+            onClose={() => setShowSideTOC(!showSideTOC)}
+            onChapterSelect={(href) => {
+              if (config.book.file_type === 'pdf' && href) {
+                if ((window as any).__pdfHandleTOCClick) {
+                  (window as any).__pdfHandleTOCClick(href);
+                }
+              } else if (config.book.file_type === 'epub' && href) {
+                if ((window as any).__epubGoToChapter) {
+                  (window as any).__epubGoToChapter(href);
+                }
+              } else if (config.book.file_type === 'txt' && href) {
+                const pageMatch = href.match(/page=(\d+)/);
+                if (pageMatch && (window as any).__txtGoToPage) {
+                  const pageNumber = parseInt(pageMatch[1], 10);
+                  (window as any).__txtGoToPage(pageNumber);
+                }
+              } else if ((config.book.file_type === 'docx' || config.book.file_type === 'xlsx' || config.book.file_type === 'pptx') && href) {
+                const pageMatch = href.match(/page=(\d+)/);
+                if (pageMatch && (window as any).__officeGoToPage) {
+                  const pageNumber = parseInt(pageMatch[1], 10);
+                  (window as any).__officeGoToPage(pageNumber);
+                }
+              }
+            }}
+            getToolbarTop={getToolbarTop}
+            infoBarHeight={infoBarHeight}
+            showBottomInfoBar={config.settings.showBottomInfoBar}
+          />
+        </>
+      )}
+
+      {/* 设置面板 - 播放时转换为播放控制面板 */}
       {showSettings && (
-        <ReadingSettingsPanel
+        <div data-settings-panel>
+          <ReadingSettingsPanel
           settings={config.settings}
           bookType={config.book.file_type}
           onSettingsChange={config.onSettingsChange}
-          onClose={() => setShowSettings(false)}
+          onClose={() => {
+            // 正常关闭面板
+            setShowSettings(false);
+          }}
+          isTTSMode={isTTSPlaying}
+          isTTSPlaying={isTTSPlaying}
+          ttsCurrentIndex={ttsCurrentIndex}
+          ttsTotalParagraphs={ttsTotalParagraphs}
+          onTTSPlayPause={() => {
+            if (isTTSPlaying && (window as any).__stopPageTTS) {
+              (window as any).__stopPageTTS();
+            } else if (!isTTSPlaying && config.book.file_type === 'epub' && (window as any).__startPageTTS) {
+              (window as any).__startPageTTS();
+            }
+          }}
+          onTTSPrev={() => {
+            // 播放前一个段落
+            if (config.book.file_type === 'epub' && (window as any).__prevParagraph) {
+              (window as any).__prevParagraph();
+            } else {
+              console.log('[TTS] 上一段落功能仅支持EPUB格式');
+            }
+          }}
+          onTTSNext={() => {
+            // 播放下一个段落
+            if (config.book.file_type === 'epub' && (window as any).__nextParagraph) {
+              (window as any).__nextParagraph();
+            } else {
+              console.log('[TTS] 下一段落功能仅支持EPUB格式');
+            }
+          }}
         />
+        </div>
       )}
 
       {/* 笔记面板 */}
       {showNotes && (
-        <NotesPanel
+        <div data-notes-panel>
+          <NotesPanel
           bookId={config.book.id}
           currentPage={currentPosition.currentPage}
           currentChapterIndex={currentPosition.chapterIndex}
@@ -1120,7 +1694,9 @@ export default function ReaderContainer({ config }: { config: ReaderConfig }) {
             setShowNotes(false);
           }}
         />
+        </div>
       )}
+
 
       {/* 文本选择工具栏 */}
       {showSelectionToolbar && selectionPosition && (
@@ -1142,6 +1718,20 @@ export default function ReaderContainer({ config }: { config: ReaderConfig }) {
           />
         </div>
       )}
+
+      {/* 书签面板 */}
+      <div data-bookmarks-panel>
+        <BookmarkPanel
+          bookmarks={bookmarks}
+          currentPosition={currentPosition}
+          settings={config.settings}
+          isVisible={showBookmarks}
+          onClose={() => setShowBookmarks(false)}
+          onBookmarkClick={goToBookmark}
+          onDeleteBookmark={deleteBookmark}
+        />
+      </div>
+
 
       {/* 笔记创建模态框 */}
       <CreateNoteModal
@@ -1167,6 +1757,7 @@ export default function ReaderContainer({ config }: { config: ReaderConfig }) {
           }
         }}
       />
+
     </div>
   );
 }

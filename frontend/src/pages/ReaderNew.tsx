@@ -68,6 +68,11 @@ export default function ReaderNew() {
           if (restoredSettings.pageTurnMode !== 'horizontal' && restoredSettings.pageTurnMode !== 'vertical') {
             restoredSettings.pageTurnMode = 'horizontal';
           }
+          
+          // 兼容升级：确保PDF自动旋转默认为false（如果未设置）
+          if (restoredSettings.pdfAutoRotate === undefined) {
+            restoredSettings.pdfAutoRotate = false;
+          }
 
           // 兼容升级：如果老版本默认字号过小（或用户从未主动调整），自动修复到更舒适的字号
           // 仅在首次升级时执行一次，后续完全尊重用户在本机的设置
@@ -87,6 +92,14 @@ export default function ReaderNew() {
             localStorage.setItem('reading-settings-version', '2');
           }
 
+          console.log('[ReaderNew] 从 localStorage 恢复设置:', {
+            fontSize: restoredSettings.fontSize,
+            fontFamily: restoredSettings.fontFamily,
+            lineHeight: restoredSettings.lineHeight,
+            theme: restoredSettings.theme,
+            margin: restoredSettings.margin,
+            textIndent: restoredSettings.textIndent,
+          });
           setSettings(restoredSettings);
         } catch (e) {
           console.error('ReaderNew: 解析本地设置失败', e);
@@ -98,6 +111,11 @@ export default function ReaderNew() {
           ...defaultSettings,
           fontSize: Math.max(defaultSettings.fontSize, getRecommendedFontSize()),
         };
+        console.log('[ReaderNew] 首次使用，创建默认设置:', {
+          fontSize: firstSettings.fontSize,
+          fontFamily: firstSettings.fontFamily,
+          lineHeight: firstSettings.lineHeight,
+        });
         setSettings(firstSettings);
         try {
           localStorage.setItem('reading-settings', JSON.stringify(firstSettings));
@@ -125,15 +143,59 @@ export default function ReaderNew() {
       },
     };
     
+    // 更新状态
     setSettings(completeSettings);
+    
+    // 立即保存到 localStorage
     try {
       // 仅保存到本地，不同步服务器
       // 这样每个设备可以有独立的字体大小、行距等设置
-      localStorage.setItem('reading-settings', JSON.stringify(completeSettings));
+      const settingsJson = JSON.stringify(completeSettings);
+      localStorage.setItem('reading-settings', settingsJson);
+      // 同时保存TTS设置到独立的localStorage键（确保TTS设置持久化）
+      const settingsAny = completeSettings as any;
+      if (settingsAny.tts_default_speed?.value) {
+        try {
+          localStorage.setItem('tts_default_speed', settingsAny.tts_default_speed.value);
+        } catch (e) {
+          console.warn('[ReaderNew] 保存TTS播放速度失败:', e);
+        }
+      }
+      if (settingsAny.tts_default_model?.value) {
+        try {
+          localStorage.setItem('tts_default_model', settingsAny.tts_default_model.value);
+        } catch (e) {
+          console.warn('[ReaderNew] 保存TTS引擎失败:', e);
+        }
+      }
+      if (settingsAny.tts_default_voice?.value) {
+        try {
+          localStorage.setItem('tts_default_voice', settingsAny.tts_default_voice.value);
+        } catch (e) {
+          console.warn('[ReaderNew] 保存TTS音色失败:', e);
+        }
+      }
+      
+      console.log('[ReaderNew] 设置已保存到 localStorage:', {
+        fontSize: completeSettings.fontSize,
+        fontFamily: completeSettings.fontFamily,
+        lineHeight: completeSettings.lineHeight,
+        theme: completeSettings.theme,
+        margin: completeSettings.margin,
+        textIndent: completeSettings.textIndent,
+        ttsSpeed: settingsAny.tts_default_speed?.value,
+        ttsModel: settingsAny.tts_default_model?.value,
+        ttsVoice: settingsAny.tts_default_voice?.value,
+      });
     } catch (error) {
       console.error('ReaderNew: 保存阅读设置失败', error);
     }
   };
+
+  // 首先加载设置（在获取书籍信息之前）
+  useEffect(() => {
+    fetchSettings();
+  }, []);
 
   // 获取书籍信息
   useEffect(() => {
@@ -163,7 +225,6 @@ export default function ReaderNew() {
         }
 
         setBook(bookData);
-        await fetchSettings();
 
         // 创建阅读会话（每次打开书籍为一次阅读）
         if (isAuthenticated) {
@@ -197,6 +258,7 @@ export default function ReaderNew() {
                 totalPages: progress.total_pages || 1,
                 scrollTop: progress.scroll_top || 0,
                 progress: progress.progress || 0,
+                paragraphIndex: progress.paragraph_index !== null && progress.paragraph_index !== undefined ? progress.paragraph_index : undefined,
               };
               
               // 如果有 CFI，使用 CFI 恢复位置（最精确）
@@ -305,6 +367,7 @@ export default function ReaderNew() {
         totalPages: p.total_pages || p.totalPages || 1,
         chapterIndex: p.chapter_index ?? p.chapterIndex ?? 0,
         scrollTop: p.scroll_top || p.scrollTop || 0,
+        paragraphIndex: p.paragraph_index !== null && p.paragraph_index !== undefined ? p.paragraph_index : (p.paragraphIndex !== undefined ? p.paragraphIndex : undefined),
         currentPosition: p.current_position || p.currentPosition || null,
         updatedAt: p.updated_at || p.updatedAt || null,
       };
@@ -452,7 +515,9 @@ export default function ReaderNew() {
           totalPages: position.totalPages || 1,
           chapterIndex: position.chapterIndex || 0,
           scrollTop: position.scrollTop || 0,
+          paragraphIndex: position.paragraphIndex !== undefined ? position.paragraphIndex : undefined,
           clientTimestamp: new Date().toISOString(),
+          sessionId: sessionId || undefined, // 传递会话ID，用于避免同一设备的误判
         });
         // 即使登录，也写一份本机进度用于“打开时对比提示”
         try {

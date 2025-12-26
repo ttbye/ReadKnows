@@ -15,6 +15,7 @@ interface UserItem {
   username: string;
   email: string;
   role: string;
+  nickname?: string;
   created_at: string;
   updated_at: string;
   bookCount: number;
@@ -30,6 +31,7 @@ interface CreateUserForm {
 
 interface EditUserForm {
   email: string;
+  nickname?: string;
 }
 
 export default function UserManagement() {
@@ -56,6 +58,7 @@ export default function UserManagement() {
   const [editingUser, setEditingUser] = useState<UserItem | null>(null);
   const [editForm, setEditForm] = useState<EditUserForm>({
     email: '',
+    nickname: '',
   });
   const [editing, setEditing] = useState(false);
   
@@ -128,7 +131,7 @@ export default function UserManagement() {
       toast.success('用户信息更新成功');
       setShowEditModal(false);
       setEditingUser(null);
-      setEditForm({ email: '' });
+      setEditForm({ email: '', nickname: '' });
       fetchUsers();
     } catch (error: any) {
       toast.error(error.response?.data?.error || '更新用户信息失败');
@@ -139,7 +142,7 @@ export default function UserManagement() {
 
   const openEditModal = (userItem: UserItem) => {
     setEditingUser(userItem);
-    setEditForm({ email: userItem.email });
+    setEditForm({ email: userItem.email, nickname: userItem.nickname || '' });
     setShowEditModal(true);
   };
 
@@ -265,6 +268,7 @@ export default function UserManagement() {
                   <thead className="bg-gray-50 dark:bg-gray-700">
                   <tr>
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">用户名</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">昵称</th>
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">邮箱</th>
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">角色</th>
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">统计</th>
@@ -275,7 +279,7 @@ export default function UserManagement() {
                   <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
                   {users.length === 0 ? (
                     <tr>
-                        <td colSpan={6} className="px-6 py-12 text-center text-gray-500 dark:text-gray-400">
+                        <td colSpan={7} className="px-6 py-12 text-center text-gray-500 dark:text-gray-400">
                         暂无用户
                       </td>
                     </tr>
@@ -298,6 +302,11 @@ export default function UserManagement() {
                                 </div>
                               </div>
                           </div>
+                        </td>
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <div className="text-sm text-gray-900 dark:text-white">
+                              {userItem.nickname || <span className="text-gray-400 italic">未设置</span>}
+                            </div>
                         </td>
                           <td className="px-6 py-4 whitespace-nowrap">
                             <div className="text-sm text-gray-900 dark:text-white flex items-center gap-2">
@@ -550,7 +559,7 @@ export default function UserManagement() {
                 onClick={() => {
                   setShowEditModal(false);
                   setEditingUser(null);
-                  setEditForm({ email: '' });
+                  setEditForm({ email: '', nickname: '' });
                 }}
                 className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
               >
@@ -584,12 +593,26 @@ export default function UserManagement() {
                   onChange={(e) => setEditForm({ ...editForm, email: e.target.value })}
                 />
               </div>
+              <div>
+                <label className="block text-sm font-medium mb-2 flex items-center gap-2">
+                  <User className="w-4 h-4" />
+                  昵称
+                </label>
+                <input
+                  type="text"
+                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
+                  placeholder="请输入昵称（可选）"
+                  value={editForm.nickname || ''}
+                  onChange={(e) => setEditForm({ ...editForm, nickname: e.target.value })}
+                />
+                <p className="text-xs text-gray-500 mt-1">昵称用于在书籍详情中显示，留空则显示用户名</p>
+              </div>
               <div className="flex gap-3 pt-4">
                 <button
                   onClick={() => {
                     setShowEditModal(false);
                     setEditingUser(null);
-                    setEditForm({ email: '' });
+                    setEditForm({ email: '', nickname: '' });
                   }}
                   disabled={editing}
                   className="flex-1 px-4 py-2 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50 transition-colors"

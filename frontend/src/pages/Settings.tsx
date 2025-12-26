@@ -9,7 +9,7 @@ import { useAuthStore } from '../store/authStore';
 import { useNavigate } from 'react-router-dom';
 import api from '../utils/api';
 import toast from 'react-hot-toast';
-import { Settings as SettingsIcon, Folder, Scan, CheckCircle, XCircle, Upload, Trash2, Type, Shield, Users, BookOpen, Trash, Sparkles, Sun, Moon, Monitor, Mail, Send, Plus, Edit, X } from 'lucide-react';
+import { Settings as SettingsIcon, Folder, Scan, CheckCircle, XCircle, Upload, Trash2, Type, Shield, Users, BookOpen, Trash, Sparkles, Sun, Moon, Monitor, Mail, Send, Plus, Edit, X, Volume2 } from 'lucide-react';
 import { offlineStorage } from '../utils/offlineStorage';
 import { useTheme } from '../hooks/useTheme';
 
@@ -39,6 +39,14 @@ export default function Settings() {
   const [testingConnection, setTestingConnection] = useState(false);
   const [testingEmail, setTestingEmail] = useState(false);
   const [testEmailAddress, setTestEmailAddress] = useState('');
+  const [testingTTS, setTestingTTS] = useState(false);
+  const [ttsTestResult, setTtsTestResult] = useState<any>(null);
+  const [ttsTestAudio, setTtsTestAudio] = useState<HTMLAudioElement | null>(null);
+  const [ttsProfiles, setTtsProfiles] = useState<Array<{ id: string; label: string }>>([]);
+  const [testingVoice, setTestingVoice] = useState(false);
+  const [ttsModels, setTtsModels] = useState<Array<{ id: string; name: string; description: string; type: string; available: boolean }>>([]);
+  const [ttsVoices, setTtsVoices] = useState<Array<{ id: string; name: string; lang: string; gender?: string; style?: string }>>([]);
+  const [loadingTtsModels, setLoadingTtsModels] = useState(false);
   const [backendVersion, setBackendVersion] = useState<string>('');
   const [backendBuildTime, setBackendBuildTime] = useState<string>('');
   const { theme, setTheme } = useTheme();
@@ -58,11 +66,120 @@ export default function Settings() {
       fetchReaderPreferences();
       fetchCacheSize();
       fetchBackendVersion();
+      fetchTtsProfiles();
       if (user?.role === 'admin') {
         fetchBookCategories();
+        // 强制从API获取TTS模型列表，不使用缓存
+        fetchTtsModels().catch((error) => {
+          console.error('[TTS设置] 初始化时获取模型列表失败:', error);
+        });
       }
     }
   }, [isAuthenticated, user]);
+
+  // 当设置加载完成后，初始化TTS默认配置
+  useEffect(() => {
+    if (user?.role === 'admin' && Object.keys(settings).length > 0) {
+      const defaultModel = settings.tts_default_model?.value;
+      if (defaultModel && ttsModels.length > 0) {
+        fetchTtsVoices(defaultModel);
+      }
+    }
+  }, [settings.tts_default_model, settings.system_language, ttsModels.length, user?.role]);
+
+  // 当用户是管理员且设置已加载时，强制从 API 获取 TTS 模型列表
+  useEffect(() => {
+    if (user?.role === 'admin' && Object.keys(settings).length > 0 && ttsModels.length === 0 && !loadingTtsModels) {
+      // 如果模型列表为空且不在加载中，强制从 API 获取
+      console.log('[TTS设置] 检测到模型列表为空，从 API 获取最新数据');
+      fetchTtsModels().catch((error) => {
+        console.error('[TTS设置] 自动获取模型列表失败:', error);
+      });
+    }
+  }, [user?.role, settings, ttsModels.length, loadingTtsModels]);
+  
+  // 获取TTS模型列表
+  const fetchTtsModels = async () => {
+    try {
+      setLoadingTtsModels(true);
+      const response = await api.get('/tts/models');
+      const models = response.data.models || [];
+      
+      if (models.length === 0) {
+        console.warn('[TTS设置] API 返回的模型列表为空');
+        setTtsModels([]);
+        toast.error('TTS 服务未返回可用模型，请检查 TTS 服务是否正常运行');
+        return;
+      }
+      
+      setTtsModels(models);
+      
+      // 如果当前没有设置默认模型，选择第一个可用的模型
+      const defaultModel = settings.tts_default_model?.value;
+      if (!defaultModel && models.length > 0) {
+        const availableModel = models.find((m: any) => m.available) || models[0];
+        if (availableModel) {
+          await fetchTtsVoices(availableModel.id);
+        }
+      } else if (defaultModel) {
+        await fetchTtsVoices(defaultModel);
+      }
+    } catch (error: any) {
+      console.error('获取TTS模型列表失败:', error);
+      setTtsModels([]); // 清空列表，显示加载错误状态
+      toast.error(`获取TTS模型列表失败: ${error.response?.data?.error || error.message || '未知错误'}`);
+    } finally {
+      setLoadingTtsModels(false);
+    }
+  };
+
+  // 获取TTS语音列表
+  const fetchTtsVoices = async (modelId: string) => {
+    try {
+      // 获取系统语言设置
+      const systemLanguage = settings.system_language?.value || 'zh-CN';
+      const langParam = systemLanguage === 'zh-CN' ? 'zh' : 'en';
+      
+      const response = await api.get('/tts/voices', { 
+        params: { 
+          model: modelId,
+          lang: langParam  // 传递语言参数，后端会根据此参数筛选音色
+        } 
+      });
+
+      
+      // 后端返回格式: {model: string, voices: array}
+      const voices = response.data?.voices || response.data || [];
+      if (!Array.isArray(voices)) {
+        setTtsVoices([]);
+        return [];
+      }
+      
+      setTtsVoices(voices);
+      return voices; // 返回语音列表，方便调用者使用
+    } catch (error: any) {
+      console.error('获取TTS语音列表失败:', error);
+      console.error('错误详情:', {
+        message: error.message,
+        response: error.response?.data,
+        status: error.response?.status
+      });
+      setTtsVoices([]);
+      return []; // 返回空数组
+    }
+  };
+  
+  // 获取TTS语音配置列表
+  const fetchTtsProfiles = async () => {
+    try {
+      const response = await api.get('/tts/profiles');
+      const profiles = response.data.profiles || [];
+      setTtsProfiles(profiles);
+    } catch (error: any) {
+      console.error('获取TTS语音配置失败:', error);
+      setTtsProfiles([]);
+    }
+  };
 
   // 获取书籍类型列表
   const fetchBookCategories = async () => {
@@ -213,21 +330,96 @@ export default function Settings() {
   };
 
 
-  const fetchOllamaModels = async (apiUrl: string, showToast: boolean = true, provider?: string) => {
+  const fetchOllamaModels = async (apiUrl?: string, showToast: boolean = true, provider?: string) => {
     const currentProvider = provider || settings.ai_provider?.value;
-    if (!apiUrl || currentProvider !== 'ollama') {
+    const testUrl = apiUrl || settings.ai_api_url?.value;
+    
+    if (!testUrl || currentProvider !== 'ollama') {
       setOllamaModels([]);
       return;
     }
 
     setLoadingModels(true);
     try {
-      const response = await api.get('/ai/test');
-      if (response.data.success && response.data.models) {
-        const models = response.data.models.map((m: any) => m.name || m.model || m).filter(Boolean);
+      // 如果提供了 apiUrl，通过查询参数传递给后端进行测试（不保存到数据库）
+      const params: any = {};
+      if (apiUrl) {
+        params.api_url = apiUrl;
+        if (currentProvider) {
+          params.provider = currentProvider;
+        }
+      }
+      
+      const response = await api.get('/ai/test', { params });
+      console.log('[Settings] AI测试响应:', response.data);
+      console.log('[Settings] 模型数据:', response.data.models);
+      console.log('[Settings] 模型数据类型:', typeof response.data.models);
+      console.log('[Settings] 模型是否为数组:', Array.isArray(response.data.models));
+      
+      if (response.data.success) {
+        // 处理模型列表
+        let models: string[] = [];
+        if (response.data.models && Array.isArray(response.data.models)) {
+          models = response.data.models.map((m: any) => {
+            // Ollama API 返回的模型格式可能是：
+            // { name: "model-name" } 或 { model: "model-name" } 或直接是字符串
+            if (typeof m === 'string') {
+              return m;
+            }
+            // 优先使用 name，然后是 model，最后是其他字段
+            const modelName = m.name || m.model || m.digest;
+            if (modelName && typeof modelName === 'string') {
+              return modelName;
+            }
+            // 如果都没有，尝试转换为字符串
+            console.warn('[Settings] 模型对象无法提取名称:', m);
+            return JSON.stringify(m);
+          }).filter((name: string) => name && name.trim() !== '');
+        } else {
+          console.warn('[Settings] ⚠️ 模型列表为空或格式不正确:', {
+            hasModels: !!response.data.models,
+            modelsType: typeof response.data.models,
+            isArray: Array.isArray(response.data.models),
+            modelsValue: response.data.models
+          });
+        }
+        
+        console.log('[Settings] 解析后的模型列表:', models);
+
         setOllamaModels(models);
+        
+        // 检查是否有警告（例如：使用代理但模型列表为空，可能是 OLLAMA_URL 配置不一致）
+        if (response.data.warning) {
+          console.warn('[Settings] 警告:', response.data.warning);
+          if (showToast) {
+            toast.error(response.data.warning, {
+              duration: 8000, // 显示8秒
+            });
+          }
+        }
+        
+        // 如果获取到了模型列表，且当前没有选择模型，自动选择第一个模型
+        if (models.length > 0 && (!settings.ai_model?.value || settings.ai_model.value.trim() === '')) {
+          const firstModel = models[0];
+          console.log('[Settings] 自动选择第一个模型:', firstModel);
+          setSettings((prev) => ({
+            ...prev,
+            ai_model: { ...prev.ai_model!, value: firstModel },
+          }));
+          // 自动保存到数据库
+          await updateSetting('ai_model', firstModel);
+          console.log('[Settings] 已自动保存模型名称:', firstModel);
+        }
+        
         if (showToast) {
-          toast.success(`成功获取 ${models.length} 个模型`);
+          if (models.length > 0) {
+            toast.success(`成功获取 ${models.length} 个模型${(!settings.ai_model?.value || settings.ai_model.value.trim() === '') ? '，已自动选择第一个模型' : ''}`);
+          } else {
+            // 如果没有警告信息，才显示这个错误
+            if (!response.data.warning) {
+              toast.error('连接成功，但未找到可用模型。请确保 Ollama 已安装模型。');
+            }
+          }
         }
       } else {
         setOllamaModels([]);
@@ -239,7 +431,8 @@ export default function Settings() {
       console.error('获取模型列表失败:', error);
       setOllamaModels([]);
       if (showToast) {
-        toast.error(error.response?.data?.error || '获取模型列表失败');
+        const errorMessage = error.response?.data?.error || '获取模型列表失败';
+        toast.error(errorMessage);
       }
     } finally {
       setLoadingModels(false);
@@ -253,13 +446,73 @@ export default function Settings() {
       return;
     }
 
+    // 基本URL格式验证
+    try {
+      const url = new URL(apiUrl);
+      if (!url.protocol || !url.hostname) {
+        toast.error('API地址格式不正确，请使用 http:// 或 https:// 开头');
+        return;
+      }
+    } catch (e) {
+      toast.error('API地址格式不正确，请输入有效的URL');
+      return;
+    }
+
     setTestingConnection(true);
     try {
+      // 先测试连接（不保存到数据库）
+      await fetchOllamaModels(apiUrl, true, settings.ai_provider?.value);
+      
+      // 检查是否真的获取到了模型（即使连接成功，如果没有模型也应该提示）
+      // fetchOllamaModels 内部会处理模型列表为空的情况
+      
+      // 测试成功后，再保存到数据库
       await updateSetting('ai_api_url', apiUrl);
-      await fetchOllamaModels(apiUrl);
+      // 注意：成功消息在 fetchOllamaModels 中已经显示，这里不再重复显示
     } catch (error: any) {
       console.error('测试连接失败:', error);
-      toast.error(error.response?.data?.error || '测试连接失败');
+      let errorMessage = '测试连接失败';
+      
+      if (error.response) {
+        // 服务器返回了错误响应
+        const status = error.response.status;
+        const statusText = error.response.statusText;
+        
+        // 处理 502 Bad Gateway（nginx 无法连接到上游服务器）
+        if (status === 502) {
+          errorMessage = '502 Bad Gateway: nginx 无法连接到 Ollama 服务器\n\n';
+          errorMessage += '可能的原因：\n';
+          errorMessage += '1. 前端容器的 OLLAMA_URL 环境变量配置不正确\n';
+          errorMessage += '2. Ollama 服务器无法从 Docker 容器访问\n';
+          errorMessage += '3. Ollama 服务器未运行或地址/端口错误\n';
+          errorMessage += '4. 防火墙阻止了连接\n\n';
+          errorMessage += '解决步骤：\n';
+          errorMessage += '1. 检查 OLLAMA_URL: docker exec readknows-frontend env | grep OLLAMA_URL\n';
+          errorMessage += '2. 检查前端容器日志: docker logs readknows-frontend\n';
+          errorMessage += '3. 在 docker-compose.yml 中设置正确的 OLLAMA_URL\n';
+          errorMessage += '4. 重启前端容器: docker-compose restart frontend';
+        } else if (status === 404) {
+          errorMessage = '404 Not Found: Ollama API 端点不存在，请检查地址和端口是否正确';
+        } else {
+          errorMessage = error.response.data?.error || `HTTP ${status}: ${statusText}`;
+        }
+      } else if (error.request) {
+        // 请求已发出但没有收到响应
+        if (error.code === 'ECONNREFUSED') {
+          errorMessage = '连接被拒绝，请检查 Ollama 服务器是否运行，以及地址和端口是否正确';
+        } else if (error.code === 'ENOTFOUND' || error.code === 'EAI_AGAIN') {
+          errorMessage = '无法解析主机名，请检查地址是否正确';
+        } else if (error.code === 'ETIMEDOUT' || error.code === 'ECONNABORTED') {
+          errorMessage = '连接超时，请检查网络连接和防火墙设置';
+        } else {
+          errorMessage = `网络错误: ${error.message || error.code || '未知错误'}`;
+        }
+      } else {
+        // 其他错误
+        errorMessage = error.message || '测试连接失败';
+      }
+      
+      toast.error(errorMessage);
     } finally {
       setTestingConnection(false);
     }
@@ -383,7 +636,8 @@ export default function Settings() {
   const updateSetting = async (key: string, value: string) => {
     try {
       await api.put(`/settings/${key}`, { value });
-      await fetchSettings();
+      // 不立即刷新设置，避免重复请求
+      // await fetchSettings();
       toast.success('设置已保存');
     } catch (error: any) {
       toast.error(error.response?.data?.error || '保存失败');
@@ -841,8 +1095,11 @@ export default function Settings() {
                   提示：
                   <br />• 如果 Ollama 在宿主机上，使用：http://host.docker.internal:11434
                   <br />• 如果 Ollama 在局域网其他机器上，使用实际 IP 地址，如：http://192.168.6.20:11434
-                  <br />• 系统会直接使用此地址访问 Ollama，无需额外配置
-                  <br />• 确保 Docker 容器可以访问宿主机局域网（默认应该可以）
+                  <br />• <strong>重要：</strong>在 Docker 部署中，后端会通过前端容器的 nginx 代理访问 Ollama
+                  <br />• 请确保在 docker-compose.yml 中配置了前端容器的 OLLAMA_URL 环境变量
+                  <br />• OLLAMA_URL 应该与系统设置中的 API 地址一致
+                  <br />• 例如：OLLAMA_URL=http://host.docker.internal:11434 或 OLLAMA_URL=http://192.168.6.20:11434
+                  <br />• 配置后需要重启前端容器：docker-compose restart frontend
                 </p>
               )}
               {settings.ai_provider?.value === 'ollama' && ollamaModels.length > 0 && (
@@ -1034,6 +1291,36 @@ export default function Settings() {
                   );
                 })}
               </div>
+            </div>
+
+            {/* 系统语言设置 */}
+            <div className="pt-4 border-t border-gray-200 dark:border-gray-700">
+              <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
+                系统语言
+              </label>
+              <select
+                className="input w-full"
+                value={settings.system_language?.value || 'zh-CN'}
+                onChange={async (e) => {
+                  const newLanguage = e.target.value;
+                  setSettings((prev) => ({
+                    ...prev,
+                    system_language: { ...prev.system_language!, value: newLanguage },
+                  }));
+                  await updateSetting('system_language', newLanguage);
+                  // 切换语言后，重新获取音色列表（根据新语言筛选）
+                  const defaultModel = settings.tts_default_model?.value || 'edge';
+                  if (defaultModel) {
+                    await fetchTtsVoices(defaultModel);
+                  }
+                }}
+              >
+                <option value="zh-CN">简体中文</option>
+                <option value="en">English</option>
+              </select>
+              <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                选择系统语言，音色列表将根据所选语言进行筛选
+              </p>
             </div>
 
             {/* OPDS功能（仅管理员） */}
@@ -1440,6 +1727,607 @@ export default function Settings() {
                   </div>
                 </>
               )}
+            </div>
+          </div>
+        )}
+
+        {/* ========== 语音朗读服务器设置（仅管理员） ========== */}
+        {user?.role === 'admin' && (
+          <div className="card">
+            <div className="flex items-center gap-3 mb-4">
+              <Volume2 className="w-5 h-5 text-blue-600" />
+              <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">语音朗读服务器设置</h2>
+            </div>
+            
+            <div className="space-y-6">
+              <div>
+                <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
+                  TTS 服务器地址 <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  className="input"
+                  value={settings.tts_server_host?.value || '127.0.0.1'}
+                  onChange={(e) =>
+                    setSettings((prev) => ({
+                      ...prev,
+                      tts_server_host: { ...prev.tts_server_host!, value: e.target.value },
+                    }))
+                  }
+                  onBlur={() => updateSetting('tts_server_host', settings.tts_server_host?.value || '127.0.0.1')}
+                  placeholder="例如：127.0.0.1"
+                />
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                  部署 TTS 服务的服务器 IP 地址或域名
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
+                  TTS 服务器端口 <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="number"
+                  className="input w-32"
+                  value={settings.tts_server_port?.value || '5050'}
+                  onChange={(e) =>
+                    setSettings((prev) => ({
+                      ...prev,
+                      tts_server_port: { ...prev.tts_server_port!, value: e.target.value },
+                    }))
+                  }
+                  onBlur={() => updateSetting('tts_server_port', settings.tts_server_port?.value || '5050')}
+                  placeholder="5050"
+                  min="1"
+                  max="65535"
+                />
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                  TTS 服务监听的端口号（默认：5050）
+                </p>
+              </div>
+
+              {/* TTS 默认配置 */}
+              <div className="pt-4 border-t border-gray-200 dark:border-gray-700">
+                <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-3">TTS 默认配置</h3>
+                
+                {/* 默认模型 */}
+                <div className="mb-4">
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                      默认 TTS 引擎
+                    </label>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        try {
+                          toast.success('正在从 API 刷新 TTS 引擎列表...');
+                          await fetchTtsModels();
+                          toast.success('TTS 引擎列表已刷新');
+                        } catch (error: any) {
+                          console.error('刷新 TTS 引擎列表失败:', error);
+                          toast.error('刷新 TTS 引擎列表失败');
+                        }
+                      }}
+                      className="text-xs px-2 py-1 bg-blue-500 hover:bg-blue-600 text-white rounded transition-colors"
+                      title="从 API 刷新 TTS 引擎列表"
+                    >
+                      🔄 刷新
+                    </button>
+                  </div>
+                  <select
+                    className="input"
+                    value={settings.tts_default_model?.value || 'edge'}
+                    onChange={async (e) => {
+                      const modelId = e.target.value;
+                      setSettings((prev) => ({
+                        ...prev,
+                        tts_default_model: { ...prev.tts_default_model!, value: modelId },
+                      }));
+                      updateSetting('tts_default_model', modelId);
+                      // 切换模型时，重新获取该模型的语音列表
+                      const voices = await fetchTtsVoices(modelId);
+                      // 如果当前默认语音不在新模型的语音列表中，重置为该模型的默认语音
+                      // 注意：不同TTS引擎的语音ID格式完全不同，切换引擎时必须使用对应引擎的语音ID
+                      if (voices && voices.length > 0) {
+                        const currentVoiceId = settings.tts_default_voice?.value;
+                        const voiceExists = voices.some((v: any) => v.id === currentVoiceId);
+                        
+                        if (!voiceExists) {
+                          // 当前语音ID不匹配新引擎，使用新引擎的默认语音
+                          // 辅助函数：从音色对象推断语言
+                          const getVoiceLang = (voice: any): string => {
+                            if (voice.lang) return voice.lang;
+                            if (voice.locale?.toLowerCase().startsWith('zh')) return 'zh';
+                            if (voice.language?.toLowerCase().includes('chinese') || voice.language?.toLowerCase().includes('中文')) return 'zh';
+                            if (voice.id?.toLowerCase().startsWith('zh-cn') || voice.id?.toLowerCase().startsWith('zh_')) return 'zh';
+                            return 'zh'; // 默认返回中文
+                          };
+                          const chineseVoice = voices.find((v: any) => getVoiceLang(v) === 'zh') || voices[0];
+                          if (chineseVoice) {
+                            console.log(`[TTS设置] 切换引擎：${settings.tts_default_model?.value} -> ${modelId}`);
+                            console.log(`[TTS设置] 语音ID不匹配，重置为: ${currentVoiceId} -> ${chineseVoice.id}`);
+                          setSettings((prev) => ({
+                            ...prev,
+                            tts_default_voice: { ...prev.tts_default_voice!, value: chineseVoice.id },
+                          }));
+                          updateSetting('tts_default_voice', chineseVoice.id);
+                          }
+                        }
+                      }
+                    }}
+                    disabled={loadingTtsModels}
+                  >
+                    {loadingTtsModels ? (
+                      <option value="">正在从 API 加载...</option>
+                    ) : ttsModels.length === 0 ? (
+                      <option value="">暂无可用引擎（请点击刷新按钮或检查 TTS 服务）</option>
+                    ) : (
+                      ttsModels.map((model) => (
+                        <option key={model.id} value={model.id} disabled={!model.available}>
+                          {model.name} ({model.type === 'online' ? '在线' : '离线'}) {model.available ? '' : '(不可用)'} - {model.description}
+                        </option>
+                      ))
+                    )}
+                  </select>
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                    选择默认使用的 TTS 引擎
+                  </p>
+                </div>
+
+                {/* 默认语音 */}
+                <div className="mb-4">
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                    默认语音
+                  </label>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        const currentModel = settings.tts_default_model?.value || 'edge';
+                        if (currentModel === 'edge') {
+                          try {
+                            toast.success('正在从在线服务刷新音色列表...');
+                            await fetchTtsVoices(currentModel);
+                            toast.success('音色列表已刷新');
+                          } catch (error: any) {
+                            console.error('刷新音色列表失败:', error);
+                            toast.error('刷新音色列表失败');
+                          }
+                        } else {
+                          toast.success('只有 Edge-TTS 支持在线刷新音色列表');
+                        }
+                      }}
+                      className="text-xs px-2 py-1 bg-blue-500 hover:bg-blue-600 text-white rounded transition-colors"
+                      title="从在线服务刷新音色列表（仅 Edge-TTS）"
+                    >
+                      🔄 刷新
+                    </button>
+                  </div>
+                  <select
+                    className="input"
+                    value={settings.tts_default_voice?.value || 'zh-CN-XiaoxiaoNeural'}
+                    onChange={(e) => {
+                      setSettings((prev) => ({
+                        ...prev,
+                        tts_default_voice: { ...prev.tts_default_voice!, value: e.target.value },
+                      }));
+                      updateSetting('tts_default_voice', e.target.value);
+                    }}
+                    disabled={ttsVoices.length === 0}
+                  >
+                    {ttsVoices.length > 0 ? (
+                      (() => {
+                        // 辅助函数：从音色对象推断语言
+                        const getVoiceLang = (voice: any): string => {
+                          // 优先使用 lang 字段
+                          if (voice.lang) return voice.lang;
+                          // 从 locale 推断（如 zh-CN, en-US）
+                          if (voice.locale) {
+                            const locale = voice.locale.toLowerCase();
+                            if (locale.startsWith('zh')) return 'zh';
+                            if (locale.startsWith('en')) return 'en';
+                          }
+                          // 从 language 字段推断
+                          if (voice.language) {
+                            const lang = voice.language.toLowerCase();
+                            if (lang.includes('chinese') || lang.includes('中文')) return 'zh';
+                            if (lang.includes('english') || lang.includes('英文')) return 'en';
+                          }
+                          // 从 id 推断（如 zh-CN-XiaoxiaoNeural）
+                          if (voice.id) {
+                            const id = voice.id.toLowerCase();
+                            if (id.startsWith('zh-cn') || id.startsWith('zh_')) return 'zh';
+                            if (id.startsWith('en-us') || id.startsWith('en_')) return 'en';
+                          }
+                          return 'zh'; // 默认返回中文
+                        };
+                        
+                        // 按语言分组：先显示中文，再显示英文
+                        const zhVoices = ttsVoices.filter((v: any) => getVoiceLang(v) === 'zh');
+                        const enVoices = ttsVoices.filter((v: any) => getVoiceLang(v) === 'en');
+                        
+                        
+                        return [
+                          ...zhVoices.map((voice: any) => (
+                        <option key={voice.id} value={voice.id}>
+                              {voice.name}
+                        </option>
+                          )),
+                          ...(enVoices.length > 0 ? [
+                            <optgroup key="en-group" label="--- 英文音色 ---">
+                              {enVoices.map((voice: any) => (
+                                <option key={voice.id} value={voice.id}>
+                                  {voice.name}
+                                </option>
+                              ))}
+                            </optgroup>
+                          ] : [])
+                        ];
+                      })()
+                    ) : (
+                      <option value="">加载中...</option>
+                    )}
+                  </select>
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                    选择默认使用的语音（根据选择的引擎显示可用语音）
+                  </p>
+                </div>
+
+                {/* 默认语速 */}
+                <div className="mb-4">
+                  <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
+                    默认语速
+                  </label>
+                  <div className="flex items-center gap-3">
+                    <input
+                      type="range"
+                      min="0.5"
+                      max="3.0"
+                      step="0.1"
+                      className="flex-1"
+                      value={settings.tts_default_speed?.value || '1.0'}
+                      onChange={(e) => {
+                        setSettings((prev) => ({
+                          ...prev,
+                          tts_default_speed: { ...prev.tts_default_speed!, value: e.target.value },
+                        }));
+                      }}
+                      onMouseUp={(e) => {
+                        updateSetting('tts_default_speed', (e.target as HTMLInputElement).value);
+                      }}
+                    />
+                    <span className="text-sm font-medium w-16 text-right">
+                      {settings.tts_default_speed?.value || '1.0'}x
+                    </span>
+                  </div>
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                    设置默认语速（0.5x - 3.0x）
+                  </p>
+                </div>
+
+                {/* 自动角色识别 */}
+                <div className="mb-4">
+                  <label className="flex items-center gap-3 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={settings.tts_auto_role?.value === 'true'}
+                      onChange={(e) => {
+                        setSettings((prev) => ({
+                          ...prev,
+                          tts_auto_role: { ...prev.tts_auto_role!, value: e.target.checked ? 'true' : 'false' },
+                        }));
+                        updateSetting('tts_auto_role', e.target.checked ? 'true' : 'false');
+                      }}
+                      className="w-5 h-5"
+                    />
+                    <div>
+                      <span className="text-sm font-medium text-gray-700 dark:text-gray-300">启用自动角色识别</span>
+                      <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                        自动识别文本中的角色（旁白/对话）并选择合适的语音
+                      </p>
+                    </div>
+                  </label>
+                </div>
+
+                {/* 音频测试内容样本 */}
+                <div className="mb-4">
+                  <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
+                    音频测试内容样本
+                  </label>
+                  <textarea
+                    className="input min-h-[80px]"
+                    value={settings.tts_test_sample?.value || 'Hello, 你好！This is a test. 这是一个测试。'}
+                    onChange={(e) =>
+                      setSettings((prev) => ({
+                        ...prev,
+                        tts_test_sample: { ...prev.tts_test_sample!, value: e.target.value },
+                      }))
+                    }
+                    onBlur={() => updateSetting('tts_test_sample', settings.tts_test_sample?.value || 'Hello, 你好！This is a test. 这是一个测试。')}
+                    placeholder="例如：Hello, 你好！This is a test. 这是一个测试。"
+                  />
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                    用于TTS测试的文本内容，建议使用中英文混读的文本以测试语音切换效果
+                  </p>
+                </div>
+              </div>
+
+              {/* 测试 TTS 服务 */}
+              <div className="pt-4 border-t border-gray-200 dark:border-gray-700">
+                <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-3">测试 TTS 服务</h3>
+                
+                {/* 显示当前使用的配置 */}
+                <div className="mb-3 p-3 bg-gray-50 dark:bg-gray-800 rounded-lg text-sm">
+                  <div className="space-y-1 text-gray-700 dark:text-gray-300">
+                    <div>
+                      <strong>测试引擎:</strong>{' '}
+                      {(() => {
+                        const modelId = settings.tts_default_model?.value || 'edge';
+                        const model = ttsModels.find(m => m.id === modelId);
+                        return model ? `${model.name} (${model.type === 'online' ? '在线' : '离线'})` : modelId;
+                      })()}
+                    </div>
+                    <div>
+                      <strong>测试音色:</strong>{' '}
+                      {(() => {
+                        const voiceId = settings.tts_default_voice?.value || 'zh-CN-XiaoxiaoNeural';
+                        const voice = ttsVoices.find(v => v.id === voiceId);
+                        if (voice) {
+                          return `${voice.name} ${voice.gender ? `(${voice.gender === 'male' ? '男' : '女'})` : ''} ${voice.style ? `- ${voice.style}` : ''}`;
+                        }
+                        return voiceId;
+                      })()}
+                    </div>
+                    <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                      💡 测试将使用上方"默认 TTS 引擎"和"默认语音"的配置
+                    </div>
+                  </div>
+                </div>
+                
+                <button
+                  onClick={async () => {
+                    // 停止之前的音频播放
+                    if (ttsTestAudio) {
+                      ttsTestAudio.pause();
+                      ttsTestAudio.currentTime = 0;
+                      setTtsTestAudio(null);
+                    }
+                    
+                    setTestingTTS(true);
+                    setTtsTestResult(null);
+                    try {
+                      // 直接使用系统默认配置进行测试
+                      const selectedModel = settings.tts_default_model?.value || 'edge';
+                      const selectedVoice = settings.tts_default_voice?.value || 'zh-CN-XiaoxiaoNeural';
+                      // 使用系统设置的测试样本
+                      const testText = settings.tts_test_sample?.value || '你好，这是一个TTS测试。';
+                      
+                      console.log(`[TTS测试] 使用配置: model=${selectedModel}, voice=${selectedVoice}, text="${testText.substring(0, 50)}${testText.length > 50 ? '...' : ''}"`);
+                      
+                      const response = await api.post('/tts/test', {
+                        voice: selectedVoice,
+                        text: testText,
+                        model: selectedModel  // 传递模型参数，确保使用正确的引擎
+                      });
+                      setTtsTestResult(response.data);
+                      
+                      // 检查响应是否成功
+                      if (!response.data.success) {
+                        const errorMsg = response.data.error || response.data.message || '测试 TTS 服务失败';
+                        const errorDetails = response.data.details;
+                        toast.error(errorDetails ? `${errorMsg} (${errorDetails})` : errorMsg, {
+                          duration: 5000,
+                        });
+                        return;
+                      }
+                      
+                      if (response.data.success && response.data.synthesis?.works) {
+                        toast.success('TTS 服务测试成功！正在播放测试音频...');
+                        
+                        // 如果返回了音频数据，自动播放
+                        if (response.data.audioData) {
+                          try {
+                            // 将base64转换为Blob
+                            const base64Data = response.data.audioData;
+                            const binaryString = atob(base64Data);
+                            const bytes = new Uint8Array(binaryString.length);
+                            for (let i = 0; i < binaryString.length; i++) {
+                              bytes[i] = binaryString.charCodeAt(i);
+                            }
+                            const blob = new Blob([bytes], { type: 'audio/mpeg' });
+                            const audioUrl = URL.createObjectURL(blob);
+                            
+                            // 创建Audio对象并播放
+                            const audio = new Audio(audioUrl);
+                            setTtsTestAudio(audio);
+                            
+                            audio.onended = () => {
+                              URL.revokeObjectURL(audioUrl);
+                              setTtsTestAudio(null);
+                            };
+                            
+                            audio.onerror = (e) => {
+                              console.error('音频播放失败:', e);
+                              toast.error('音频播放失败');
+                              URL.revokeObjectURL(audioUrl);
+                              setTtsTestAudio(null);
+                            };
+                            
+                            await audio.play();
+                          } catch (audioError: any) {
+                            console.error('播放测试音频失败:', audioError);
+                            toast.error('播放测试音频失败: ' + (audioError.message || '未知错误'));
+                          }
+                        }
+                      } else {
+                        toast.error(response.data.message || 'TTS 服务测试完成，但部分功能可能异常', {
+                          duration: 5000,
+                        });
+                      }
+                    } catch (error: any) {
+                      const errorMsg = error.response?.data?.error || error.response?.data?.message || '测试 TTS 服务失败';
+                      const errorDetails = error.response?.data?.details;
+                      console.error('测试 TTS 服务失败:', error.response?.data || error);
+                      setTtsTestResult({ 
+                        success: false, 
+                        error: errorMsg,
+                        details: errorDetails 
+                      });
+                      toast.error(errorDetails ? `${errorMsg} (${errorDetails})` : errorMsg, {
+                        duration: 5000,
+                      });
+                    } finally {
+                      setTestingTTS(false);
+                    }
+                  }}
+                  disabled={testingTTS}
+                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {testingTTS ? (
+                    <>
+                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                      测试中...
+                    </>
+                  ) : (
+                    <>
+                      <Volume2 className="w-4 h-4" />
+                      测试 TTS 服务
+                    </>
+                  )}
+                </button>
+                
+                {ttsTestResult && (
+                  <div className={`mt-3 p-3 rounded-lg text-sm ${
+                    ttsTestResult.success && ttsTestResult.synthesis?.works
+                      ? 'bg-green-50 dark:bg-green-900/20 text-green-800 dark:text-green-200'
+                      : 'bg-yellow-50 dark:bg-yellow-900/20 text-yellow-800 dark:text-yellow-200'
+                  }`}>
+                    {ttsTestResult.success && ttsTestResult.synthesis?.works ? (
+                      <div>
+                        <div className="font-semibold mb-1 flex items-center gap-2">
+                          ✅ 测试成功
+                          {ttsTestAudio && (
+                            <span className="text-xs font-normal opacity-70 flex items-center gap-1">
+                              <Volume2 className="w-3 h-3" />
+                              正在播放...
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-xs opacity-80 space-y-1">
+                          <div><strong>服务器地址:</strong> {ttsTestResult.ttsBaseUrl}</div>
+                          <div><strong>健康检查:</strong> 正常</div>
+                          <div><strong>语音列表:</strong> {ttsTestResult.voices?.available ? '可用' : '不可用'}</div>
+                          <div><strong>合成功能:</strong> 正常</div>
+                          {ttsTestResult.synthesis?.model && (
+                            <div>
+                              <strong>TTS 引擎:</strong> {(() => {
+                                const modelId = ttsTestResult.synthesis.model;
+                                const model = ttsModels.find(m => m.id === modelId);
+                                return model ? `${model.name} (${model.type === 'online' ? '在线' : '离线'})` : modelId;
+                              })()}
+                            </div>
+                          )}
+                          {ttsTestResult.synthesis?.voice && (
+                            <div>
+                              <strong>音色类型:</strong> {(() => {
+                                const voiceId = ttsTestResult.synthesis.voice;
+                                const voice = ttsVoices.find(v => v.id === voiceId);
+                                if (voice) {
+                                  return `${voice.name} ${voice.gender ? `(${voice.gender === 'male' ? '男' : '女'})` : ''} ${voice.style ? `- ${voice.style}` : ''}`;
+                                }
+                                // 如果找不到，尝试从voice ID中解析
+                                // Edge-TTS格式：zh-CN-XiaoxiaoNeural
+                                if (voiceId.startsWith('zh-CN-')) {
+                                  const voiceName = voiceId.replace('zh-CN-', '').replace('Neural', '');
+                                  // 简单的名称映射
+                                  const nameMap: Record<string, string> = {
+                                    'Xiaoxiao': '晓晓（温柔女声）',
+                                    'Xiaohan': '晓涵（自然女声）',
+                                    'Xiaomo': '晓墨（成熟女声）',
+                                    'Xiaoyi': '晓伊（可爱女声）',
+                                    'Yunxi': '云希（年轻男声）',
+                                    'Yunyang': '云扬（成熟男声）',
+                                    'Yunjian': '云健（专业男声）',
+                                  };
+                                  return nameMap[voiceName] || voiceId;
+                                }
+                                // CosyVoice格式：cosyvoice-{name}
+                                if (voiceId.startsWith('cosyvoice-')) {
+                                  return voiceId.replace('cosyvoice-', '');
+                                }
+                                return voiceId;
+                              })()}
+                            </div>
+                          )}
+                          {ttsTestResult.audioSize && (
+                            <div><strong>测试音频大小:</strong> {(ttsTestResult.audioSize / 1024).toFixed(2)} KB</div>
+                          )}
+                        </div>
+                      </div>
+                    ) : (
+                      <div>
+                        <div className="font-semibold mb-1">⚠️ 测试结果</div>
+                        <div className="text-xs opacity-80 space-y-1">
+                          {ttsTestResult.error && <div><strong>错误:</strong> {ttsTestResult.error}</div>}
+                          {ttsTestResult.details && <div><strong>详情:</strong> {ttsTestResult.details}</div>}
+                          {ttsTestResult.message && <div><strong>消息:</strong> {ttsTestResult.message}</div>}
+                          {ttsTestResult.synthesis?.error && (
+                            <div><strong>合成错误:</strong> {ttsTestResult.synthesis.error}</div>
+                          )}
+                          {ttsTestResult.synthesis?.model && (
+                            <div>
+                              <strong>TTS 引擎:</strong> {(() => {
+                                const modelId = ttsTestResult.synthesis.model;
+                                const model = ttsModels.find(m => m.id === modelId);
+                                return model ? `${model.name} (${model.type === 'online' ? '在线' : '离线'})` : modelId;
+                              })()}
+                        </div>
+                          )}
+                          {ttsTestResult.synthesis?.voice && (
+                            <div>
+                              <strong>音色类型:</strong> {(() => {
+                                const voiceId = ttsTestResult.synthesis.voice;
+                                const voice = ttsVoices.find(v => v.id === voiceId);
+                                if (voice) {
+                                  return `${voice.name} ${voice.gender ? `(${voice.gender === 'male' ? '男' : '女'})` : ''} ${voice.style ? `- ${voice.style}` : ''}`;
+                                }
+                                // 如果找不到，尝试从voice ID中解析
+                                // Edge-TTS格式：zh-CN-XiaoxiaoNeural
+                                if (voiceId.startsWith('zh-CN-')) {
+                                  const voiceName = voiceId.replace('zh-CN-', '').replace('Neural', '');
+                                  // 简单的名称映射
+                                  const nameMap: Record<string, string> = {
+                                    'Xiaoxiao': '晓晓（温柔女声）',
+                                    'Xiaohan': '晓涵（自然女声）',
+                                    'Xiaomo': '晓墨（成熟女声）',
+                                    'Xiaoyi': '晓伊（可爱女声）',
+                                    'Yunxi': '云希（年轻男声）',
+                                    'Yunyang': '云扬（成熟男声）',
+                                    'Yunjian': '云健（专业男声）',
+                                  };
+                                  return nameMap[voiceName] || voiceId;
+                                }
+                                // CosyVoice格式：cosyvoice-{name}
+                                if (voiceId.startsWith('cosyvoice-')) {
+                                  return voiceId.replace('cosyvoice-', '');
+                                }
+                                return voiceId;
+                              })()}
+                            </div>
+                          )}
+                          {ttsTestResult.synthesis?.error && (
+                            <div><strong>合成错误:</strong> {ttsTestResult.synthesis.error}</div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+                
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
+                  测试 TTS 服务的连接、健康状态和语音合成功能。测试将使用上方配置的"默认 TTS 引擎"和"默认语音"。
+                </p>
+              </div>
             </div>
           </div>
         )}

@@ -17,7 +17,7 @@ router.get('/me', authenticateToken, async (req: AuthRequest, res) => {
   try {
     const userId = req.userId!;
     const user = db
-      .prepare('SELECT id, username, email, role, created_at, updated_at FROM users WHERE id = ?')
+      .prepare('SELECT id, username, email, role, nickname, created_at, updated_at FROM users WHERE id = ?')
       .get(userId) as any;
 
     if (!user) {
@@ -35,7 +35,7 @@ router.get('/me', authenticateToken, async (req: AuthRequest, res) => {
 router.put('/me', authenticateToken, async (req: AuthRequest, res) => {
   try {
     const userId = req.userId!;
-    const { email } = req.body;
+    const { email, nickname } = req.body;
 
     // 不允许修改用户名
     if (req.body.username) {
@@ -54,11 +54,22 @@ router.put('/me', authenticateToken, async (req: AuthRequest, res) => {
       return res.status(400).json({ error: '邮箱已存在' });
     }
 
-    // 更新邮箱
-    db.prepare('UPDATE users SET email = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(email, userId);
+    // 更新邮箱和昵称
+    const updateFields: string[] = ['email = ?'];
+    const updateValues: any[] = [email];
+    
+    if (nickname !== undefined) {
+      updateFields.push('nickname = ?');
+      updateValues.push(nickname || null); // 允许清空昵称
+    }
+    
+    updateFields.push('updated_at = CURRENT_TIMESTAMP');
+    updateValues.push(userId);
+    
+    db.prepare(`UPDATE users SET ${updateFields.join(', ')} WHERE id = ?`).run(...updateValues);
 
     const updatedUser = db
-      .prepare('SELECT id, username, email, role, created_at, updated_at FROM users WHERE id = ?')
+      .prepare('SELECT id, username, email, role, nickname, created_at, updated_at FROM users WHERE id = ?')
       .get(userId) as any;
 
     res.json({ message: '用户信息更新成功', user: updatedUser });
@@ -144,7 +155,7 @@ router.post('/', authenticateToken, requireAdmin, async (req: AuthRequest, res) 
     ).run(userId, username, email, hashedPassword, userRole);
 
     const newUser = db
-      .prepare('SELECT id, username, email, role, created_at, updated_at FROM users WHERE id = ?')
+      .prepare('SELECT id, username, email, role, nickname, created_at, updated_at FROM users WHERE id = ?')
       .get(userId) as any;
 
     res.status(201).json({ message: '用户创建成功', user: newUser });
@@ -160,7 +171,7 @@ router.get('/', authenticateToken, requireAdmin, async (req: AuthRequest, res) =
     const { page = 1, limit = 20, search } = req.query;
     const offset = (Number(page) - 1) * Number(limit);
 
-    let query = 'SELECT id, username, email, role, created_at, updated_at FROM users';
+    let query = 'SELECT id, username, email, role, nickname, created_at, updated_at FROM users';
     const params: any[] = [];
     let countQuery = 'SELECT COUNT(*) as count FROM users';
     const countParams: any[] = [];
@@ -213,7 +224,7 @@ router.get('/', authenticateToken, requireAdmin, async (req: AuthRequest, res) =
 router.put('/:id', authenticateToken, requireAdmin, async (req: AuthRequest, res) => {
   try {
     const { id } = req.params;
-    const { email } = req.body;
+    const { email, nickname } = req.body;
     const currentUserId = req.userId!;
 
     // 不允许修改用户名
@@ -244,11 +255,22 @@ router.put('/:id', authenticateToken, requireAdmin, async (req: AuthRequest, res
       return res.status(400).json({ error: '邮箱已存在' });
     }
 
-    // 更新邮箱
-    db.prepare('UPDATE users SET email = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(email, id);
+    // 更新邮箱和昵称
+    const updateFields: string[] = ['email = ?'];
+    const updateValues: any[] = [email];
+    
+    if (nickname !== undefined) {
+      updateFields.push('nickname = ?');
+      updateValues.push(nickname || null); // 允许清空昵称
+    }
+    
+    updateFields.push('updated_at = CURRENT_TIMESTAMP');
+    updateValues.push(id);
+    
+    db.prepare(`UPDATE users SET ${updateFields.join(', ')} WHERE id = ?`).run(...updateValues);
 
     const updatedUser = db
-      .prepare('SELECT id, username, email, role, created_at, updated_at FROM users WHERE id = ?')
+      .prepare('SELECT id, username, email, role, nickname, created_at, updated_at FROM users WHERE id = ?')
       .get(id) as any;
 
     res.json({ message: '用户信息更新成功', user: updatedUser });
@@ -263,7 +285,7 @@ router.get('/:id', authenticateToken, requireAdmin, async (req: AuthRequest, res
   try {
     const { id } = req.params;
     const user = db
-      .prepare('SELECT id, username, email, role, created_at, updated_at FROM users WHERE id = ?')
+      .prepare('SELECT id, username, email, role, nickname, created_at, updated_at FROM users WHERE id = ?')
       .get(id) as any;
 
     if (!user) {

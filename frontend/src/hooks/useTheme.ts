@@ -25,7 +25,7 @@ export function useTheme() {
     if (savedTheme === 'light' || savedTheme === 'dark' || savedTheme === 'system') {
       return savedTheme;
     }
-    return 'system'; // 默认使用系统主题
+    return 'dark'; // 默认使用深色主题
   });
 
   const [effectiveTheme, setEffectiveTheme] = useState<'light' | 'dark'>(() => 

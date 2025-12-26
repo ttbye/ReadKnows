@@ -190,13 +190,35 @@ export default function AIReading() {
         if (errorDetails.stack) {
           console.error('错误堆栈:', errorDetails.stack);
         }
+        // 如果 errorDetails 有 message，使用它作为补充信息
+        if (errorDetails.message && errorDetails.message !== errorMsg) {
+          displayMsg = `${errorMsg}\n${errorDetails.message}`;
+        }
       }
       
-      toast.error(displayMsg);
+      // 确保错误消息完整显示
+      if (typeof displayMsg !== 'string' || displayMsg.trim().length === 0) {
+        displayMsg = '分析书籍失败：未知错误';
+      }
+      
+      toast.error(displayMsg, { duration: 5000 });
+      
+      // 构建详细的错误消息用于显示在对话中
+      let errorContent = `分析失败：${errorMsg}`;
+      if (errorDetails && typeof errorDetails === 'object') {
+        if (errorDetails.message && errorDetails.message !== errorMsg) {
+          errorContent += `\n\n${errorDetails.message}`;
+        }
+        if (errorDetails.code) {
+          errorContent += `\n错误代码: ${errorDetails.code}`;
+        }
+      }
+      errorContent += '\n\n请检查：\n1. 书籍文件是否存在且可读\n2. AI服务是否正常运行\n3. 系统设置中的AI配置是否正确';
+      
       const errorMessage: Message = {
         id: Date.now().toString(),
         role: 'assistant',
-        content: `分析失败：${errorMsg}${errorDetails ? '\n\n' + errorDetails : ''}\n\n请检查：\n1. 书籍文件是否存在且可读\n2. AI服务是否正常运行\n3. 系统设置中的AI配置是否正确`,
+        content: errorContent,
         timestamp: new Date(),
       };
       setMessages((prev) => [...prev, errorMessage]);

@@ -25,6 +25,7 @@ import aiRoutes from './routes/ai';
 import notesRoutes from './routes/notes';
 import highlightsRoutes from './routes/highlights';
 import importRoutes from './routes/import';
+import ttsRoutes from './routes/tts';
 import { startFileWatcher, stopFileWatcher, getWatcherStatus, triggerManualScan } from './utils/fileWatcher';
 
 dotenv.config();
@@ -508,6 +509,7 @@ app.use('/api/ip', ipManagementRoutes);
 app.use('/api/ai', aiRoutes);
 app.use('/api/notes', notesRoutes);
 app.use('/api/highlights', highlightsRoutes);
+app.use('/api/tts', ttsRoutes);
 app.use('/api/import', importRoutes);
 app.use('/opds', opdsRoutes);
 

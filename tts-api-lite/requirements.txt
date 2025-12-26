@@ -1,0 +1,20 @@
+# TTS-API-Lite 依赖（轻量级版本）
+# 仅包含在线 TTS 服务所需的依赖，不包含 PyTorch 等重型库
+
+# Web 框架
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+python-multipart==0.0.6
+python-dotenv==1.0.0
+pydantic==2.5.0
+pydantic-settings==2.1.0
+
+# TTS 在线服务
+edge-tts>=6.1.0
+requests>=2.31.0
+
+# 音频处理（可选，用于格式转换）
+# 注意：如果不需要 MP3 转换，可以移除 soundfile 和 numpy
+soundfile>=0.12.1
+numpy>=1.24.0
+
