@@ -36,8 +36,14 @@ interface PDFMetadata {
 /**
  * 检测PDF页面的实际内容边界，去除白边
  * 通过分析canvas像素来找到非白色内容的边界
+ * 只检测左右边界，不去除上下白边
  */
-function detectContentBounds(canvas: HTMLCanvasElement, threshold: number = 250): {
+function detectContentBounds(
+  canvas: HTMLCanvasElement, 
+  threshold: number = 250,
+  detectHorizontal: boolean = true,
+  detectVertical: boolean = false
+): {
   left: number;
   top: number;
   right: number;
@@ -57,11 +63,11 @@ function detectContentBounds(canvas: HTMLCanvasElement, threshold: number = 250)
   };
 
   let minX = width;
-  let minY = height;
   let maxX = 0;
+  let minY = height;
   let maxY = 0;
 
-  // 扫描所有像素，找到内容边界
+  // 扫描所有像素，根据参数检测相应的边界
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
       const index = (y * width + x) * 4;
@@ -70,26 +76,46 @@ function detectContentBounds(canvas: HTMLCanvasElement, threshold: number = 250)
       const b = data[index + 2];
 
       if (!isWhitePixel(r, g, b)) {
-        // 找到非白色像素，更新边界
-        if (x < minX) minX = x;
-        if (x > maxX) maxX = x;
-        if (y < minY) minY = y;
-        if (y > maxY) maxY = y;
+        // 找到非白色像素，更新相应的边界
+        if (detectHorizontal) {
+          if (x < minX) minX = x;
+          if (x > maxX) maxX = x;
+        }
+        if (detectVertical) {
+          if (y < minY) minY = y;
+          if (y > maxY) maxY = y;
+        }
       }
     }
   }
 
   // 如果没有找到内容，返回null
-  if (minX >= width || minY >= height) {
+  if (detectHorizontal && (minX >= width || maxX <= 0)) {
+    return null;
+  }
+  if (detectVertical && (minY >= height || maxY <= 0)) {
     return null;
   }
 
   // 添加一些padding，避免裁剪过紧
-  const padding = Math.min(width, height) * 0.02; // 2%的padding
-  minX = Math.max(0, minX - padding);
-  minY = Math.max(0, minY - padding);
-  maxX = Math.min(width, maxX + padding);
-  maxY = Math.min(height, maxY + padding);
+  const paddingX = width * 0.02; // 2%的padding
+  const paddingY = height * 0.02; // 2%的padding
+  
+  if (detectHorizontal) {
+    minX = Math.max(0, minX - paddingX);
+    maxX = Math.min(width, maxX + paddingX);
+  } else {
+    minX = 0;
+    maxX = width;
+  }
+  
+  if (detectVertical) {
+    minY = Math.max(0, minY - paddingY);
+    maxY = Math.min(height, maxY + paddingY);
+  } else {
+    minY = 0;
+    maxY = height;
+  }
 
   return {
     left: minX,
@@ -97,6 +123,323 @@ function detectContentBounds(canvas: HTMLCanvasElement, threshold: number = 250)
     right: maxX,
     bottom: maxY,
   };
+}
+
+/**
+ * 通过分析图片像素分布来检测内容方向（用于扫描版PDF）
+ * 分析图片中非白色区域的分布，判断内容主要是横向还是纵向
+ */
+async function detectOrientationFromImage(canvas: HTMLCanvasElement, pageNum?: number): Promise<number> {
+  try {
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return 0;
+    
+    const width = canvas.width;
+    const height = canvas.height;
+    const imageData = ctx.getImageData(0, 0, width, height);
+    const data = imageData.data;
+    
+    // 将图片分成网格，分析每个网格的像素密度
+    const gridSize = 20; // 将图片分成20x20的网格
+    const gridWidth = Math.floor(width / gridSize);
+    const gridHeight = Math.floor(height / gridSize);
+    
+    // 计算每个网格的非白色像素密度
+    const gridDensity: number[][] = [];
+    for (let gy = 0; gy < gridSize; gy++) {
+      gridDensity[gy] = [];
+      for (let gx = 0; gx < gridSize; gx++) {
+        let nonWhitePixels = 0;
+        let totalPixels = 0;
+        
+        const startX = gx * gridWidth;
+        const startY = gy * gridHeight;
+        const endX = Math.min(startX + gridWidth, width);
+        const endY = Math.min(startY + gridHeight, height);
+        
+        for (let y = startY; y < endY; y++) {
+          for (let x = startX; x < endX; x++) {
+            const index = (y * width + x) * 4;
+            const r = data[index];
+            const g = data[index + 1];
+            const b = data[index + 2];
+            
+            // 判断是否为非白色像素（阈值230）
+            if (r < 230 || g < 230 || b < 230) {
+              nonWhitePixels++;
+            }
+            totalPixels++;
+          }
+        }
+        
+        gridDensity[gy][gx] = totalPixels > 0 ? nonWhitePixels / totalPixels : 0;
+      }
+    }
+    
+    // 计算水平和垂直方向的投影
+    const horizontalProjection: number[] = []; // 每行的密度总和
+    const verticalProjection: number[] = []; // 每列的密度总和
+    
+    for (let y = 0; y < gridSize; y++) {
+      let rowSum = 0;
+      for (let x = 0; x < gridSize; x++) {
+        rowSum += gridDensity[y][x];
+      }
+      horizontalProjection.push(rowSum);
+    }
+    
+    for (let x = 0; x < gridSize; x++) {
+      let colSum = 0;
+      for (let y = 0; y < gridSize; y++) {
+        colSum += gridDensity[y][x];
+      }
+      verticalProjection.push(colSum);
+    }
+    
+    // 计算投影的方差（衡量分布的集中程度）
+    const calcVariance = (arr: number[]): number => {
+      const mean = arr.reduce((sum, val) => sum + val, 0) / arr.length;
+      const variance = arr.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / arr.length;
+      return variance;
+    };
+    
+    const horizontalVariance = calcVariance(horizontalProjection);
+    const verticalVariance = calcVariance(verticalProjection);
+    
+    // 计算内容区域（非白色区域）的边界
+    let minX = gridSize, maxX = 0, minY = gridSize, maxY = 0;
+    for (let y = 0; y < gridSize; y++) {
+      for (let x = 0; x < gridSize; x++) {
+        if (gridDensity[y][x] > 0.1) { // 密度阈值
+          if (x < minX) minX = x;
+          if (x > maxX) maxX = x;
+          if (y < minY) minY = y;
+          if (y > maxY) maxY = y;
+        }
+      }
+    }
+    
+    if (minX >= maxX || minY >= maxY) {
+      console.log(`页面 ${pageNum || '?'}: 图片分析未找到有效内容区域`);
+      return 0;
+    }
+    
+    const contentWidth = maxX - minX;
+    const contentHeight = maxY - minY;
+    const contentAspectRatio = contentWidth / contentHeight;
+    const pageAspectRatio = width / height;
+    const pageIsPortrait = height > width;
+    
+    console.log(`页面 ${pageNum || '?'}: 图片分析 - 页面 ${width.toFixed(0)}x${height.toFixed(0)} (${pageIsPortrait ? '竖向' : '横向'}), 内容区域 ${contentWidth}x${contentHeight}, 内容宽高比 ${contentAspectRatio.toFixed(2)}, 水平方差 ${horizontalVariance.toFixed(2)}, 垂直方差 ${verticalVariance.toFixed(2)}`);
+    
+    // 判断逻辑：
+    // 1. 如果页面是竖向，但内容区域明显是横向（宽高比>1.3），且水平方差大于垂直方差，说明内容需要旋转
+    // 2. 如果页面是横向，但内容区域明显是竖向（宽高比<0.75），且垂直方差大于水平方差，说明内容需要旋转
+    if (pageIsPortrait) {
+      if (contentAspectRatio > 1.3 && horizontalVariance > verticalVariance * 1.2) {
+        console.log(`页面 ${pageNum || '?'}: 图片分析 - 竖向页面但内容横向，旋转90度`);
+        return 90;
+      }
+    } else {
+      if (contentAspectRatio < 0.75 && verticalVariance > horizontalVariance * 1.2) {
+        console.log(`页面 ${pageNum || '?'}: 图片分析 - 横向页面但内容纵向，旋转90度`);
+        return 90;
+      }
+    }
+    
+    console.log(`页面 ${pageNum || '?'}: 图片分析 - 内容方向与页面方向匹配，不旋转`);
+    return 0;
+  } catch (error) {
+    console.warn(`页面 ${pageNum || '?'} 图片分析失败:`, error);
+    return 0;
+  }
+}
+
+/**
+ * 检测PDF页面中文字内容的方向，判断是否需要旋转
+ * 通过分析文字的位置分布来判断页面内容主要是横向还是纵向
+ * 如果无法提取文字（扫描版PDF），则使用图片分析
+ * @param page PDF页面对象
+ * @param pageNum 页码（用于日志）
+ * @returns 需要的旋转角度（0, 90, 180, 270）
+ */
+async function detectTextOrientation(page: any, pageNum?: number): Promise<number> {
+  try {
+    // 获取页面尺寸（使用原始方向，不旋转）
+    const viewport = page.getViewport({ scale: 1.0, rotation: 0 });
+    const pageWidth = viewport.width;
+    const pageHeight = viewport.height;
+    const pageIsPortrait = pageHeight > pageWidth;
+    
+    // 获取页面文字内容
+    const textContent = await page.getTextContent();
+    const items = textContent.items || [];
+    
+    if (items.length === 0) {
+      // 如果没有文字内容，尝试使用图片分析（适用于扫描版PDF）
+      console.log(`页面 ${pageNum || '?'}: 无文字内容，尝试使用图片分析`);
+      
+      // 将页面渲染为canvas
+      const canvas = document.createElement('canvas');
+      const context = canvas.getContext('2d');
+      if (!context) {
+        console.log(`页面 ${pageNum || '?'}: 无法创建canvas，不旋转`);
+        return 0;
+      }
+      
+      // 设置canvas尺寸（使用较小的尺寸以提高性能）
+      const scale = Math.min(2.0, window.devicePixelRatio || 1);
+      canvas.width = pageWidth * scale;
+      canvas.height = pageHeight * scale;
+      
+      // 渲染页面到canvas
+      const renderViewport = page.getViewport({ scale, rotation: 0 });
+      await page.render({
+        canvasContext: context,
+        viewport: renderViewport,
+      }).promise;
+      
+      // 使用图片分析检测方向
+      const rotation = await detectOrientationFromImage(canvas, pageNum);
+      return rotation;
+    }
+    
+    // 智能分析文字排列方式
+    // 方法1：分析文字行的方向（按Y坐标分组，找出文字行）
+    const textItems: Array<{x: number, y: number, width: number, height: number, text: string}> = [];
+    
+    for (const item of items) {
+      if (item.transform && item.transform.length >= 6) {
+        const [a, b, c, d, e, f] = item.transform;
+        const charWidth = Math.sqrt(a * a + c * c);
+        const charHeight = Math.sqrt(b * b + d * d);
+        
+        // 过滤太小的字符
+        if (charWidth < 1 || charHeight < 1) {
+          continue;
+        }
+        
+        textItems.push({
+          x: e,
+          y: f,
+          width: charWidth,
+          height: charHeight,
+          text: item.str || ''
+        });
+      }
+    }
+    
+    if (textItems.length < 10) {
+      console.log(`页面 ${pageNum || '?'}: 文字项太少 (${textItems.length})，不旋转`);
+      return 0;
+    }
+    
+    // 按Y坐标分组，找出文字行（允许一定的Y坐标误差）
+    const lineTolerance = Math.max(3, Math.min(...textItems.map(t => t.height)) * 0.6);
+    const lines: Array<Array<typeof textItems[0]>> = [];
+    
+    // 按Y坐标排序
+    const sortedItems = [...textItems].sort((a, b) => a.y - b.y);
+    
+    for (const item of sortedItems) {
+      // 查找是否属于已有行
+      let foundLine = false;
+      for (const line of lines) {
+        // 如果Y坐标接近，认为是同一行
+        if (Math.abs(item.y - line[0].y) < lineTolerance) {
+          line.push(item);
+          foundLine = true;
+          break;
+        }
+      }
+      
+      if (!foundLine) {
+        // 创建新行
+        lines.push([item]);
+      }
+    }
+    
+    // 对每行内的文字按X坐标排序
+    for (const line of lines) {
+      line.sort((a, b) => a.x - b.x);
+    }
+    
+    if (lines.length < 3) {
+      console.log(`页面 ${pageNum || '?'}: 文字行太少 (${lines.length})，不旋转`);
+      return 0;
+    }
+    
+    // 计算每行的宽度和高度
+    const lineWidths: number[] = [];
+    const lineHeights: number[] = [];
+    
+    for (const line of lines) {
+      if (line.length > 0) {
+        const minX = Math.min(...line.map(t => t.x));
+        const maxX = Math.max(...line.map(t => t.x + t.width));
+        const avgHeight = line.reduce((sum, t) => sum + t.height, 0) / line.length;
+        
+        lineWidths.push(maxX - minX);
+        lineHeights.push(avgHeight);
+      }
+    }
+    
+    // 计算平均行宽和行高
+    const avgLineWidth = lineWidths.reduce((sum, w) => sum + w, 0) / lineWidths.length;
+    const avgLineHeight = lineHeights.reduce((sum, h) => sum + h, 0) / lineHeights.length;
+    
+    // 计算内容的总宽度和总高度
+    const minX = Math.min(...textItems.map(t => t.x));
+    const maxX = Math.max(...textItems.map(t => t.x + t.width));
+    const minY = Math.min(...textItems.map(t => t.y));
+    const maxY = Math.max(...textItems.map(t => t.y + t.height));
+    
+    const contentWidth = maxX - minX;
+    const contentHeight = maxY - minY;
+    
+    // 如果内容范围太小，可能检测不准确
+    if (contentWidth < pageWidth * 0.15 || contentHeight < pageHeight * 0.15) {
+      console.log(`页面 ${pageNum || '?'}: 内容范围太小，不旋转`);
+      return 0;
+    }
+    
+    // 计算内容的宽高比
+    const contentAspectRatio = contentWidth / contentHeight;
+    const pageAspectRatio = pageWidth / pageHeight;
+    
+    // 计算行的宽高比（行的方向）
+    const lineAspectRatio = avgLineWidth / avgLineHeight;
+    
+    // 综合判断：结合内容宽高比和行宽高比
+    // 如果平均行宽明显大于平均行高，说明文字是横向排列的
+    // 如果平均行高明显大于平均行宽，说明文字是纵向排列的
+    
+    console.log(`页面 ${pageNum || '?'}: 页面 ${pageWidth.toFixed(0)}x${pageHeight.toFixed(0)} (${pageIsPortrait ? '竖向' : '横向'}), 内容 ${contentWidth.toFixed(0)}x${contentHeight.toFixed(0)}, 内容宽高比 ${contentAspectRatio.toFixed(2)}, 行宽高比 ${lineAspectRatio.toFixed(2)}, 行数 ${lines.length}`);
+    
+    // 智能判断：需要同时考虑内容宽高比和行宽高比
+    if (pageIsPortrait) {
+      // 竖向页面
+      // 如果内容宽高比 > 1.3 且行宽高比 > 1.5，说明内容明显是横向的
+      if (contentAspectRatio > 1.3 && lineAspectRatio > 1.5) {
+        console.log(`页面 ${pageNum || '?'}: 竖向页面但内容横向 (内容宽高比 ${contentAspectRatio.toFixed(2)}, 行宽高比 ${lineAspectRatio.toFixed(2)})，旋转90度`);
+        return 90;
+      }
+    } else {
+      // 横向页面
+      // 如果内容宽高比 < 0.75 且行宽高比 < 0.67，说明内容明显是纵向的
+      if (contentAspectRatio < 0.75 && lineAspectRatio < 0.67) {
+        console.log(`页面 ${pageNum || '?'}: 横向页面但内容纵向 (内容宽高比 ${contentAspectRatio.toFixed(2)}, 行宽高比 ${lineAspectRatio.toFixed(2)})，旋转90度`);
+        return 90;
+      }
+    }
+    
+    // 默认不旋转
+    console.log(`页面 ${pageNum || '?'}: 内容方向与页面方向匹配，不旋转`);
+    return 0;
+  } catch (error) {
+    console.warn(`页面 ${pageNum || '?'} 检测文字方向失败:`, error);
+    return 0;
+  }
 }
 
 /**
@@ -256,7 +599,9 @@ export default function ReaderPDFPro({
   }, [scale]);
   
   // 白边裁剪状态（从settings中读取，如果没有则使用默认值false）
-  const autoCropMargins = settings.pdfAutoCropMargins ?? false;
+  const cropHorizontal = settings.pdfCropHorizontal ?? false;
+  const cropVertical = settings.pdfCropVertical ?? false;
+  const hasCropEnabled = cropHorizontal || cropVertical;
   const [contentBounds, setContentBounds] = useState<{left: number, top: number, right: number, bottom: number} | null>(null);
   
   // 渲染质量设置（从settings中读取，如果没有则使用默认值'ultra'）
@@ -264,6 +609,25 @@ export default function ReaderPDFPro({
   
   // 自适应屏幕设置（从settings中读取，如果没有则使用默认值false）
   const autoFit = settings.pdfAutoFit ?? false;
+  
+  // 自动旋转设置（从settings中读取，如果没有则使用默认值false）
+  const autoRotate = settings.pdfAutoRotate ?? false;
+  // 存储每页的旋转角度（页面索引 -> 旋转角度）
+  const pageRotationsRef = useRef<Map<number, number>>(new Map());
+  
+  // 当自动旋转设置改变时，清除缓存并重新渲染当前页
+  useEffect(() => {
+    // 如果关闭了自动旋转，清除所有缓存的旋转角度
+    if (!autoRotate) {
+      pageRotationsRef.current.clear();
+      console.log('自动旋转已关闭，已清除所有缓存的旋转角度');
+    } else {
+      console.log('自动旋转已启用，将检测页面方向');
+    }
+    // 触发重新渲染（通过改变一个依赖项来触发renderPage的重新执行）
+    // 注意：这里不需要手动调用renderPage，因为renderPage的依赖项中包含autoRotate
+    // 当autoRotate变化时，renderPage会重新创建，然后在下面的useEffect中触发重新渲染
+  }, [autoRotate]);
   
   // UI 状态
   const [showBottomBar, setShowBottomBar] = useState(false);
@@ -565,16 +929,66 @@ export default function ReaderPDFPro({
       ctx.imageSmoothingQuality = 'high';
 
       const page = await pdf.getPage(pageNum);
-      const effectiveScale = targetScale !== undefined ? targetScale : scale;
+      
+      // 检测页面旋转角度（如果启用自动旋转）
+      // 必须在计算baseScale之前检测，因为baseScale的计算需要用到旋转后的页面尺寸
+      let pageRotation = 0;
+      if (autoRotate) {
+        // 检查是否已经检测过这一页的旋转角度
+        if (pageRotationsRef.current.has(pageNum)) {
+          pageRotation = pageRotationsRef.current.get(pageNum) || 0;
+        } else {
+          // 检测文字方向并确定旋转角度（传入页码用于日志）
+          pageRotation = await detectTextOrientation(page, pageNum);
+          pageRotationsRef.current.set(pageNum, pageRotation);
+          console.log(`页面 ${pageNum} 旋转角度已缓存: ${pageRotation}度`);
+        }
+      } else {
+        // 如果自动旋转已关闭，确保旋转角度为0（不使用缓存）
+        pageRotation = 0;
+        // 清除这一页的缓存（如果存在）
+        if (pageRotationsRef.current.has(pageNum)) {
+          pageRotationsRef.current.delete(pageNum);
+        }
+      }
       
       // 计算适合容器的缩放比例
       const containerWidth = containerSize.width > 0 ? containerSize.width : window.innerWidth;
       const containerHeight = containerSize.height > 0 ? containerSize.height : window.innerHeight - 140;
       
+      // 计算基础缩放比例
+      // 注意：如果启用了裁剪，baseScale 会在裁剪逻辑中重新计算
+      // 这里先计算一个基础值，用于非裁剪模式或裁剪模式下的回退
+      let baseScale: number;
+      if (autoFit && !hasCropEnabled) {
+        // 如果启用自适应屏幕且没有裁剪，计算适合容器的缩放
+        const availableWidth = containerWidth - settings.margin * 2;
+        const availableHeight = containerHeight - settings.margin * 2;
+        // 如果页面旋转了，需要交换宽度和高度
+        let pageWidth = page.view[2]; // PDF 页面宽度（单位：点）
+        let pageHeight = page.view[3]; // PDF 页面高度（单位：点）
+        if (pageRotation === 90 || pageRotation === 270) {
+          // 旋转90度或270度时，宽度和高度互换
+          [pageWidth, pageHeight] = [pageHeight, pageWidth];
+        }
+        
+        // 计算宽度和高度的缩放比例，取较小值以确保页面完全显示（保持纵横比）
+        const scaleX = availableWidth / pageWidth;
+        const scaleY = availableHeight / pageHeight;
+        baseScale = Math.min(scaleX, scaleY);
+      } else if (!autoFit) {
+        // 如果没有启用自适应屏幕，使用用户设置的缩放或targetScale
+        baseScale = targetScale !== undefined ? targetScale : scale;
+      } else {
+        // 如果启用自适应屏幕且有裁剪，baseScale 会在裁剪逻辑中重新计算
+        // 这里先设置一个默认值，但不会被使用
+        baseScale = targetScale !== undefined ? targetScale : scale;
+      }
+      
       // 第一步：使用较高的scale渲染到临时canvas进行内容检测
       // 根据渲染质量调整检测分辨率
       const detectionScale = qualityMultiplier * 2.0; // 使用较高的分辨率来检测内容边界
-      const detectionViewport = page.getViewport({ scale: detectionScale });
+      const detectionViewport = page.getViewport({ scale: detectionScale, rotation: pageRotation });
       
       // 创建临时canvas用于检测内容边界
       const tempCanvas = document.createElement('canvas');
@@ -598,8 +1012,8 @@ export default function ReaderPDFPro({
         await tempRenderTask.promise;
         
         // 检测内容边界
-        if (autoCropMargins) {
-          const bounds = detectContentBounds(tempCanvas);
+        if (hasCropEnabled) {
+          const bounds = detectContentBounds(tempCanvas, 250, cropHorizontal, cropVertical);
           if (bounds) {
             setContentBounds(bounds);
             
@@ -607,30 +1021,73 @@ export default function ReaderPDFPro({
             const contentWidth = bounds.right - bounds.left;
             const contentHeight = bounds.bottom - bounds.top;
             
-            // 计算基于内容的显示缩放比例，使内容适合屏幕（显示尺寸）
-            const scaleX = (containerWidth - settings.margin * 2) / contentWidth;
-            const scaleY = (containerHeight - settings.margin * 2) / contentHeight;
-            const displayScale = Math.min(scaleX, scaleY);
+            // 将检测分辨率下的尺寸转换为PDF原始尺寸（点）
+            // contentWidth 和 contentHeight 是在检测分辨率下的像素值
+            // 需要按比例转换为PDF原始尺寸
+            // 注意：如果页面旋转了，需要根据旋转后的尺寸计算
+            let pageWidthInPoints = page.view[2]; // PDF原始宽度（点）
+            let pageHeightInPoints = page.view[3]; // PDF原始高度（点）
+            if (pageRotation === 90 || pageRotation === 270) {
+              // 旋转90度或270度时，宽度和高度互换
+              [pageWidthInPoints, pageHeightInPoints] = [pageHeightInPoints, pageWidthInPoints];
+            }
+            const contentWidthInPoints = cropHorizontal 
+              ? (contentWidth / detectionViewport.width) * pageWidthInPoints
+              : pageWidthInPoints;
+            const contentHeightInPoints = cropVertical
+              ? (contentHeight / detectionViewport.height) * pageHeightInPoints
+              : pageHeightInPoints;
+            
+            // 计算显示缩放比例
+            // 如果启用自适应屏幕，裁剪后必须自动适配到屏幕
+            let displayScale: number;
+            if (autoFit) {
+              // 自适应屏幕：计算使裁剪后的内容完全适合容器的缩放比例
+              const availableWidth = containerWidth - settings.margin * 2;
+              const availableHeight = containerHeight - settings.margin * 2;
+              
+              // 计算宽度和高度的缩放比例，取较小值以确保完全显示（保持纵横比）
+              // 这样裁剪后的内容会自动适配到屏幕
+              const scaleX = availableWidth / contentWidthInPoints;
+              const scaleY = availableHeight / contentHeightInPoints;
+              displayScale = Math.min(scaleX, scaleY);
+            } else {
+              // 如果没有启用自适应屏幕，使用基础缩放比例
+              displayScale = baseScale;
+              
+              // 如果裁剪后的内容在baseScale下超过容器宽度，需要调整以确保不溢出
+              const contentDisplayWidth = contentWidthInPoints * baseScale;
+              const availableWidth = containerWidth - settings.margin * 2;
+              if (contentDisplayWidth > availableWidth) {
+                displayScale = availableWidth / contentWidthInPoints;
+              }
+            }
             
             // 计算显示尺寸（像素）
-            const displayWidth = contentWidth * displayScale;
-            const displayHeight = contentHeight * displayScale;
+            const displayWidth = contentWidthInPoints * displayScale;
+            const displayHeight = contentHeightInPoints * displayScale;
             
             // 使用更高的分辨率渲染（根据质量设置）
-            const renderScale = displayScale * qualityMultiplier;
-            const renderViewport = page.getViewport({ scale: renderScale });
+            // 关键：确保裁剪后的canvas分辨率足够高，至少等于显示尺寸 * qualityMultiplier
+            // 裁剪后的内容宽度（点）= contentWidthInPoints
+            // 裁剪后的显示宽度（像素）= displayWidth
+            // 为了保持清晰度，裁剪后的canvas宽度应该至少 = displayWidth * qualityMultiplier
+            // 裁剪后的canvas宽度 = contentWidthInPoints * renderScale
+            // 所以：contentWidthInPoints * renderScale >= displayWidth * qualityMultiplier
+            // 因此：renderScale >= (displayWidth * qualityMultiplier) / contentWidthInPoints
+            const minRenderScaleForCrop = (displayWidth * qualityMultiplier) / contentWidthInPoints;
+            const minRenderScaleForHeight = (displayHeight * qualityMultiplier) / pageHeightInPoints;
+            // 使用两者中的较大值，确保宽度和高度都有足够的分辨率
+            // 同时也要确保至少是 displayScale * qualityMultiplier（保持与未裁剪模式一致）
+            const renderScale = Math.max(
+              displayScale * qualityMultiplier,
+              Math.max(minRenderScaleForCrop, minRenderScaleForHeight)
+            );
+            const renderViewport = page.getViewport({ scale: renderScale, rotation: pageRotation });
             
-            // 设置canvas尺寸（高分辨率）
+            // 设置canvas尺寸（高分辨率，完整页面）
             canvas.width = renderViewport.width;
             canvas.height = renderViewport.height;
-            
-            // 通过CSS控制显示尺寸
-            // 注意：移动端/PWA 下 canvas 可能受 max-width:100% 约束导致宽度被压缩；
-            // 若此时仍强制设置固定 height(px)，会造成纵向拉伸变形。
-            // 因此只固定宽度，height 使用 auto 以保持纵横比。
-            canvas.style.width = `${displayWidth}px`;
-            canvas.style.maxWidth = '100%';
-            canvas.style.height = 'auto';
             
             // 清空canvas
             ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -644,13 +1101,90 @@ export default function ReaderPDFPro({
             await mainRenderTask.promise;
             renderTaskRef.current = null; // 渲染完成后清除引用
             
-            // 裁剪出内容区域（通过计算偏移）
-            // 计算从检测分辨率到渲染分辨率的比例
-            const scaleRatio = renderScale / detectionScale;
-            const cropLeft = bounds.left * scaleRatio;
-            const cropTop = bounds.top * scaleRatio;
-            const cropWidth = contentWidth * scaleRatio;
-            const cropHeight = contentHeight * scaleRatio;
+            // 裁剪出内容区域（根据用户选择裁剪左右和/或上下）
+            // 计算裁剪区域在渲染分辨率下的位置和尺寸
+            // bounds 是在检测分辨率下的值，需要转换为渲染分辨率下的值
+            const detectionToRenderRatio = renderScale / detectionScale;
+            const cropLeft = cropHorizontal ? bounds.left * detectionToRenderRatio : 0;
+            const cropTop = cropVertical ? bounds.top * detectionToRenderRatio : 0;
+            const cropWidth = cropHorizontal 
+              ? contentWidth * detectionToRenderRatio 
+              : renderViewport.width;
+            const cropHeight = cropVertical
+              ? contentHeight * detectionToRenderRatio
+              : renderViewport.height;
+            
+            // 验证裁剪后的canvas分辨率是否足够高
+            // 裁剪后的canvas分辨率应该至少等于显示尺寸 * qualityMultiplier
+            const minCropWidth = displayWidth * qualityMultiplier;
+            const minCropHeight = displayHeight * qualityMultiplier;
+            
+            // 如果裁剪后的分辨率不够高，需要提高renderScale并重新渲染
+            if (cropWidth < minCropWidth || cropHeight < minCropHeight) {
+              // 计算需要的最小renderScale（基于完整页面）
+              // 裁剪后的canvas宽度 = contentWidthInPoints * renderScale
+              // 需要：contentWidthInPoints * renderScale >= minCropWidth
+              // 所以：renderScale >= minCropWidth / contentWidthInPoints
+              const neededScaleForWidth = minCropWidth / contentWidthInPoints;
+              const neededScaleForHeight = minCropHeight / contentHeightInPoints;
+              const neededRenderScale = Math.max(neededScaleForWidth, neededScaleForHeight);
+              
+              // 如果需要的renderScale更高，重新渲染
+              if (neededRenderScale > renderScale) {
+                const newRenderViewport = page.getViewport({ scale: neededRenderScale, rotation: pageRotation });
+                canvas.width = newRenderViewport.width;
+                canvas.height = newRenderViewport.height;
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                
+                const newRenderTask = page.render({
+                  canvasContext: ctx,
+                  viewport: newRenderViewport,
+                });
+                renderTaskRef.current = newRenderTask;
+                await newRenderTask.promise;
+                renderTaskRef.current = null;
+                
+                // 重新计算裁剪参数
+                const newDetectionToRenderRatio = neededRenderScale / detectionScale;
+                const newCropLeft = cropHorizontal ? bounds.left * newDetectionToRenderRatio : 0;
+                const newCropTop = cropVertical ? bounds.top * newDetectionToRenderRatio : 0;
+                const newCropWidth = cropHorizontal 
+                  ? contentWidth * newDetectionToRenderRatio 
+                  : newRenderViewport.width;
+                const newCropHeight = cropVertical
+                  ? contentHeight * newDetectionToRenderRatio
+                  : newRenderViewport.height;
+                
+                // 使用另一个临时canvas来存储裁剪后的内容
+                const croppedCanvas = document.createElement('canvas');
+                croppedCanvas.width = newCropWidth;
+                croppedCanvas.height = newCropHeight;
+                const croppedCtx = croppedCanvas.getContext('2d', {
+                  alpha: false,
+                  desynchronized: true,
+                });
+                
+                if (croppedCtx) {
+                  croppedCtx.imageSmoothingEnabled = true;
+                  croppedCtx.imageSmoothingQuality = 'high';
+                  
+                  croppedCtx.drawImage(
+                    canvas,
+                    newCropLeft, newCropTop, newCropWidth, newCropHeight,
+                    0, 0, newCropWidth, newCropHeight
+                  );
+                  
+                  canvas.width = newCropWidth;
+                  canvas.height = newCropHeight;
+                  canvas.style.width = `${displayWidth}px`;
+                  canvas.style.maxWidth = '100%';
+                  canvas.style.height = 'auto';
+                  ctx.clearRect(0, 0, canvas.width, canvas.height);
+                  ctx.drawImage(croppedCanvas, 0, 0);
+                }
+                return;
+              }
+            }
             
             // 使用另一个临时canvas来存储裁剪后的内容
             const croppedCanvas = document.createElement('canvas');
@@ -666,7 +1200,7 @@ export default function ReaderPDFPro({
               croppedCtx.imageSmoothingEnabled = true;
               croppedCtx.imageSmoothingQuality = 'high';
               
-              // 从原canvas复制裁剪区域
+              // 从原canvas复制裁剪区域（根据用户选择裁剪相应的白边）
               croppedCtx.drawImage(
                 canvas,
                 cropLeft, cropTop, cropWidth, cropHeight,
@@ -676,7 +1210,7 @@ export default function ReaderPDFPro({
               // 调整主canvas尺寸并显示裁剪后的内容（保持高分辨率）
               canvas.width = cropWidth;
               canvas.height = cropHeight;
-              // 显示尺寸保持不变（同上：height 用 auto 防止移动端被压缩宽度时变形）
+              // 通过CSS控制显示尺寸，保持高分辨率渲染
               canvas.style.width = `${displayWidth}px`;
               canvas.style.maxWidth = '100%';
               canvas.style.height = 'auto';
@@ -690,28 +1224,45 @@ export default function ReaderPDFPro({
       }
       
       // 如果不启用自动裁剪或检测失败，使用原来的渲染逻辑
-      // 先计算显示尺寸（基于effectiveScale）
-      const displayViewport = page.getViewport({ scale: effectiveScale });
+      // 使用baseScale（已经考虑了自适应屏幕）
+      const displayScale = baseScale;
       
-      // 如果启用自适应屏幕，计算适合容器的缩放比例（保持纵横比）
-      let displayScale = effectiveScale;
-      if (autoFit && targetScale === undefined) {
-        // 自适应屏幕：计算使页面完全适合容器的缩放比例
-        // 只在初始渲染时应用，如果用户手动设置了缩放（targetScale），则使用用户设置的值
-        const availableWidth = containerWidth - settings.margin * 2;
-        const availableHeight = containerHeight - settings.margin * 2;
-        const pageWidth = page.view[2]; // PDF 页面宽度（单位：点）
-        const pageHeight = page.view[3]; // PDF 页面高度（单位：点）
-        
-        // 计算宽度和高度的缩放比例，取较小值以确保页面完全显示（保持纵横比）
-        const scaleX = availableWidth / pageWidth;
-        const scaleY = availableHeight / pageHeight;
-        displayScale = Math.min(scaleX, scaleY);
-      } else {
-        // 如果页面宽度超过容器，自动调整缩放（保持原有逻辑，但保持纵横比）
+      // 如果启用自适应屏幕，已经在上面的baseScale计算中处理了
+      // 如果没有启用自适应屏幕，但页面宽度超过容器，自动调整缩放
+      if (!autoFit || targetScale !== undefined) {
+        const displayViewport = page.getViewport({ scale: displayScale, rotation: pageRotation });
         if (displayViewport.width > containerWidth - settings.margin * 2) {
           // 保持纵横比：只根据宽度调整，高度会自动按比例缩放
-          displayScale = ((containerWidth - settings.margin * 2) / page.view[2]);
+          // 注意：如果页面旋转了，需要根据旋转后的尺寸计算
+          const pageWidth = pageRotation === 90 || pageRotation === 270 
+            ? page.view[3] 
+            : page.view[2];
+          const adjustedScale = ((containerWidth - settings.margin * 2) / pageWidth);
+          // 使用调整后的缩放
+          const adjustedViewport = page.getViewport({ scale: adjustedScale, rotation: pageRotation });
+          const renderScale = adjustedScale * qualityMultiplier;
+          const finalViewport = page.getViewport({ scale: renderScale, rotation: pageRotation });
+          
+          // 设置canvas尺寸（高分辨率）
+          canvas.width = finalViewport.width;
+          canvas.height = finalViewport.height;
+          
+          // 通过CSS控制显示尺寸
+          canvas.style.width = `${adjustedViewport.width}px`;
+          canvas.style.maxWidth = '100%';
+          canvas.style.height = 'auto';
+          
+          const renderContext = {
+            canvasContext: ctx,
+            viewport: finalViewport,
+          };
+          
+          // 保存渲染任务并等待完成
+          const mainRenderTask = page.render(renderContext);
+          renderTaskRef.current = mainRenderTask;
+          await mainRenderTask.promise;
+          renderTaskRef.current = null;
+          return;
         }
       }
       
@@ -720,7 +1271,8 @@ export default function ReaderPDFPro({
       
       // 根据渲染质量，使用更高的分辨率渲染，但显示尺寸保持不变
       const renderScale = displayScale * qualityMultiplier;
-      const finalViewport = page.getViewport({ scale: renderScale });
+      const finalViewport = page.getViewport({ scale: renderScale, rotation: pageRotation });
+      const displayViewport = page.getViewport({ scale: displayScale, rotation: pageRotation });
       
       // 设置canvas尺寸（高分辨率）
       canvas.width = finalViewport.width;
@@ -755,7 +1307,7 @@ export default function ReaderPDFPro({
       console.error('渲染PDF页面失败', error);
       toast.error(`渲染页面失败: ${error.message || '未知错误'}`);
     }
-  }, [scale, containerSize, settings.margin, autoCropMargins, renderQuality, autoFit]);
+  }, [scale, containerSize, settings.margin, cropHorizontal, cropVertical, renderQuality, autoFit, autoRotate]);
 
   // 同步 settings.fontSize 到 scale state
   // 使用 useRef 来避免循环依赖
@@ -769,12 +1321,12 @@ export default function ReaderPDFPro({
     }
   }, [settings.fontSize]);
 
-  // 当页面或缩放变化时重新渲染
+  // 当页面、缩放或自动旋转设置变化时重新渲染
   useEffect(() => {
     if (currentPage > 0 && currentPage <= totalPages && !loading) {
       renderPage(currentPage);
     }
-  }, [currentPage, scale, containerSize, renderPage, totalPages, loading]);
+  }, [currentPage, scale, containerSize, renderPage, totalPages, loading, autoRotate]);
 
   // 组件卸载时清理渲染任务
   useEffect(() => {
@@ -1543,10 +2095,10 @@ export default function ReaderPDFPro({
             <div className="flex items-center gap-2">
               <button
                 onClick={() => {
-                  const newValue = !autoCropMargins;
+                  const newValue = !cropHorizontal;
                   onSettingsChange({
                     ...settings,
-                    pdfAutoCropMargins: newValue,
+                    pdfCropHorizontal: newValue,
                   });
                   // 重新渲染当前页面以应用设置
                   setTimeout(() => {
@@ -1554,14 +2106,37 @@ export default function ReaderPDFPro({
                       renderPage(currentPage);
                     }
                   }, 100);
-                  toast(newValue ? '已开启自动裁剪' : '已关闭自动裁剪');
+                  toast(newValue ? '已开启左右裁剪' : '已关闭左右裁剪');
                 }}
-                className={`p-2 rounded-lg transition-colors hover:bg-opacity-10 hover:bg-black dark:hover:bg-white dark:hover:bg-opacity-10 ${autoCropMargins ? 'bg-blue-500 bg-opacity-20' : ''}`}
-                style={{ color: autoCropMargins ? '#1890ff' : themeStyles.text }}
-                aria-label="自动裁剪白边"
-                title="自动裁剪白边"
+                className={`p-2 rounded-lg transition-colors hover:bg-opacity-10 hover:bg-black dark:hover:bg-white dark:hover:bg-opacity-10 ${cropHorizontal ? 'bg-blue-500 bg-opacity-20' : ''}`}
+                style={{ color: cropHorizontal ? '#1890ff' : themeStyles.text }}
+                aria-label="裁剪左右白边"
+                title="裁剪左右白边"
               >
                 <Crop className="w-5 h-5" />
+              </button>
+              
+              <button
+                onClick={() => {
+                  const newValue = !cropVertical;
+                  onSettingsChange({
+                    ...settings,
+                    pdfCropVertical: newValue,
+                  });
+                  // 重新渲染当前页面以应用设置
+                  setTimeout(() => {
+                    if (pdfRef.current) {
+                      renderPage(currentPage);
+                    }
+                  }, 100);
+                  toast(newValue ? '已开启上下裁剪' : '已关闭上下裁剪');
+                }}
+                className={`p-2 rounded-lg transition-colors hover:bg-opacity-10 hover:bg-black dark:hover:bg-white dark:hover:bg-opacity-10 ${cropVertical ? 'bg-blue-500 bg-opacity-20' : ''}`}
+                style={{ color: cropVertical ? '#1890ff' : themeStyles.text }}
+                aria-label="裁剪上下白边"
+                title="裁剪上下白边"
+              >
+                <Crop className="w-5 h-5" style={{ transform: 'rotate(90deg)' }} />
               </button>
               
               <button
@@ -1705,7 +2280,7 @@ export default function ReaderPDFPro({
             {/* 提示：详细设置请在阅读设置中查看 */}
             <div className="mb-4 p-3 rounded-lg text-xs" style={{ backgroundColor: themeStyles.border, opacity: 0.1 }}>
               <div style={{ color: themeStyles.text, opacity: 0.7 }}>
-                💡 提示：PDF相关设置（自动裁剪白边、渲染质量等）请在阅读设置中查看
+                💡 提示：PDF相关设置（裁剪白边、渲染质量等）请在阅读设置中查看
               </div>
             </div>
           </div>

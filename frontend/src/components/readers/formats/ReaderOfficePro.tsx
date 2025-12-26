@@ -1,7 +1,7 @@
 /**
  * @author ttbye
  * Office 文档阅读器（支持 Word、Excel、PowerPoint）
- * 通过后端文本提取功能显示文档内容
+ * 使用 docx-preview 和 xlsx 插件预览文档内容
  */
 
 import { useEffect, useRef, useState, useCallback } from 'react';
@@ -12,6 +12,8 @@ import toast from 'react-hot-toast';
 import { X, Download, FileText, FileSpreadsheet, Presentation } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { renderAsync } from 'docx-preview';
+import * as XLSX from 'xlsx';
 
 interface ReaderOfficeProProps {
   book: BookData;
@@ -34,11 +36,13 @@ export default function ReaderOfficePro({
 }: ReaderOfficeProProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
+  const docxPreviewRef = useRef<HTMLDivElement>(null);
   const [loading, setLoading] = useState(true);
   const [content, setContent] = useState<string>('');
-  const [contentType, setContentType] = useState<'text' | 'html' | 'markdown'>('text'); // 标记内容类型
+  const [contentType, setContentType] = useState<'text' | 'html' | 'markdown' | 'docx' | 'xlsx' | 'pptx'>('text'); // 标记内容类型
   const [error, setError] = useState<string | null>(null);
-  const [showBottomBar, setShowBottomBar] = useState(false);
+  const docxBlobRef = useRef<Blob | null>(null); // 保存 DOCX blob，等待 ref 准备好后渲染
+  const [isMobile, setIsMobile] = useState(false); // 检测是否为移动端
 
   // 获取文件类型图标
   const getFileIcon = () => {
@@ -87,8 +91,26 @@ export default function ReaderOfficePro({
           }
         }
         
-        // 对于 DOCX 文件，优先尝试获取 Markdown 格式（表格显示更好）
+        // 对于 DOCX 文件，使用 docx-preview 预览
         if (fileType === 'docx') {
+          try {
+            const response = await api.get(`/books/${book.id}/download`, {
+              responseType: 'blob',
+            });
+            const blob = new Blob([response.data], {
+              type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            });
+            
+            // 保存 blob，等待 ref 准备好后渲染
+            docxBlobRef.current = blob;
+            // 先设置 contentType，让组件渲染出 ref 容器
+            setContentType('docx');
+            setLoading(false);
+            // 渲染会在 useEffect 中完成
+            return;
+          } catch (docxError: any) {
+            console.warn('使用docx-preview预览失败，尝试其他格式:', docxError);
+            // 如果预览失败，回退到原来的方式
           try {
             const markdownResponse = await api.get(`/books/${book.id}/markdown`);
             if (markdownResponse.data && markdownResponse.data.markdown) {
@@ -98,7 +120,6 @@ export default function ReaderOfficePro({
               return;
             }
           } catch (markdownError: any) {
-            // 如果 Markdown 获取失败，尝试 HTML
             console.warn('获取Markdown格式失败，尝试HTML格式:', markdownError);
             try {
               const htmlResponse = await api.get(`/books/${book.id}/html`);
@@ -109,10 +130,46 @@ export default function ReaderOfficePro({
                 return;
               }
             } catch (htmlError: any) {
-              // 如果 HTML 也失败，回退到文本模式
               console.warn('获取HTML格式失败，使用文本格式:', htmlError);
+              }
             }
           }
+        }
+        
+        // 对于 XLSX/XLS 文件，使用 xlsx 解析并显示
+        if (fileType === 'xlsx' || fileType === 'xls') {
+          try {
+            const response = await api.get(`/books/${book.id}/download`, {
+              responseType: 'arraybuffer',
+            });
+            const workbook = XLSX.read(response.data, { type: 'array' });
+            
+            // 生成HTML表格
+            let htmlContent = '<div class="excel-preview">';
+            workbook.SheetNames.forEach((sheetName, index) => {
+              const worksheet = workbook.Sheets[sheetName];
+              const html = XLSX.utils.sheet_to_html(worksheet);
+              htmlContent += `<div class="excel-sheet ${index > 0 ? 'mt-8' : ''}">`;
+              htmlContent += `<h3 class="text-lg font-semibold mb-4">${sheetName}</h3>`;
+              htmlContent += html;
+              htmlContent += '</div>';
+            });
+            htmlContent += '</div>';
+            
+            setContent(htmlContent);
+            setContentType('xlsx');
+            setLoading(false);
+            return;
+          } catch (xlsxError: any) {
+            console.warn('使用xlsx预览失败，使用文本格式:', xlsxError);
+            // 如果预览失败，回退到文本格式
+          }
+        }
+        
+        // 对于 PPTX 文件，暂时使用文本格式（后续可以添加pptx预览支持）
+        if (fileType === 'pptx') {
+          // TODO: 添加 PPTX 预览支持
+          // 目前使用文本格式
         }
         
         // 对于其他格式或获取失败的情况，使用文本格式
@@ -142,6 +199,111 @@ export default function ReaderOfficePro({
     // 设置空目录
     onTOCChange([]);
   }, [book.id, onTOCChange]);
+
+  // 从DOCX文档中提取目录
+  const extractTOCFromDocx = useCallback((container: HTMLElement) => {
+    try {
+      const tocItems: TOCItem[] = [];
+      // 查找所有标题元素（h1-h6）
+      const headings = container.querySelectorAll('h1, h2, h3, h4, h5, h6, .docx-wrapper h1, .docx-wrapper h2, .docx-wrapper h3, .docx-wrapper h4, .docx-wrapper h5, .docx-wrapper h6');
+      
+      headings.forEach((heading, index) => {
+        const level = parseInt(heading.tagName.charAt(1)) || 1;
+        const title = heading.textContent?.trim() || '';
+        if (title) {
+          // 尝试找到对应的页面或位置
+          const pageElement = heading.closest('.docx-page');
+          const pageNumber = pageElement ? Array.from(container.querySelectorAll('.docx-page')).indexOf(pageElement) + 1 : 0;
+          
+          tocItems.push({
+            id: `toc-${index}`,
+            title: title,
+            href: `page=${pageNumber}`,
+            level: level,
+          });
+        }
+      });
+      
+      if (tocItems.length > 0) {
+        onTOCChange(tocItems);
+      } else {
+        onTOCChange([]);
+      }
+    } catch (error) {
+      console.error('提取DOCX目录失败:', error);
+      onTOCChange([]);
+    }
+  }, [onTOCChange]);
+
+  // 当 DOCX ref 准备好后，渲染文档
+  useEffect(() => {
+    if (contentType === 'docx' && docxBlobRef.current) {
+      const renderDocx = async (retryCount = 0) => {
+        // 检查 ref 是否存在，如果不存在则重试
+        if (!docxPreviewRef.current) {
+          if (retryCount < 10) {
+            // 最多重试10次，每次等待100ms
+            setTimeout(() => renderDocx(retryCount + 1), 100);
+            return;
+          } else {
+            console.error('DOCX 预览容器未准备好');
+            setError('无法加载文档内容：预览容器未准备好');
+            return;
+          }
+        }
+
+        // 再次确认 ref 和 blob 都存在
+        if (!docxBlobRef.current || !docxPreviewRef.current) {
+          console.error('DOCX 数据或容器不存在');
+          return;
+        }
+
+        try {
+          const container = docxPreviewRef.current;
+          const blob = docxBlobRef.current;
+          
+          // 清空容器
+          container.innerHTML = '';
+          
+          // 渲染文档
+          await renderAsync(blob, container, undefined, {
+            className: 'docx-wrapper',
+            inWrapper: true,
+            ignoreWidth: false, // 保留文档的原始宽度和页边距设置
+            ignoreHeight: false,
+            ignoreFonts: false,
+            breakPages: true, // 启用分页，根据文档的分页方式分页
+            ignoreLastRenderedPageBreak: false, // 保留最后一页的分页符
+          });
+          
+          // 渲染完成后提取目录
+          setTimeout(() => {
+            extractTOCFromDocx(container);
+          }, 500);
+        } catch (error) {
+          console.error('渲染 DOCX 失败:', error);
+          // 如果渲染失败，回退到其他格式
+          docxBlobRef.current = null;
+          setContentType('text');
+          // 尝试获取文本格式
+          api.get(`/books/${book.id}/text`, {
+            params: { maxLength: 100000 },
+          }).then((response) => {
+            if (response.data && response.data.text) {
+              setContent(response.data.text);
+              setContentType('text');
+            }
+          }).catch(() => {
+            setError('无法加载文档内容');
+          });
+        }
+      };
+      
+      // 等待一小段时间确保 DOM 已更新
+      const timer = setTimeout(() => renderDocx(0), 50);
+      return () => clearTimeout(timer);
+    }
+  }, [contentType, book.id, settings.readerWidth, extractTOCFromDocx]);
 
   // 处理下载
   const handleDownload = async () => {
@@ -190,14 +352,68 @@ export default function ReaderOfficePro({
     },
   }[settings.theme];
 
+  // 缩放比例（从 settings 读取，默认100%）
+  const zoom = settings.officeZoom ?? 100;
+
   const fileType = book.file_type?.toLowerCase();
   const isMarkdown = fileType === 'md';
+
+  // 检测移动端和平板（包括iPad）
+  useEffect(() => {
+    const checkMobile = () => {
+      const width = window.innerWidth;
+      const userAgent = navigator.userAgent.toLowerCase();
+      const isIPad = /ipad/.test(userAgent) || (userAgent.includes('macintosh') && 'ontouchend' in document);
+      // iPad或宽度小于1024的设备都视为移动/平板设备
+      setIsMobile(width < 1024 || isIPad);
+    };
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+    return () => window.removeEventListener('resize', checkMobile);
+  }, []);
+
+  // 判断是否为PC端（桌面设备，不包括iPad）
+  const isDesktop = typeof window !== 'undefined' && window.innerWidth >= 1024 && !(/ipad/.test(navigator.userAgent.toLowerCase()) || (navigator.userAgent.toLowerCase().includes('macintosh') && 'ontouchend' in document));
+  
+  // 计算父容器的左右padding总和（用于缩放计算）
+  const getParentPadding = () => {
+    if (isMobile) {
+      return typeof window !== 'undefined' && window.innerWidth < 768 ? '1rem' : '2rem'; // 0.5rem * 2 = 1rem, 1rem * 2 = 2rem
+    }
+    return isDesktop ? '4rem' : '3rem'; // 2rem * 2 = 4rem, 1.5rem * 2 = 3rem
+  };
+  const parentPadding = getParentPadding();
+  
+  // 获取阅读区域宽度样式
+  const getReaderWidthStyle = () => {
+    if (!isDesktop) {
+      // 移动端和平板：始终全宽
+      return { width: '100%', maxWidth: '100%', margin: '0' };
+    }
+    
+    // PC端：根据设置选择
+    if (settings.readerWidth === 'centered') {
+      return {
+        width: '980px',
+        maxWidth: '980px',
+        margin: '0 auto', // 居中显示
+      };
+    } else {
+      return {
+        width: '100%',
+        maxWidth: '100%',
+        margin: '0',
+      };
+    }
+  };
 
   // 记录滚动位置（用于 flush / 字号变化后恢复）
   const lastScrollTopRef = useRef<number>(0);
   const lastProgressRef = useRef<number>(0);
+  const totalPagesRef = useRef<number>(1);
+  const currentPageRef = useRef<number>(1);
 
-  // 让 MD 的阅读体验更接近 EPUB：顶部导航由 ReaderContainer 统一管理
+  // 让 Office 文档的阅读体验更接近 EPUB：顶部导航由 ReaderContainer 统一管理
   // 点击内容区域时，切换 ReaderContainer 的导航栏显示/隐藏
   const handleToggleNavigation = useCallback(() => {
     try {
@@ -208,19 +424,32 @@ export default function ReaderOfficePro({
     }
   }, []);
 
-  // MD 默认字号兜底：避免过小导致难以阅读（仅在非常小的值时矫正）
+  // 默认字号兜底：避免过小导致难以阅读（仅在非常小的值时矫正）
   useEffect(() => {
-    if (!isMarkdown) return;
     const fs = typeof settings.fontSize === 'number' ? settings.fontSize : 0;
     if (fs > 0 && fs < 16) {
       onSettingsChange({ ...settings, fontSize: 18 });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isMarkdown]);
+  }, []);
 
-  // MD：按滚动进度记录/恢复阅读位置（跨设备/跨字号比“页码”稳定）
+  // 计算总页数（基于内容高度和视口高度）
+  const calculateTotalPages = useCallback((scrollHeight: number, clientHeight: number): number => {
+    if (scrollHeight <= clientHeight) return 1;
+    return Math.ceil(scrollHeight / clientHeight);
+  }, []);
+
+  // 计算当前页码（基于滚动位置）
+  const calculateCurrentPage = useCallback((scrollTop: number, scrollHeight: number, clientHeight: number): number => {
+    if (scrollHeight <= clientHeight) return 1;
+    const pageHeight = clientHeight;
+    const currentPage = Math.floor(scrollTop / pageHeight) + 1;
+    const totalPages = Math.ceil(scrollHeight / pageHeight);
+    return Math.min(currentPage, totalPages);
+  }, []);
+
+  // 按滚动进度记录/恢复阅读位置（跨设备/跨字号比"页码"稳定）
   useEffect(() => {
-    if (!isMarkdown) return;
     const el = contentRef.current;
     if (!el) return;
 
@@ -250,26 +479,36 @@ export default function ReaderOfficePro({
     const t = window.setTimeout(restore, 0);
     return () => window.clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isMarkdown, content, settings.fontSize, settings.lineHeight, settings.fontFamily]);
+  }, [content, settings.fontSize, settings.lineHeight, settings.fontFamily]);
 
+  // 阅读进度跟踪和页码计算
   useEffect(() => {
-    if (!isMarkdown) return;
     const el = contentRef.current;
     if (!el) return;
 
     const emit = () => {
       try {
-        const maxScroll = Math.max(1, el.scrollHeight - el.clientHeight);
+        const scrollHeight = el.scrollHeight;
+        const clientHeight = el.clientHeight;
+        const maxScroll = Math.max(1, scrollHeight - clientHeight);
         const scrollTop = el.scrollTop || 0;
         const progress = Math.min(1, Math.max(0, scrollTop / maxScroll));
+        
+        // 计算页码
+        const totalPages = calculateTotalPages(scrollHeight, clientHeight);
+        const currentPage = calculateCurrentPage(scrollTop, scrollHeight, clientHeight);
+        
         lastScrollTopRef.current = scrollTop;
         lastProgressRef.current = progress;
+        totalPagesRef.current = totalPages;
+        currentPageRef.current = currentPage;
+        
         onProgressChange(progress, {
-          currentPage: 1,
-          totalPages: 1,
+          currentPage,
+          totalPages,
           progress,
           scrollTop,
-          currentLocation: `mdscroll:${Math.round(progress * 100000)}`, // 仅用于调试/可扩展
+          currentLocation: `office:${Math.round(progress * 100000)}`,
         });
       } catch {
         // ignore
@@ -304,11 +543,10 @@ export default function ReaderOfficePro({
       flushNow();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isMarkdown, content, onProgressChange]);
+  }, [content, onProgressChange, calculateTotalPages, calculateCurrentPage]);
 
-  // 暴露“跳转到指定进度/位置”给外部（供跨设备进度跳转）
+  // 暴露"跳转到指定进度/位置"给外部（供跨设备进度跳转）
   useEffect(() => {
-    if (!isMarkdown) return;
     (window as any).__readerGoToPosition = (pos: any) => {
       try {
         const el = contentRef.current;
@@ -332,16 +570,70 @@ export default function ReaderOfficePro({
     return () => {
       delete (window as any).__readerGoToPosition;
     };
-  }, [isMarkdown, content]);
+  }, [content]);
 
-  // 隐藏/显示底部栏
+  // 暴露翻页功能给 ReaderContainer
   useEffect(() => {
-    const timer = setTimeout(() => {
-      setShowBottomBar(false);
-    }, 3000);
+    (window as any).__readerPageTurn = (direction: 'prev' | 'next') => {
+      const el = contentRef.current;
+      if (!el) return;
+      
+      const scrollHeight = el.scrollHeight;
+      const clientHeight = el.clientHeight;
+      const pageHeight = clientHeight;
+      const currentScrollTop = el.scrollTop;
+      
+      if (direction === 'next') {
+        const nextScrollTop = Math.min(
+          scrollHeight - clientHeight,
+          currentScrollTop + pageHeight * 0.8 // 翻页80%的高度
+        );
+        el.scrollTo({ top: nextScrollTop, behavior: 'smooth' });
+      } else {
+        const prevScrollTop = Math.max(
+          0,
+          currentScrollTop - pageHeight * 0.8
+        );
+        el.scrollTo({ top: prevScrollTop, behavior: 'smooth' });
+      }
+    };
+    
+    return () => {
+      delete (window as any).__readerPageTurn;
+    };
+  }, []);
 
-    return () => clearTimeout(timer);
-  }, [showBottomBar]);
+  // 暴露"跳转到指定页面"给外部（供目录跳转使用）
+  useEffect(() => {
+    (window as any).__officeGoToPage = (pageNumber: number) => {
+      try {
+        const el = contentRef.current;
+        if (!el) return false;
+        
+        // 查找对应的页面元素
+        const pages = el.querySelectorAll('.docx-page');
+        if (pages.length === 0) {
+          // 如果没有分页，使用滚动位置
+          const maxScroll = Math.max(1, el.scrollHeight - el.clientHeight);
+          const targetScroll = Math.max(0, Math.min(maxScroll, (pageNumber - 1) * el.clientHeight));
+          el.scrollTo({ top: targetScroll, behavior: 'smooth' });
+          return true;
+        }
+        
+        const targetPage = pages[pageNumber - 1];
+        if (targetPage) {
+          targetPage.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          return true;
+        }
+      } catch {
+        // ignore
+      }
+      return false;
+    };
+    return () => {
+      delete (window as any).__officeGoToPage;
+    };
+  }, []);
 
   if (loading) {
     return (
@@ -401,162 +693,125 @@ export default function ReaderOfficePro({
         boxSizing: 'border-box',
       }}
       onClick={() => {
-        // MD：交给 ReaderContainer 统一控制顶部/侧栏等
-        if (isMarkdown) {
+        // 统一使用 ReaderContainer 的导航栏控制
           handleToggleNavigation();
-        } else {
-          // 其他 Office：保留原行为
-          setShowBottomBar(!showBottomBar);
-        }
       }}
     >
-      {/* 非 MD：保留原有顶部栏 */}
-      {!isMarkdown && showBottomBar && (
-        <div
-          className="absolute top-0 left-0 right-0 z-10 flex items-center justify-between p-4"
-          style={{
-            backgroundColor: themeStyles.bg,
-            paddingTop: 'env(safe-area-inset-top, 0px)',
-            paddingLeft: 'env(safe-area-inset-left, 0px)',
-            paddingRight: 'env(safe-area-inset-right, 0px)',
-          }}
-        >
-          <button
-            onClick={onClose}
-            className="p-2 rounded-lg hover:bg-black/10 dark:hover:bg-white/10"
-          >
-            <X className="w-6 h-6" />
-          </button>
-          <div className="flex-1 text-center">
-            <h2 className="text-sm font-semibold truncate">{book.title}</h2>
-            <p className="text-xs opacity-70">{getFileTypeName()}</p>
-          </div>
-          <button
-            onClick={handleDownload}
-            className="p-2 rounded-lg hover:bg-black/10 dark:hover:bg-white/10"
-          >
-            <Download className="w-6 h-6" />
-          </button>
-        </div>
-      )}
+      {/* 移除自己的顶部栏，使用 ReaderContainer 的统一导航栏 */}
 
       {/* 内容区域 */}
       <div
         ref={contentRef}
-        className={`h-full overflow-y-auto ${
-          isMarkdown
-            ? 'px-4 sm:px-6 md:px-10 py-6 sm:py-7 md:py-8'
-            : 'p-4 md:p-8 lg:p-12'
-        }`}
+        className="h-full overflow-y-auto relative"
         style={{
-          // ReaderContainer 已处理顶部工具栏高度与安全区；这里不再重复 top padding
-          paddingTop: isMarkdown
-            ? '16px'
-            : showBottomBar
-              ? 'calc(80px + env(safe-area-inset-top, 0px))'
-              : 'env(safe-area-inset-top, 0px)',
-          paddingBottom: isMarkdown
-            ? '32px'
-            : showBottomBar
-              ? 'calc(80px + env(safe-area-inset-bottom, 0px))'
-              : 'env(safe-area-inset-bottom, 0px)',
-          // 给 MD 一个稳定的左右页边距（并兼容刘海/圆角屏 safe-area）
-          paddingLeft: isMarkdown ? 'max(env(safe-area-inset-left, 0px), 16px)' : 'env(safe-area-inset-left, 0px)',
-          paddingRight: isMarkdown ? 'max(env(safe-area-inset-right, 0px), 16px)' : 'env(safe-area-inset-right, 0px)',
+          // ReaderContainer 已处理顶部工具栏高度（48px）和底部导航栏/信息栏高度
+          // 这里只需要添加内容区域的上下内边距，不需要再加工具栏高度
+          // 顶部：添加内容区域的内边距
+          paddingTop: isMobile ? '1rem' : '1.5rem',
+          // 底部：添加内容区域的内边距，ReaderContainer 已预留底部导航栏空间
+          // 但为了确保内容不被遮挡，额外添加一些底部间距
+          paddingBottom: isMobile ? '1rem' : '1.5rem',
+          // 阅读内容需要左右页边距，同时考虑安全区域
+          // 移动端（手机，<768px）：添加最小页边距（0.5rem）
+          // iPad/平板（768px-1023px）：使用中等页边距（1rem）
+          // PC端（>=1024px且非iPad）：需要更大的页边距（2rem）
+          paddingLeft: `max(env(safe-area-inset-left, 0px), ${isMobile ? (typeof window !== 'undefined' && window.innerWidth < 768 ? '0.5rem' : '1rem') : isDesktop ? '2rem' : '1.5rem'})`,
+          paddingRight: `max(env(safe-area-inset-right, 0px), ${isMobile ? (typeof window !== 'undefined' && window.innerWidth < 768 ? '0.5rem' : '1rem') : isDesktop ? '2rem' : '1.5rem'})`,
+          marginLeft: 0,
+          marginRight: 0,
+          // 确保内容区域背景色与主题一致
+          backgroundColor: themeStyles.bg,
+          // 始终允许横向滚动，以便查看宽表格和缩放后的内容
+          overflowX: 'auto',
         }}
       >
         <div
-          className={`${isMarkdown ? 'max-w-3xl' : 'max-w-4xl'} mx-auto`}
+          className="w-full"
           style={{
             fontFamily: settings.fontFamily,
             fontSize: `${settings.fontSize}px`,
             lineHeight: settings.lineHeight,
             color: themeStyles.text,
+            boxSizing: 'border-box',
+            // 确保背景色与主题一致
+            backgroundColor: themeStyles.bg,
+            // 应用阅读宽度设置
+            ...getReaderWidthStyle(),
+            // 内容容器本身不需要额外的左右间距，外层容器已处理
+            paddingLeft: 0,
+            paddingRight: 0,
+            // 应用缩放：使用transform scale，并调整容器宽度以适应缩放
+            // 缩放时，需要确保缩放后的内容不超出父容器
+            // 关键：transform scale不会改变布局尺寸，所以需要调整容器宽度
+            // 如果缩放90%，容器宽度应该是 100% / 0.9 = 111.11%
+            // 但实际显示宽度 = 111.11% * 0.9 = 100%，正好占满容器
+            // 注意：需要考虑父容器的padding，所以使用calc计算
+            ...(zoom !== 100 ? {
+              transform: `scale(${zoom / 100})`,
+              transformOrigin: 'top left',
+              // 调整容器宽度以适应缩放
+              // 缩放90%时，容器宽度 = (100% - padding) / 0.9 + padding
+              // 这样缩放后的实际显示宽度 = 100% - padding，正好占满可用空间
+              width: `calc((100% - ${parentPadding}) / ${zoom / 100} + ${parentPadding})`,
+              minHeight: `calc(100% / ${zoom / 100})`,
+              // 确保缩放后的容器不会超出父容器
+              maxWidth: `calc((100% - ${parentPadding}) / ${zoom / 100} + ${parentPadding})`,
+            } : {}),
           }}
         >
-          {/* 非 MD：保留文档标题卡片；MD：更接近 EPUB 的“纯阅读” */}
-          {!isMarkdown && (
+          {/* 统一风格：所有 Office 文档都使用类似 EPUB 的简洁风格 */}
+          {contentType === 'docx' ? (
             <div
-              className="prose prose-lg dark:prose-invert rounded-2xl p-6 md:p-8 lg:p-10 shadow-xl"
+              ref={docxPreviewRef}
+              className="docx-preview-container w-full"
               style={{
+                fontFamily: settings.fontFamily,
+                fontSize: `${settings.fontSize}px`,
+                lineHeight: settings.lineHeight,
                 color: themeStyles.text,
-                backgroundColor: themeStyles.contentBg,
-                backdropFilter: 'blur(20px) saturate(180%)',
-                WebkitBackdropFilter: 'blur(20px) saturate(180%)',
-                border: `1px solid ${themeStyles.contentBorder}`,
-                boxShadow:
-                  settings.theme === 'dark'
-                    ? '0 20px 60px rgba(0, 0, 0, 0.3), 0 8px 24px rgba(0, 0, 0, 0.2)'
-                    : '0 20px 60px rgba(0, 0, 0, 0.1), 0 8px 24px rgba(0, 0, 0, 0.08)',
+                width: '100%',
+                maxWidth: '100%',
+                overflowX: 'auto', // 允许横向滚动以查看宽表格
+                paddingLeft: 0,
+                paddingRight: 0,
+                marginLeft: 0,
+                marginRight: 0,
+                // 移除zoom，缩放由外层容器处理
               }}
-            >
-              <div className="mb-8 pb-4 border-b" style={{ borderColor: themeStyles.contentBorder }}>
-                <div className="flex items-center gap-3 mb-2">
-                  {getFileIcon()}
-                  <h1 className="text-3xl font-bold m-0" style={{ color: themeStyles.text }}>
-                    {book.title}
-                  </h1>
-                </div>
-                <p className="text-sm opacity-70" style={{ color: themeStyles.text }}>
-                  {getFileTypeName()}
-                </p>
-              </div>
-
-              {/* 非 MD 的内容渲染 */}
-              {contentType === 'markdown' ? (
-                <div
-                  className="prose prose-lg dark:prose-invert max-w-none"
-                  style={{
-                    fontFamily: settings.fontFamily,
-                    fontSize: `${settings.fontSize}px`,
-                    lineHeight: settings.lineHeight,
-                    color: themeStyles.text,
-                  }}
-                >
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
-                </div>
-              ) : contentType === 'html' ? (
-                <div
-                  className="docx-content"
-                  style={{
-                    fontFamily: settings.fontFamily,
-                    fontSize: `${settings.fontSize}px`,
-                    lineHeight: settings.lineHeight,
-                    color: themeStyles.text,
-                  }}
-                >
-                  <div dangerouslySetInnerHTML={{ __html: content }} />
-                </div>
-              ) : (
-                <div
-                  className="whitespace-pre-wrap break-words"
-                  style={{
-                    fontFamily: settings.fontFamily,
-                    fontSize: `${settings.fontSize}px`,
-                    lineHeight: settings.lineHeight,
-                    color: themeStyles.text,
-                  }}
-                >
-                  {content.split('\n').map((line, index) => (
-                    <p key={index} className="mb-2" style={{ color: themeStyles.text }}>
-                      {line || '\u00A0'}
-                    </p>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* MD：用更轻量的 prose，背景直接跟随主题（更接近 EPUB） */}
-          {isMarkdown && (
+            />
+          ) : contentType === 'xlsx' ? (
             <div
-              className="prose prose-base md:prose-lg dark:prose-invert max-w-none rounded-2xl px-5 sm:px-6 md:px-8 py-6 sm:py-7 md:py-8"
+              className="excel-preview-container w-full"
               style={{
+                fontFamily: settings.fontFamily,
+                fontSize: `${settings.fontSize}px`,
+                lineHeight: settings.lineHeight,
                 color: themeStyles.text,
-                backgroundColor: settings.theme === 'dark' ? 'rgba(17, 24, 39, 0.35)' : 'rgba(255, 255, 255, 0.65)',
-                border: `1px solid ${themeStyles.contentBorder}`,
-                backdropFilter: 'blur(14px) saturate(160%)',
-                WebkitBackdropFilter: 'blur(14px) saturate(160%)',
+                width: '100%',
+                maxWidth: '100%',
+                overflowX: 'auto',
+                WebkitOverflowScrolling: 'touch',
+                paddingLeft: 0,
+                paddingRight: 0,
+                marginLeft: 0,
+                marginRight: 0,
+                // 移除zoom，缩放由外层容器处理
+              }}
+              dangerouslySetInnerHTML={{ __html: content }}
+            />
+          ) : contentType === 'markdown' ? (
+            // Markdown 使用更轻量的样式（更接近 EPUB）
+            <div
+              className="prose prose-base md:prose-lg dark:prose-invert max-w-none"
+              style={{
+                paddingTop: isMobile ? '0.75rem' : '1.5rem',
+                paddingBottom: isMobile ? '0.75rem' : '1.5rem',
+                paddingLeft: 0,
+                paddingRight: 0,
+                marginLeft: 0,
+                marginRight: 0,
+                color: themeStyles.text,
+                backgroundColor: themeStyles.bg,
               }}
             >
               <style>{`
@@ -620,23 +875,305 @@ export default function ReaderOfficePro({
                 {content}
               </ReactMarkdown>
             </div>
+          ) : contentType === 'html' ? (
+            <div
+              className="prose prose-base md:prose-lg dark:prose-invert max-w-none"
+              style={{
+                paddingTop: isMobile ? '0.75rem' : '1.5rem',
+                paddingBottom: isMobile ? '0.75rem' : '1.5rem',
+                paddingLeft: 0,
+                paddingRight: 0,
+                marginLeft: 0,
+                marginRight: 0,
+                color: themeStyles.text,
+                backgroundColor: themeStyles.bg,
+              }}
+            >
+              <div
+                className="docx-content"
+                style={{
+                  fontFamily: settings.fontFamily,
+                  fontSize: `${settings.fontSize}px`,
+                  lineHeight: settings.lineHeight,
+                  color: themeStyles.text,
+                }}
+                dangerouslySetInnerHTML={{ __html: content }}
+              />
+            </div>
+          ) : (
+            <div
+              className="prose prose-base md:prose-lg dark:prose-invert max-w-none"
+              style={{
+                paddingTop: isMobile ? '0.75rem' : '1.5rem',
+                paddingBottom: isMobile ? '0.75rem' : '1.5rem',
+                paddingLeft: 0,
+                paddingRight: 0,
+                marginLeft: 0,
+                marginRight: 0,
+                color: themeStyles.text,
+                backgroundColor: themeStyles.bg,
+              }}
+            >
+              <div
+                className="whitespace-pre-wrap break-words"
+                style={{
+                  fontFamily: settings.fontFamily,
+                  fontSize: `${settings.fontSize}px`,
+                  lineHeight: settings.lineHeight,
+                  color: themeStyles.text,
+                }}
+              >
+                {content.split('\n').map((line, index) => (
+                  <p key={index} className="mb-2" style={{ color: themeStyles.text }}>
+                    {line || '\u00A0'}
+                  </p>
+                ))}
+              </div>
+            </div>
           )}
         </div>
       </div>
 
-      {/* 非 MD：底部提示保留 */}
-      {!isMarkdown && !showBottomBar && (
-        <div
-          className="absolute left-1/2 transform -translate-x-1/2 text-xs opacity-50"
-          style={{
-            bottom: 'calc(16px + env(safe-area-inset-bottom, 0px))',
-            paddingLeft: 'env(safe-area-inset-left, 0px)',
-            paddingRight: 'env(safe-area-inset-right, 0px)',
-          }}
-        >
-          点击屏幕显示/隐藏工具栏
-        </div>
-      )}
+      {/* 移除底部提示，使用 ReaderContainer 的统一导航栏 */}
+      
+      {/* 添加样式支持 */}
+      <style>{`
+        .docx-preview-container {
+          /* 容器宽度：100%，但允许内容超出时横向滚动 */
+          width: 100% !important;
+          max-width: 100% !important;
+          /* 所有平台都允许横向滚动，以便查看宽表格 */
+          overflow-x: auto !important;
+          -webkit-overflow-scrolling: touch !important;
+          box-sizing: border-box !important;
+          padding-left: 0 !important;
+          padding-right: 0 !important;
+          margin-left: 0 !important;
+          margin-right: 0 !important;
+          background-color: ${themeStyles.bg} !important;
+        }
+        /* 确保 docx-preview 的所有元素都使用主题背景色 */
+        .docx-preview-container * {
+          background-color: transparent !important;
+        }
+        .docx-wrapper {
+          background: ${themeStyles.bg} !important;
+          padding-top: ${isMobile ? '0.5rem' : '1rem'} !important;
+          padding-bottom: ${isMobile ? '0.5rem' : '1rem'} !important;
+          border-radius: 0.5rem;
+          box-sizing: border-box !important;
+          /* 移动端：适应容器宽度，但允许内容超出时横向滚动 */
+          ${isMobile ? `
+            width: 100% !important;
+            min-width: 100% !important;
+            max-width: none !important; /* 允许内容超出，由外层容器处理滚动 */
+            margin-left: 0 !important;
+            margin-right: 0 !important;
+            padding-left: 0 !important;
+            padding-right: 0 !important;
+          ` : `
+            /* PC端：保留文档自己的左右页边距，居中显示 */
+            margin-left: auto !important;
+            margin-right: auto !important;
+          `}
+          /* 确保分页正确显示 */
+          page-break-inside: avoid !important;
+        }
+        /* 确保文档页面使用主题背景色和正确的宽度 */
+        .docx-wrapper .docx-page {
+          ${isMobile ? `
+            width: 100% !important;
+            min-width: 100% !important;
+            max-width: none !important; /* 允许内容超出，由外层容器处理滚动 */
+          ` : `
+            width: 100% !important;
+            max-width: 100% !important;
+          `}
+          box-sizing: border-box !important;
+          background-color: ${themeStyles.bg} !important;
+          margin-bottom: 1rem !important;
+          page-break-after: always !important;
+          /* 移动端：移除所有左右间距 */
+          ${isMobile ? `
+            padding-left: 0 !important;
+            padding-right: 0 !important;
+            margin-left: 0 !important;
+            margin-right: 0 !important;
+          ` : ''}
+        }
+        /* 确保文档内容适应容器宽度（但表格除外） */
+        .docx-wrapper * {
+          box-sizing: border-box !important;
+        }
+        /* 文本元素适应容器宽度，但表格保持原始宽度 */
+        .docx-wrapper p,
+        .docx-wrapper div:not(.docx-wrapper),
+        .docx-wrapper span,
+        .docx-wrapper li,
+        .docx-wrapper h1,
+        .docx-wrapper h2,
+        .docx-wrapper h3,
+        .docx-wrapper h4,
+        .docx-wrapper h5,
+        .docx-wrapper h6 {
+          max-width: 100% !important;
+          overflow-wrap: break-word !important;
+          word-wrap: break-word !important;
+        }
+        /* 移动端：文本元素移除左右间距 */
+        ${isMobile ? `
+          .docx-wrapper p,
+          .docx-wrapper div:not(.docx-wrapper),
+          .docx-wrapper span,
+          .docx-wrapper li {
+            padding-left: 0 !important;
+            padding-right: 0 !important;
+            margin-left: 0 !important;
+            margin-right: 0 !important;
+          }
+        ` : ''}
+        /* 表格不受max-width限制，保持原始宽度 */
+        .docx-wrapper table {
+          max-width: none !important;
+        }
+        /* 图片自适应，但保留原始尺寸比例 */
+        .docx-wrapper img {
+          max-width: 100% !important;
+          height: auto !important;
+          display: block !important;
+        }
+        /* 表格适配：保留原始宽度，允许横向滚动 */
+        .docx-wrapper table {
+          border-collapse: collapse;
+          margin: 1rem 0;
+          display: table !important;
+          /* 不强制100%宽度，保留表格原始宽度 */
+          width: auto !important;
+          min-width: 100% !important; /* 至少占满容器宽度 */
+          max-width: none !important; /* 允许超出容器宽度 */
+          table-layout: auto !important;
+          /* 表格本身不滚动，由外层容器处理 */
+        }
+        .docx-wrapper table thead,
+        .docx-wrapper table tbody,
+        .docx-wrapper table tr {
+          display: table !important;
+          width: auto !important;
+          table-layout: auto !important;
+        }
+        /* 表格单元格：保留内容宽度，允许换行 */
+        .docx-wrapper table td,
+        .docx-wrapper table th {
+          border: 1px solid ${themeStyles.contentBorder};
+          padding: 0.5rem;
+          word-wrap: break-word !important;
+          overflow-wrap: break-word !important;
+          white-space: normal !important; /* 允许换行 */
+          /* 移除 max-width: 0，让单元格根据内容自动调整宽度 */
+          min-width: fit-content !important;
+        }
+        /* 段落和文本自适应 */
+        .docx-wrapper p,
+        .docx-wrapper div,
+        .docx-wrapper span {
+          max-width: 100% !important;
+          word-wrap: break-word !important;
+          overflow-wrap: break-word !important;
+        }
+        /* 列表自适应 */
+        .docx-wrapper ul,
+        .docx-wrapper ol {
+          max-width: 100% !important;
+          padding-left: 1.5rem;
+        }
+        /* 移动端优化 */
+        @media (max-width: 768px) {
+          .docx-wrapper {
+            padding: 0.75rem !important;
+          }
+          .docx-wrapper table {
+            font-size: 0.9em !important;
+          }
+          .docx-wrapper table td,
+          .docx-wrapper table th {
+            padding: 0.4rem !important;
+          }
+        }
+        .excel-preview-container {
+          width: 100% !important;
+          max-width: 100% !important;
+          overflow-x: auto !important;
+          -webkit-overflow-scrolling: touch;
+          box-sizing: border-box !important;
+          padding-left: 0 !important;
+          padding-right: 0 !important;
+          margin-left: 0 !important;
+          margin-right: 0 !important;
+          background-color: ${themeStyles.bg} !important;
+        }
+        .excel-preview {
+          width: 100% !important;
+          max-width: 100% !important;
+          box-sizing: border-box !important;
+        }
+        .excel-sheet {
+          margin-bottom: 2rem;
+          width: 100% !important;
+          max-width: 100% !important;
+          box-sizing: border-box !important;
+        }
+        .excel-sheet h3 {
+          color: ${themeStyles.text};
+          margin-bottom: 1rem;
+          font-size: 1.1rem;
+        }
+        .excel-preview table {
+          border-collapse: collapse;
+          width: 100% !important;
+          max-width: 100% !important;
+          margin: 1rem 0;
+          background: ${themeStyles.contentBg};
+          display: block !important;
+          overflow-x: auto !important;
+          -webkit-overflow-scrolling: touch;
+        }
+        .excel-preview table thead,
+        .excel-preview table tbody,
+        .excel-preview table tr {
+          display: table !important;
+          width: 100% !important;
+        }
+        .excel-preview table td,
+        .excel-preview table th {
+          border: 1px solid ${themeStyles.contentBorder};
+          padding: 0.5rem;
+          text-align: left;
+          word-wrap: break-word !important;
+          overflow-wrap: break-word !important;
+          min-width: 80px;
+        }
+        .excel-preview table th {
+          background: ${settings.theme === 'dark' ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.05)'};
+          font-weight: bold;
+          position: sticky;
+          top: 0;
+          z-index: 10;
+        }
+        /* 移动端优化 */
+        @media (max-width: 768px) {
+          .excel-preview table {
+            font-size: 0.85em !important;
+          }
+          .excel-preview table td,
+          .excel-preview table th {
+            padding: 0.4rem 0.3rem !important;
+            min-width: 60px;
+          }
+          .excel-sheet h3 {
+            font-size: 1rem;
+          }
+        }
+      `}</style>
     </div>
   );
 }

@@ -21,6 +21,7 @@ export default function AccountSettings() {
   const [formData, setFormData] = useState({
     username: '',
     email: '',
+    nickname: '',
   });
   
   const [passwordData, setPasswordData] = useState({
@@ -42,6 +43,7 @@ export default function AccountSettings() {
       setFormData({
         username: user.username || '',
         email: user.email || '',
+        nickname: (user as any).nickname || '',
       });
       fetchPushEmails();
     }
@@ -220,6 +222,22 @@ export default function AccountSettings() {
               onChange={(e) => setFormData({ ...formData, email: e.target.value })}
               placeholder="请输入邮箱"
             />
+          </div>
+          
+          <div>
+            <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
+              昵称
+            </label>
+            <input
+              type="text"
+              className="input w-full"
+              value={formData.nickname}
+              onChange={(e) => setFormData({ ...formData, nickname: e.target.value })}
+              placeholder="请输入昵称（可选）"
+            />
+            <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+              昵称用于在书籍详情中显示，留空则显示用户名
+            </p>
           </div>
           
           <button

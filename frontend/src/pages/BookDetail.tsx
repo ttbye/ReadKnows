@@ -26,16 +26,28 @@ interface BookDetail {
   file_path: string;
   file_name: string;
   file_type: string;
+  file_size?: number;
   rating?: number;
   tags?: string;
   category?: string;
   language?: string;
   uploader_id?: string;
   uploader_username?: string;
+  uploader_nickname?: string;
   created_at?: string;
   is_public?: number;
   parent_book_id?: string;
 }
+
+// 去除HTML标签的函数
+const stripHtmlTags = (html: string): string => {
+  if (!html) return '';
+  // 创建一个临时div元素来解析HTML
+  const tmp = document.createElement('div');
+  tmp.innerHTML = html;
+  // 获取纯文本内容
+  return tmp.textContent || tmp.innerText || '';
+};
 
 export default function BookDetail() {
   const { id } = useParams<{ id: string }>();
@@ -1091,10 +1103,14 @@ export default function BookDetail() {
                     )}
                   </div>
                   {/* 上传者和上传日期 */}
-                  {(book.uploader_username || book.created_at) && (
+                  {((book.uploader_nickname || book.uploader_username) || book.created_at || book.file_size) && (
                     <div className="text-xs text-gray-400 dark:text-gray-500 mb-2 md:mb-3">
-                      {book.uploader_username && <span>上传者: {book.uploader_username}</span>}
-                      {book.uploader_username && book.created_at && <span> · </span>}
+                      {(book.uploader_nickname || book.uploader_username) && (
+                        <span className="text-gray-500 dark:text-gray-400">
+                          {book.uploader_nickname || book.uploader_username}
+                        </span>
+                      )}
+                      {(book.uploader_nickname || book.uploader_username) && (book.created_at || book.file_size) && <span> · </span>}
                       {book.created_at && (
                         <span>上传时间: {new Date(book.created_at).toLocaleString('zh-CN', {
                           year: 'numeric',
@@ -1104,12 +1120,22 @@ export default function BookDetail() {
                           minute: '2-digit'
                         })}</span>
                       )}
+                      {book.created_at && book.file_size && <span> · </span>}
+                      {book.file_size && (
+                        <span>文件大小: {(() => {
+                          const size = book.file_size;
+                          if (size < 1024) return `${size} B`;
+                          if (size < 1024 * 1024) return `${(size / 1024).toFixed(2)} KB`;
+                          if (size < 1024 * 1024 * 1024) return `${(size / (1024 * 1024)).toFixed(2)} MB`;
+                          return `${(size / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+                        })()}</span>
+                      )}
                     </div>
                   )}
                   {/* 书籍介绍 */}
                   {book.description && (
                     <p className="text-xs md:text-sm text-gray-600 dark:text-gray-400 leading-relaxed mt-2 md:mt-3 line-clamp-2 md:line-clamp-3">
-                      {book.description}
+                      {stripHtmlTags(book.description)}
                     </p>
                   )}
                 </div>
@@ -1355,6 +1381,25 @@ export default function BookDetail() {
                       </div>
                     </div>
                   </div>
+                  {book.file_size && (
+                    <div className="group flex items-center gap-2 p-2 md:p-3 bg-gradient-to-br from-teal-50 via-white to-teal-50 dark:from-teal-900/20 dark:via-gray-800 dark:to-teal-900/20 rounded-lg border border-teal-100 dark:border-teal-800/50 hover:border-teal-300 dark:hover:border-teal-700 transition-all duration-200">
+                      <div className="flex-shrink-0 w-8 h-8 md:w-9 md:h-9 rounded-lg bg-gradient-to-br from-teal-500 to-teal-600 dark:from-teal-600 dark:to-teal-700 flex items-center justify-center">
+                        <Download className="w-4 h-4 md:w-4.5 md:h-4.5 text-white" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-[10px] md:text-xs font-medium text-gray-500 dark:text-gray-400 mb-0.5 uppercase tracking-wide">文件大小</div>
+                        <div className="text-xs md:text-sm font-semibold text-gray-900 dark:text-gray-100">
+                          {(() => {
+                            const size = book.file_size;
+                            if (size < 1024) return `${size} B`;
+                            if (size < 1024 * 1024) return `${(size / 1024).toFixed(2)} KB`;
+                            if (size < 1024 * 1024 * 1024) return `${(size / (1024 * 1024)).toFixed(2)} MB`;
+                            return `${(size / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+                          })()}
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {/* 标签 */}

@@ -27,10 +27,8 @@ function initTheme() {
     // 用户手动设置的主题
     isDark = savedTheme === 'dark';
   } else {
-    // 使用系统主题
-    if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
-      isDark = true;
-    }
+    // 默认使用深色主题
+    isDark = true;
   }
   
   if (isDark) {

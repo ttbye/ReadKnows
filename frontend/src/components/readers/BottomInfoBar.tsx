@@ -6,12 +6,14 @@
  */
 
 import { useState, useEffect } from 'react';
+import { BookOpen } from 'lucide-react';
 import { BookData, ReadingPosition, ReadingSettings } from '../../types/reader';
 
 interface BottomInfoBarProps {
   book: BookData;
   position: ReadingPosition;
   settings: ReadingSettings;
+  onToggleTOC?: () => void;
 }
 
 // 导出高度计算函数，供其他组件使用
@@ -32,6 +34,7 @@ export default function BottomInfoBar({
   book,
   position,
   settings,
+  onToggleTOC,
 }: BottomInfoBarProps) {
   const [currentTime, setCurrentTime] = useState(new Date());
   const [isMobile, setIsMobile] = useState(false);
@@ -58,19 +61,12 @@ export default function BottomInfoBar({
   }, []);
 
   const themeStyles = {
-    light: { bg: '#ffffff', text: '#000000', border: '#e0e0e0' },
-    dark: { bg: '#1a1a1a', text: '#ffffff', border: '#404040' },
-    sepia: { bg: '#f4e4bc', text: '#5c4b37', border: '#d4c49c' },
-    green: { bg: '#c8e6c9', text: '#2e7d32', border: '#a5d6a7' },
+    light: { bg: '#ffffff', text: '#000000', border: '#e0e0e0', hover: 'rgba(0, 0, 0, 0.05)' },
+    dark: { bg: '#1a1a1a', text: '#ffffff', border: '#404040', hover: 'rgba(255, 255, 255, 0.1)' },
+    sepia: { bg: '#f4e4bc', text: '#5c4b37', border: '#d4c49c', hover: 'rgba(0, 0, 0, 0.05)' },
+    green: { bg: '#c8e6c9', text: '#2e7d32', border: '#a5d6a7', hover: 'rgba(0, 0, 0, 0.05)' },
   }[settings.theme];
 
-  // 截取书籍名称，最多20个中文字
-  const truncateBookName = (name: string, maxLength: number = 20) => {
-    if (name.length <= maxLength) return name;
-    return name.substring(0, maxLength) + '...';
-  };
-
-  const bookName = truncateBookName(book.title || book.file_name, 20);
 
   // 根据设备类型设置样式
   const getResponsiveStyles = () => {
@@ -148,19 +144,29 @@ export default function BottomInfoBar({
           minHeight: styles.contentHeight,
         }}
       >
-        {/* 左侧：书籍名称 */}
-        <div 
-          className="flex-shrink-0 truncate"
-          style={{ 
-            opacity: 0.65,
-            fontWeight: 400,
-            maxWidth: isMobile ? '35%' : isTablet ? '40%' : '45%',
-            letterSpacing: '0.02em',
-          }}
-          title={book.title || book.file_name}
-        >
-          {bookName}
-        </div>
+        {/* 左侧：目录按钮 */}
+        {onToggleTOC ? (
+          <button
+            onClick={onToggleTOC}
+            className="flex-shrink-0 flex items-center justify-center p-1.5 rounded transition-colors"
+            style={{
+              color: themeStyles.text,
+              opacity: 0.75,
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.backgroundColor = themeStyles.hover;
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.backgroundColor = 'transparent';
+            }}
+            aria-label="目录"
+            title="目录"
+          >
+            <BookOpen className="w-4 h-4" style={{ width: isMobile ? '16px' : isTablet ? '18px' : '20px', height: isMobile ? '16px' : isTablet ? '18px' : '20px' }} />
+          </button>
+        ) : (
+          <div className="flex-shrink-0" style={{ width: isMobile ? '16px' : isTablet ? '18px' : '20px' }}></div>
+        )}
 
         {/* 中间：页码信息 */}
         <div 

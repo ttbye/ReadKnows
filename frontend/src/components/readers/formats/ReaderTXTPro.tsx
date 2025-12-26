@@ -118,7 +118,115 @@ export default function ReaderTXTPro({
     };
   }, [pages]);
 
-  // 暴露“跳转到指定进度/位置”给外部（供跨设备进度跳转）
+  // 暴露"获取当前页面信息"给外部（供TTS使用）
+  useEffect(() => {
+    (window as any).__getCurrentPageInfo = () => {
+      const currentPage = pages[currentPageIndex];
+      if (!currentPage) return null;
+      return {
+        pageIndex: currentPageIndex,
+        startLine: currentPage.startLine,
+        endLine: currentPage.endLine,
+        content: currentPage.content,
+        pageNumber: currentPage.pageNumber,
+      };
+    };
+
+    // 暴露"获取当前页面对应的段落索引"给外部（供TTS使用）
+    (window as any).__getCurrentPageParagraphIndex = async () => {
+      try {
+        // 获取段落列表 - 使用正确的token获取方式
+        const getTokenFromStorage = (): string | null => {
+          try {
+            const token = localStorage.getItem('auth-storage');
+            if (token) {
+              const parsed = JSON.parse(token);
+              return parsed.state?.token || null;
+            }
+          } catch (e) {
+            // 忽略解析错误
+          }
+          // 兼容旧版本：尝试从 'token' key 获取
+          return localStorage.getItem('token');
+        };
+        
+        const token = getTokenFromStorage();
+        const headers: HeadersInit = {
+          'Content-Type': 'application/json',
+        };
+        if (token) {
+          headers['Authorization'] = `Bearer ${token}`;
+        }
+        
+        const response = await fetch(`/api/tts/paragraphs?bookId=${encodeURIComponent(book.id)}&chapter=0`, { 
+          headers,
+          credentials: 'include', // 包含cookies
+        });
+        if (!response.ok) {
+          console.warn(`[ReaderTXTPro] 获取段落列表失败: ${response.status} ${response.statusText}`);
+          return null;
+        }
+        
+        const data = await response.json();
+        const paragraphs = data.paragraphs || [];
+        if (paragraphs.length === 0) return null;
+
+        const currentPage = pages[currentPageIndex];
+        if (!currentPage) return null;
+
+        // 根据当前页面第一行内容匹配段落
+        const currentPageFirstLine = currentPage.content.split('\n')[0]?.trim();
+        if (!currentPageFirstLine || currentPageFirstLine.length === 0) return null;
+
+        // 改进匹配逻辑：使用更长的文本片段进行匹配，提高准确性
+        const searchText = currentPageFirstLine.substring(0, Math.min(50, currentPageFirstLine.length));
+        
+        // 查找包含当前页面第一行内容的段落
+        // 优先匹配：段落文本包含页面第一行
+        for (let i = 0; i < paragraphs.length; i++) {
+          const paraText = paragraphs[i].text;
+          if (paraText.includes(searchText)) {
+            console.log(`[ReaderTXTPro] 匹配段落索引 ${i}: 页面第一行="${searchText.substring(0, 20)}...", 段落文本="${paraText.substring(0, 30)}..."`);
+            return i;
+          }
+        }
+        
+        // 次优匹配：页面第一行包含段落开头
+        for (let i = 0; i < paragraphs.length; i++) {
+          const paraText = paragraphs[i].text;
+          const paraStart = paraText.substring(0, Math.min(50, paraText.length));
+          if (currentPageFirstLine.includes(paraStart)) {
+            console.log(`[ReaderTXTPro] 匹配段落索引 ${i}: 页面第一行包含段落开头`);
+            return i;
+          }
+        }
+
+        // 如果没找到，根据进度估算
+        const progress = Math.min(1, Math.max(0, currentPage.pageNumber / totalPages));
+        const estimatedIndex = Math.floor(progress * paragraphs.length);
+        console.log(`[ReaderTXTPro] 未找到匹配段落，使用进度估算: progress=${progress}, 估算索引=${estimatedIndex}`);
+        return estimatedIndex;
+      } catch (e) {
+        console.warn('[ReaderTXTPro] 获取段落索引失败', e);
+        return null;
+      }
+    };
+
+    // 暴露"获取当前页面文本内容"给外部（供TTS直接使用）
+    (window as any).__getCurrentPageText = () => {
+      const currentPage = pages[currentPageIndex];
+      if (!currentPage) return null;
+      return currentPage.content.trim();
+    };
+
+    return () => {
+      delete (window as any).__getCurrentPageInfo;
+      delete (window as any).__getCurrentPageParagraphIndex;
+      delete (window as any).__getCurrentPageText;
+    };
+  }, [pages, currentPageIndex, book.id, totalPages]);
+
+  // 暴露"跳转到指定进度/位置"给外部（供跨设备进度跳转）
   useEffect(() => {
     (window as any).__readerGoToPosition = (pos: any) => {
       try {
@@ -156,6 +264,116 @@ export default function ReaderTXTPro({
       delete (window as any).__readerGoToPosition;
     };
   }, [pages]);
+
+  // 处理当前朗读段落的显示（高亮和自动翻页）
+  useEffect(() => {
+    let currentHighlightElement: HTMLElement | null = null;
+    
+    (window as any).__setCurrentReadingParagraph = (paragraphId: string | null) => {
+      try {
+        // 清除之前的高亮
+        if (currentHighlightElement) {
+          currentHighlightElement.style.textDecoration = '';
+          currentHighlightElement.style.textDecorationColor = '';
+          currentHighlightElement.style.textDecorationThickness = '';
+          currentHighlightElement.style.textUnderlineOffset = '';
+          currentHighlightElement.classList.remove('reading-paragraph-highlight');
+          currentHighlightElement = null;
+        }
+
+        if (!paragraphId) return;
+
+        // 根据段落ID查找对应的元素
+        // 段落ID格式: p0, p1, p2 等，对应段落索引
+        const paraIndex = parseInt(paragraphId.replace(/^p/, ''), 10);
+        if (isNaN(paraIndex) || paraIndex < 0) return;
+
+        // 通过全局函数获取段落文本（从TTSPanel传递）
+        const getParagraphText = (window as any).__getParagraphText;
+        if (!getParagraphText) return;
+        
+        const paraText = getParagraphText(paragraphId);
+        if (!paraText) return;
+
+        // 在当前页面中查找并高亮段落
+        // 通过文本内容匹配来找到对应的DOM元素
+        const readerContent = containerRef.current?.querySelector('.reader-content');
+        if (!readerContent) return;
+
+        // 等待页面渲染完成后再高亮
+        setTimeout(() => {
+          // 查找包含段落文本的元素
+          const allTextElements = readerContent.querySelectorAll('p, div, span, pre');
+          
+          // 改进匹配逻辑：使用更长的文本片段进行匹配，提高准确性
+          const searchText = paraText.substring(0, Math.min(50, paraText.length));
+          
+          for (const elem of allTextElements) {
+            const text = elem.textContent || '';
+            // 优先匹配：元素文本包含段落文本
+            if (text.includes(searchText)) {
+              const htmlElem = elem as HTMLElement;
+              
+              // 高亮显示：只使用下划线，不影响布局
+              const underlineColor = settings.theme === 'dark' ? '#4a9eff' : '#1890ff';
+              htmlElem.style.textDecoration = 'underline';
+              htmlElem.style.textDecorationColor = underlineColor;
+              htmlElem.style.textDecorationThickness = '2px';
+              htmlElem.style.textUnderlineOffset = '2px';
+              htmlElem.classList.add('reading-paragraph-highlight');
+              
+              currentHighlightElement = htmlElem;
+              
+              // 检查段落是否在当前页面，如果不在则自动翻页
+              const rect = htmlElem.getBoundingClientRect();
+              const containerRect = readerContent.getBoundingClientRect();
+              
+              // 如果段落不在当前视图，需要翻页
+              if (rect.bottom < containerRect.top || rect.top > containerRect.bottom) {
+                // 估算段落所在的行号（通过文本内容在全文中的位置）
+                const paraIndex = parseInt(paragraphId.replace(/^p/, ''), 10);
+                // 粗略估算：假设每个段落平均15行
+                const estimatedLine = paraIndex * 15;
+                
+                // 找到包含该行的页面
+                const targetPage = pages.find((pg) => pg.startLine <= estimatedLine && pg.endLine >= estimatedLine);
+                if (targetPage) {
+                  const pageIndex = pages.indexOf(targetPage);
+                  if (pageIndex !== currentPageIndex) {
+                    // 自动翻页
+                    setCurrentPageIndex(pageIndex);
+                    // 等待翻页完成后再高亮
+                    setTimeout(() => {
+                      htmlElem.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    }, 300);
+                  }
+                }
+              } else {
+                // 自动滚动到该段落
+                htmlElem.scrollIntoView({ behavior: 'smooth', block: 'center' });
+              }
+              break;
+            }
+          }
+        }, 100);
+      } catch (e) {
+        console.warn('[ReaderTXTPro] 高亮段落失败', e);
+      }
+    };
+
+    return () => {
+      delete (window as any).__setCurrentReadingParagraph;
+      // 清理高亮
+      if (currentHighlightElement) {
+        currentHighlightElement.style.fontWeight = '';
+        currentHighlightElement.style.backgroundColor = '';
+        currentHighlightElement.style.border = '';
+        currentHighlightElement.style.padding = '';
+        currentHighlightElement.style.borderRadius = '';
+        currentHighlightElement.classList.remove('reading-paragraph-highlight');
+      }
+    };
+  }, [pages, currentPageIndex, settings.theme]);
 
   // 获取文件URL
   const getFileUrl = async (): Promise<string> => {
@@ -532,7 +750,35 @@ export default function ReaderTXTPro({
       clearTimeout(progressSaveTimerRef.current);
     }
 
-    progressSaveTimerRef.current = setTimeout(() => {
+      progressSaveTimerRef.current = setTimeout(async () => {
+        // 计算当前页面对应的段落索引（用于与朗读功能同步）
+        let paragraphIndex: number | undefined = undefined;
+        const getCurrentPageParagraphIndex = (window as any).__getCurrentPageParagraphIndex;
+        if (getCurrentPageParagraphIndex) {
+          try {
+            paragraphIndex = await getCurrentPageParagraphIndex();
+          } catch (e) {
+            console.warn('[ReaderTXTPro] 获取段落索引失败', e);
+          }
+        }
+
+        // 自动缓存当前页文本（供TTS使用）
+        try {
+          const getCurrentPageText = (window as any).__getCurrentPageText;
+          if (getCurrentPageText) {
+            const pageText = getCurrentPageText();
+            if (pageText && pageText.trim().length > 0) {
+              (window as any).__cachedCurrentPageText = pageText.trim();
+              console.log(`[ReaderTXTPro] 自动缓存当前页文本: ${pageText.trim().length} 字符`);
+            } else {
+              (window as any).__cachedCurrentPageText = null;
+            }
+          }
+        } catch (e) {
+          console.warn('[ReaderTXTPro] 自动获取当前页文本失败', e);
+          (window as any).__cachedCurrentPageText = null;
+        }
+
       const position: ReadingPosition = {
         currentPage: currentPage.pageNumber,
         totalPages: totalPages,
@@ -541,15 +787,17 @@ export default function ReaderTXTPro({
         scrollTop: currentPage.startLine,
         // 关键：用 currentLocation 保存稳定位置（跨字号/跨设备不乱）
         currentLocation: `txtline:${currentPage.startLine}`,
+          // 段落索引（用于与朗读功能同步）
+          paragraphIndex: paragraphIndex,
       };
       
       onProgressChange(progress, position);
     }, 500);
   }, [currentPageIndex, pages, totalPages, onProgressChange]);
 
-  // 组件卸载/切后台时：立即 flush 一次进度（避免“重新打开回到上一页”）
+  // 组件卸载/切后台时：立即 flush 一次进度（避免"重新打开回到上一页"）
   useEffect(() => {
-    const flushNow = () => {
+    const flushNow = async () => {
       try {
         if (progressSaveTimerRef.current) {
           clearTimeout(progressSaveTimerRef.current);
@@ -559,12 +807,25 @@ export default function ReaderTXTPro({
         const currentPage = pages[currentPageIndex];
         if (!currentPage) return;
         const progress = Math.min(1, Math.max(0, currentPage.pageNumber / totalPages));
+        
+        // 计算当前页面对应的段落索引
+        let paragraphIndex: number | undefined = undefined;
+        const getCurrentPageParagraphIndex = (window as any).__getCurrentPageParagraphIndex;
+        if (getCurrentPageParagraphIndex) {
+          try {
+            paragraphIndex = await getCurrentPageParagraphIndex();
+          } catch (e) {
+            console.warn('[ReaderTXTPro] 获取段落索引失败', e);
+          }
+        }
+
         onProgressChange(progress, {
           currentPage: currentPage.pageNumber,
           totalPages,
           progress,
           scrollTop: currentPage.startLine,
           currentLocation: `txtline:${currentPage.startLine}`,
+          paragraphIndex: paragraphIndex,
         });
       } catch {
         // ignore
