@@ -3,7 +3,7 @@
 <div align="center">
 
 ![Version](https://img.shields.io/badge/version-1.225.12-blue.svg)
-![License](https://img.shields.io/badge/license-MIT-green.svg)
+![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)
 ![Docker](https://img.shields.io/badge/docker-ready-blue.svg)
 ![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux%20%7C%20NAS-lightgrey.svg)
 
@@ -1266,7 +1266,7 @@ A: 建议：
 
 ## 📄 许可证
 
-本项目采用 [MIT License](LICENSE) 许可证。
+本项目采用 [Apache License 2.0](LICENSE) 许可证。
 
 ---
 
