@@ -65,9 +65,6 @@ services:
     restart: unless-stopped
     ports:
       - "1280:1280"
-    # 注意：Ollama 地址现在只在系统后台管理中配置，不再使用环境变量
-    # 所有用户都使用系统设置中配置的统一 Ollama 地址
-    # 在Linux上支持host.docker.internal（Docker Desktop自动支持，但Linux需要手动配置）
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
@@ -82,18 +79,9 @@ services:
 
 networks:
   readknows-network:
+    name: readknows-network
     driver: bridge
-    # 允许容器访问宿主机局域网
-    # 默认情况下，bridge网络应该可以访问宿主机可以访问的网络
-    # 如果无法访问，可能需要配置iptables或使用host网络模式
-    # 注意：bridge 网络默认允许容器访问宿主机网络，但某些防火墙规则可能阻止
-    # 如果遇到网络问题，可以尝试：
-    # 1. 检查宿主机防火墙设置
-    # 2. 确保 Docker 的 iptables 规则正确
-    # 3. 使用 host.docker.internal 访问宿主机服务
-    # 4. 使用实际局域网 IP 访问其他机器上的服务
-    # 5. 确保前端容器的 OLLAMA_URL 环境变量配置正确
-    #    例如：OLLAMA_URL=http://192.168.1.100:11434（Ollama在局域网其他机器上）
+
     ipam:
       driver: default
       config:

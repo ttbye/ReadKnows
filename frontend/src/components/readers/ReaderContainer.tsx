@@ -679,6 +679,68 @@ export default function ReaderContainer({ config }: { config: ReaderConfig }) {
     }
   }, [isTTSPlaying]);
 
+  // 检查并隐藏所有 UI 元素（功能条、导航栏等）
+  // 返回 true 表示隐藏了 UI，false 表示没有 UI 需要隐藏
+  const checkAndHideUI = useCallback(() => {
+    let hasHiddenUI = false;
+    
+    // 1. 如果文本选择工具栏显示，先隐藏它
+    if (showSelectionToolbar) {
+      setShowSelectionToolbar(false);
+      setSelectionPosition(null);
+      setSelectedCfiRange(null);
+      // 清空选区
+      try {
+        window.getSelection()?.removeAllRanges();
+      } catch (e) {
+        // ignore
+      }
+      hasHiddenUI = true;
+    }
+    
+    // 2. 如果底部导航栏显示，先隐藏它
+    if (showBottomNav && !isTTSPlaying) {
+      hideBottomNavigation();
+      setShowSettings(false);
+      hasHiddenUI = true;
+    }
+    
+    // 3. 如果笔记面板显示，先隐藏它
+    if (showNotes) {
+      setShowNotes(false);
+      setSelectedText('');
+      hasHiddenUI = true;
+    }
+    
+    // 4. 如果书签面板显示，先隐藏它
+    if (showBookmarks) {
+      setShowBookmarks(false);
+      hasHiddenUI = true;
+    }
+    
+    // 5. 如果 TOC 面板显示，先隐藏它
+    if (showTOC) {
+      setShowTOC(false);
+      hasHiddenUI = true;
+    }
+    
+    // 6. 如果侧边 TOC 显示，先隐藏它
+    if (showSideTOC) {
+      setShowSideTOC(false);
+      hasHiddenUI = true;
+    }
+    
+    return hasHiddenUI;
+  }, [showSelectionToolbar, showBottomNav, showNotes, showBookmarks, showTOC, showSideTOC, isTTSPlaying, hideBottomNavigation]);
+
+  // 暴露检查并隐藏 UI 的函数给阅读器组件
+  useEffect(() => {
+    (window as any).__readerCheckAndHideUI = checkAndHideUI;
+    return () => {
+      delete (window as any).__readerCheckAndHideUI;
+    };
+  }, [checkAndHideUI]);
+
   // 切换导航栏显示/隐藏
   const toggleNavigationBar = useCallback(() => {
     if (showBottomNav) {

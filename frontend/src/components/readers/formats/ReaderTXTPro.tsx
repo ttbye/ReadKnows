@@ -1055,6 +1055,28 @@ export default function ReaderTXTPro({
     const target = e.target as HTMLElement;
     if (target.closest('button') || target.closest('a') || target.closest('input')) return;
 
+    // 检查是否点击了功能条、导航栏等 UI 元素
+    if (target && (
+      target.closest('.text-selection-toolbar') ||
+      target.closest('[data-settings-panel]') ||
+      target.closest('[data-toc-panel]') ||
+      target.closest('[data-notes-panel]') ||
+      target.closest('[data-bookmarks-panel]')
+    )) {
+      return;
+    }
+
+    // 优先检查并隐藏 UI 元素（功能条、导航栏等）
+    // 如果隐藏了 UI，则不翻页
+    const checkAndHideUI = (window as any).__readerCheckAndHideUI;
+    if (checkAndHideUI && typeof checkAndHideUI === 'function') {
+      const hasHiddenUI = checkAndHideUI();
+      if (hasHiddenUI) {
+        // 如果隐藏了 UI，不执行翻页
+        return;
+      }
+    }
+
     const rect = e.currentTarget.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const width = rect.width;
