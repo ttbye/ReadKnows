@@ -5,6 +5,7 @@
  */
 
 import { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useAuthStore } from '../store/authStore';
 import api from '../utils/api';
 import toast from 'react-hot-toast';
@@ -15,6 +16,7 @@ interface UserItem {
   username: string;
   email: string;
   role: string;
+  nickname?: string;
   created_at: string;
   updated_at: string;
   bookCount: number;
@@ -30,9 +32,11 @@ interface CreateUserForm {
 
 interface EditUserForm {
   email: string;
+  nickname?: string;
 }
 
 export default function UserManagement() {
+  const { t } = useTranslation();
   const { user } = useAuthStore();
   const [users, setUsers] = useState<UserItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -56,6 +60,7 @@ export default function UserManagement() {
   const [editingUser, setEditingUser] = useState<UserItem | null>(null);
   const [editForm, setEditForm] = useState<EditUserForm>({
     email: '',
+    nickname: '',
   });
   const [editing, setEditing] = useState(false);
   
@@ -80,7 +85,7 @@ export default function UserManagement() {
       setTotal(response.data.pagination?.total || 0);
     } catch (error: any) {
       console.error('获取用户列表失败:', error);
-      toast.error(error.response?.data?.error || '获取用户列表失败');
+      toast.error(error.response?.data?.error || t('userManagement.fetchUsersFailed'));
     } finally {
       setLoading(false);
     }
@@ -88,19 +93,19 @@ export default function UserManagement() {
 
   const handleCreateUser = async () => {
     if (!createForm.username || !createForm.email || !createForm.password) {
-      toast.error('请填写所有必填字段');
+      toast.error(t('userManagement.pleaseFillAllFields'));
       return;
     }
 
     if (createForm.password.length < 6) {
-      toast.error('密码长度至少6位');
+      toast.error(t('userManagement.passwordMinLength'));
       return;
     }
 
     try {
       setCreating(true);
       await api.post('/users', createForm);
-      toast.success('用户创建成功');
+      toast.success(t('userManagement.userCreated'));
       setShowCreateModal(false);
       setCreateForm({
         username: '',
@@ -110,7 +115,7 @@ export default function UserManagement() {
       });
       fetchUsers();
     } catch (error: any) {
-      toast.error(error.response?.data?.error || '创建用户失败');
+      toast.error(error.response?.data?.error || t('userManagement.createUserFailed'));
     } finally {
       setCreating(false);
     }
@@ -118,20 +123,20 @@ export default function UserManagement() {
 
   const handleEditUser = async () => {
     if (!editingUser || !editForm.email) {
-      toast.error('请填写邮箱');
+      toast.error(t('userManagement.pleaseFillEmail'));
       return;
     }
 
     try {
       setEditing(true);
       await api.put(`/users/${editingUser.id}`, editForm);
-      toast.success('用户信息更新成功');
+      toast.success(t('userManagement.userUpdated'));
       setShowEditModal(false);
       setEditingUser(null);
-      setEditForm({ email: '' });
+      setEditForm({ email: '', nickname: '' });
       fetchUsers();
     } catch (error: any) {
-      toast.error(error.response?.data?.error || '更新用户信息失败');
+      toast.error(error.response?.data?.error || t('userManagement.updateUserFailed'));
     } finally {
       setEditing(false);
     }
@@ -139,53 +144,53 @@ export default function UserManagement() {
 
   const openEditModal = (userItem: UserItem) => {
     setEditingUser(userItem);
-    setEditForm({ email: userItem.email });
+    setEditForm({ email: userItem.email, nickname: userItem.nickname || '' });
     setShowEditModal(true);
   };
 
   const handleRoleChange = async (userId: string, newRole: string) => {
     try {
       await api.put(`/users/${userId}/role`, { role: newRole });
-      toast.success('角色更新成功');
+      toast.success(t('userManagement.roleUpdated'));
       fetchUsers();
     } catch (error: any) {
-      toast.error(error.response?.data?.error || '更新角色失败');
+      toast.error(error.response?.data?.error || t('userManagement.updateRoleFailed'));
     }
   };
 
   const handleDelete = async (userId: string, username: string) => {
-    if (!window.confirm(`确定要删除用户 "${username}" 吗？此操作不可恢复！`)) {
+    if (!window.confirm(t('userManagement.confirmDeleteUser', { username }))) {
       return;
     }
 
     try {
       await api.delete(`/users/${userId}`);
-      toast.success('用户删除成功');
+      toast.success(t('userManagement.userDeleted'));
       fetchUsers();
     } catch (error: any) {
-      toast.error(error.response?.data?.error || '删除用户失败');
+      toast.error(error.response?.data?.error || t('userManagement.deleteUserFailed'));
     }
   };
 
   const handleResetPassword = async () => {
     if (!resettingUserId || !newPassword) {
-      toast.error('请输入新密码');
+      toast.error(t('userManagement.pleaseEnterNewPassword'));
       return;
     }
 
     if (newPassword.length < 6) {
-      toast.error('密码长度至少6位');
+      toast.error(t('userManagement.passwordMinLength'));
       return;
     }
 
     try {
       await api.put(`/users/${resettingUserId}/password`, { password: newPassword });
-      toast.success('密码重置成功');
+      toast.success(t('userManagement.passwordResetSuccess'));
       setShowPasswordModal(false);
       setNewPassword('');
       setResettingUserId(null);
     } catch (error: any) {
-      toast.error(error.response?.data?.error || '重置密码失败');
+      toast.error(error.response?.data?.error || t('userManagement.resetPasswordFailed'));
     }
   };
 
@@ -199,7 +204,7 @@ export default function UserManagement() {
     return (
       <div className="text-center py-12">
         <Shield className="w-16 h-16 text-gray-400 mx-auto mb-4" />
-        <p className="text-gray-500 text-lg">您没有权限访问此页面</p>
+        <p className="text-gray-500 text-lg">{t('userManagement.noPermission')}</p>
       </div>
     );
   }
@@ -215,7 +220,7 @@ export default function UserManagement() {
             <input
               type="text"
                 className="w-full pl-10 pr-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
-              placeholder="搜索用户名或邮箱..."
+              placeholder={t('userManagement.searchPlaceholder')}
               value={search}
               onChange={(e) => {
                 setSearch(e.target.value);
@@ -228,7 +233,7 @@ export default function UserManagement() {
               className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors flex items-center gap-2 font-medium"
           >
             <UserPlus className="w-5 h-5" />
-            创建用户
+            {t('userManagement.createUser')}
           </button>
         </div>
       </div>
@@ -237,15 +242,15 @@ export default function UserManagement() {
         {!loading && (
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
             <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-4">
-              <div className="text-sm text-gray-600 dark:text-gray-400">总用户数</div>
+              <div className="text-sm text-gray-600 dark:text-gray-400">{t('userManagement.totalUsers')}</div>
               <div className="text-2xl font-bold text-gray-900 dark:text-white">{total}</div>
             </div>
             <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-4">
-              <div className="text-sm text-gray-600 dark:text-gray-400">管理员</div>
+              <div className="text-sm text-gray-600 dark:text-gray-400">{t('userManagement.admin')}</div>
               <div className="text-2xl font-bold text-purple-600">{users.filter(u => u.role === 'admin').length}</div>
             </div>
             <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-4">
-              <div className="text-sm text-gray-600 dark:text-gray-400">普通用户</div>
+              <div className="text-sm text-gray-600 dark:text-gray-400">{t('userManagement.normalUser')}</div>
               <div className="text-2xl font-bold text-blue-600">{users.filter(u => u.role === 'user').length}</div>
             </div>
           </div>
@@ -255,7 +260,7 @@ export default function UserManagement() {
       {loading ? (
         <div className="text-center py-12">
             <div className="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
-            <p className="mt-4 text-gray-600 dark:text-gray-400">加载中...</p>
+            <p className="mt-4 text-gray-600 dark:text-gray-400">{t('userManagement.loading')}</p>
         </div>
       ) : (
         <>
@@ -264,19 +269,20 @@ export default function UserManagement() {
                 <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
                   <thead className="bg-gray-50 dark:bg-gray-700">
                   <tr>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">用户名</th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">邮箱</th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">角色</th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">统计</th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">注册时间</th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">操作</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">{t('userManagement.username')}</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">{t('userManagement.nickname')}</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">{t('userManagement.email')}</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">{t('userManagement.role')}</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">{t('userManagement.stats')}</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">{t('userManagement.registerTime')}</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">{t('userManagement.actions')}</th>
                   </tr>
                 </thead>
                   <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
                   {users.length === 0 ? (
                     <tr>
-                        <td colSpan={6} className="px-6 py-12 text-center text-gray-500 dark:text-gray-400">
-                        暂无用户
+                        <td colSpan={7} className="px-6 py-12 text-center text-gray-500 dark:text-gray-400">
+                        {t('userManagement.noUsers')}
                       </td>
                     </tr>
                   ) : (
@@ -292,12 +298,17 @@ export default function UserManagement() {
                                   {userItem.username}
                             {userItem.id === user?.id && (
                                     <span className="text-xs px-2 py-0.5 bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300 rounded-full">
-                                当前用户
+                                {t('userManagement.currentUser')}
                               </span>
                             )}
                                 </div>
                               </div>
                           </div>
+                        </td>
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <div className="text-sm text-gray-900 dark:text-white">
+                              {userItem.nickname || <span className="text-gray-400 italic">{t('userManagement.notSet')}</span>}
+                            </div>
                         </td>
                           <td className="px-6 py-4 whitespace-nowrap">
                             <div className="text-sm text-gray-900 dark:text-white flex items-center gap-2">
@@ -313,7 +324,7 @@ export default function UserManagement() {
                                   : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300'
                             }`}>
                               {userItem.role === 'admin' ? <Shield className="w-3 h-3" /> : <User className="w-3 h-3" />}
-                              {userItem.role === 'admin' ? '管理员' : '普通用户'}
+                              {userItem.role === 'admin' ? t('userManagement.adminRole') : t('userManagement.normalUserRole')}
                             </span>
                           ) : (
                             <select
@@ -325,8 +336,8 @@ export default function UserManagement() {
                               value={userItem.role}
                               onChange={(e) => handleRoleChange(userItem.id, e.target.value)}
                             >
-                              <option value="user">普通用户</option>
-                              <option value="admin">管理员</option>
+                              <option value="user">{t('userManagement.normalUserRole')}</option>
+                              <option value="admin">{t('userManagement.adminRole')}</option>
                             </select>
                           )}
                         </td>
@@ -360,14 +371,14 @@ export default function UserManagement() {
                             <button
                               onClick={() => openEditModal(userItem)}
                                 className="p-2 text-gray-600 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-lg transition-colors"
-                              title="编辑用户"
+                              title={t('userManagement.editUser')}
                             >
                               <Edit className="w-4 h-4" />
                             </button>
                             <button
                               onClick={() => openPasswordModal(userItem.id)}
                                 className="p-2 text-gray-600 dark:text-gray-400 hover:text-green-600 dark:hover:text-green-400 hover:bg-green-50 dark:hover:bg-green-900/20 rounded-lg transition-colors"
-                              title="重置密码"
+                              title={t('userManagement.resetPassword')}
                             >
                               <Key className="w-4 h-4" />
                             </button>
@@ -375,7 +386,7 @@ export default function UserManagement() {
                               <button
                                 onClick={() => handleDelete(userItem.id, userItem.username)}
                                   className="p-2 text-gray-600 dark:text-gray-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors"
-                                title="删除用户"
+                                title={t('userManagement.deleteUser')}
                               >
                                 <Trash2 className="w-4 h-4" />
                               </button>
@@ -394,7 +405,7 @@ export default function UserManagement() {
           {total > limit && (
           <div className="flex items-center justify-between mt-6 bg-white dark:bg-gray-800 rounded-lg shadow p-4">
               <div className="text-sm text-gray-600 dark:text-gray-400">
-              共 <span className="font-semibold text-gray-900 dark:text-white">{total}</span> 个用户，第 <span className="font-semibold text-gray-900 dark:text-white">{page}</span> / <span className="font-semibold text-gray-900 dark:text-white">{Math.ceil(total / limit)}</span> 页
+                {t('userManagement.pageInfo', { total, page, totalPages: Math.ceil(total / limit) })}
               </div>
               <div className="flex gap-2">
                 <button
@@ -403,14 +414,14 @@ export default function UserManagement() {
                 className="px-4 py-2 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
                 >
                   <ChevronLeft className="w-4 h-4" />
-                  上一页
+                  {t('userManagement.previousPage')}
                 </button>
                 <button
                   onClick={() => setPage(Math.min(Math.ceil(total / limit), page + 1))}
                   disabled={page >= Math.ceil(total / limit)}
                 className="px-4 py-2 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
                 >
-                  下一页
+                  {t('userManagement.nextPage')}
                   <ChevronRight className="w-4 h-4" />
                 </button>
               </div>
@@ -426,7 +437,7 @@ export default function UserManagement() {
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-xl font-bold text-gray-900 dark:text-gray-100 flex items-center gap-2">
                 <UserPlus className="w-6 h-6" />
-                创建新用户
+                {t('userManagement.createNewUser')}
               </h2>
               <button
                 onClick={() => {
@@ -447,12 +458,12 @@ export default function UserManagement() {
               <div>
                 <label className="block text-sm font-medium mb-2 flex items-center gap-2">
                   <User className="w-4 h-4" />
-                  用户名
+                  {t('userManagement.username')}
                 </label>
                 <input
                   type="text"
                   className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
-                  placeholder="请输入用户名"
+                  placeholder={t('userManagement.usernamePlaceholder')}
                   value={createForm.username}
                   onChange={(e) => setCreateForm({ ...createForm, username: e.target.value })}
                 />
@@ -460,12 +471,12 @@ export default function UserManagement() {
               <div>
                 <label className="block text-sm font-medium mb-2 flex items-center gap-2">
                   <Mail className="w-4 h-4" />
-                  邮箱
+                  {t('userManagement.email') || '邮箱'}
                 </label>
                 <input
                   type="email"
                   className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
-                  placeholder="请输入邮箱"
+                  placeholder={t('userManagement.emailPlaceholder')}
                   value={createForm.email}
                   onChange={(e) => setCreateForm({ ...createForm, email: e.target.value })}
                 />
@@ -473,29 +484,29 @@ export default function UserManagement() {
               <div>
                 <label className="block text-sm font-medium mb-2 flex items-center gap-2">
                   <Lock className="w-4 h-4" />
-                  密码
+                  {t('userManagement.password') || '密码'}
                 </label>
                 <input
                   type="password"
                   className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
-                  placeholder="请输入密码（至少6位）"
+                  placeholder={t('userManagement.passwordPlaceholder')}
                   value={createForm.password}
                   onChange={(e) => setCreateForm({ ...createForm, password: e.target.value })}
                 />
-                <p className="text-xs text-gray-500 mt-1">密码长度至少6位</p>
+                <p className="text-xs text-gray-500 mt-1">{t('userManagement.passwordHint')}</p>
               </div>
               <div>
                 <label className="block text-sm font-medium mb-2 flex items-center gap-2">
                   <Shield className="w-4 h-4" />
-                  角色
+                  {t('userManagement.roleLabel')}
                 </label>
                 <select
                   className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
                   value={createForm.role}
                   onChange={(e) => setCreateForm({ ...createForm, role: e.target.value })}
                 >
-                  <option value="user">普通用户</option>
-                  <option value="admin">管理员</option>
+                  <option value="user">{t('userManagement.normalUserRole')}</option>
+                  <option value="admin">{t('userManagement.adminRole')}</option>
                 </select>
               </div>
               <div className="flex gap-3 pt-4">
@@ -512,7 +523,7 @@ export default function UserManagement() {
                   disabled={creating}
                   className="flex-1 px-4 py-2 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50 transition-colors"
                 >
-                  取消
+                  {t('common.cancel')}
                 </button>
                 <button
                   onClick={handleCreateUser}
@@ -522,12 +533,12 @@ export default function UserManagement() {
                   {creating ? (
                     <>
                       <div className="inline-block animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
-                      创建中...
+                      {t('common.loading')}
                     </>
                   ) : (
                     <>
                       <Check className="w-4 h-4" />
-                      确认创建
+                      {t('common.confirm')}
                     </>
                   )}
                 </button>
@@ -544,13 +555,13 @@ export default function UserManagement() {
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-xl font-bold text-gray-900 dark:text-gray-100 flex items-center gap-2">
                 <Edit className="w-6 h-6" />
-                编辑用户信息
+                {t('userManagement.editUser')}
               </h2>
               <button
                 onClick={() => {
                   setShowEditModal(false);
                   setEditingUser(null);
-                  setEditForm({ email: '' });
+                  setEditForm({ email: '', nickname: '' });
                 }}
                 className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
               >
@@ -561,7 +572,7 @@ export default function UserManagement() {
               <div>
                 <label className="block text-sm font-medium mb-2 flex items-center gap-2">
                   <User className="w-4 h-4" />
-                  用户名
+                  {t('userManagement.username')}
                 </label>
                 <input
                   type="text"
@@ -569,32 +580,46 @@ export default function UserManagement() {
                   value={editingUser.username}
                   disabled
                 />
-                <p className="text-xs text-gray-500 mt-1">用户名注册后无法修改</p>
+                <p className="text-xs text-gray-500 mt-1">{t('userManagement.usernameCannotChange') || '用户名注册后无法修改'}</p>
               </div>
               <div>
                 <label className="block text-sm font-medium mb-2 flex items-center gap-2">
                   <Mail className="w-4 h-4" />
-                  邮箱
+                  {t('userManagement.email')}
                 </label>
                 <input
                   type="email"
                   className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
-                  placeholder="请输入邮箱"
+                  placeholder={t('userManagement.emailPlaceholder')}
                   value={editForm.email}
                   onChange={(e) => setEditForm({ ...editForm, email: e.target.value })}
                 />
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-2 flex items-center gap-2">
+                  <User className="w-4 h-4" />
+                  {t('userManagement.nickname')}
+                </label>
+                <input
+                  type="text"
+                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
+                  placeholder={t('userManagement.nicknamePlaceholder') || '请输入昵称（可选）'}
+                  value={editForm.nickname || ''}
+                  onChange={(e) => setEditForm({ ...editForm, nickname: e.target.value })}
+                />
+                <p className="text-xs text-gray-500 mt-1">{t('userManagement.nicknameHint') || '昵称用于在书籍详情中显示，留空则显示用户名'}</p>
               </div>
               <div className="flex gap-3 pt-4">
                 <button
                   onClick={() => {
                     setShowEditModal(false);
                     setEditingUser(null);
-                    setEditForm({ email: '' });
+                    setEditForm({ email: '', nickname: '' });
                   }}
                   disabled={editing}
                   className="flex-1 px-4 py-2 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50 transition-colors"
                 >
-                  取消
+                  {t('common.cancel')}
                 </button>
                 <button
                   onClick={handleEditUser}
@@ -604,12 +629,12 @@ export default function UserManagement() {
                   {editing ? (
                     <>
                       <div className="inline-block animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
-                      保存中...
+                      {t('common.loading')}
                     </>
                   ) : (
                     <>
                       <Check className="w-4 h-4" />
-                      保存修改
+                      {t('common.save')}
                     </>
                   )}
                 </button>
@@ -626,7 +651,7 @@ export default function UserManagement() {
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-xl font-bold text-gray-900 dark:text-gray-100 flex items-center gap-2">
                 <Key className="w-6 h-6" />
-                重置密码
+                {t('userManagement.resetPassword')}
               </h2>
               <button
                 onClick={() => {
@@ -643,17 +668,17 @@ export default function UserManagement() {
               <div>
                 <label className="block text-sm font-medium mb-2 flex items-center gap-2">
                   <Lock className="w-4 h-4" />
-                  新密码
+                  {t('userManagement.newPassword')}
                 </label>
                 <input
                   type="password"
                   className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-green-500 dark:bg-gray-700 dark:text-white"
-                  placeholder="请输入新密码（至少6位）"
+                  placeholder={t('userManagement.passwordPlaceholder')}
                   value={newPassword}
                   onChange={(e) => setNewPassword(e.target.value)}
                   autoFocus
                 />
-                <p className="text-xs text-gray-500 mt-1">密码长度至少6位</p>
+                <p className="text-xs text-gray-500 mt-1">{t('userManagement.passwordHint')}</p>
               </div>
               <div className="flex gap-3">
                 <button
@@ -664,14 +689,14 @@ export default function UserManagement() {
                   }}
                   className="flex-1 px-4 py-2 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
                 >
-                  取消
+                  {t('common.cancel')}
                 </button>
                 <button
                   onClick={handleResetPassword}
                   className="flex-1 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 flex items-center justify-center gap-2 transition-colors"
                 >
                   <Check className="w-4 h-4" />
-                  确认重置
+                  {t('common.confirm')}
                 </button>
               </div>
             </div>

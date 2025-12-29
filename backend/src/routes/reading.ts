@@ -36,7 +36,9 @@ router.post('/progress', authenticateToken, async (req: AuthRequest, res) => {
       totalPages, 
       chapterIndex, 
       scrollTop,
+      paragraphIndex,
       clientTimestamp,
+      sessionId,
       force 
     } = req.body;
     const userId = req.userId!;
@@ -57,6 +59,7 @@ router.post('/progress', authenticateToken, async (req: AuthRequest, res) => {
     const safeTotalPages = totalPages ? parseInt(String(totalPages), 10) : 1;
     const safeChapterIndex = chapterIndex !== undefined ? parseInt(String(chapterIndex), 10) : 0;
     const safeScrollTop = scrollTop ? parseFloat(String(scrollTop)) : 0;
+    const safeParagraphIndex = paragraphIndex !== undefined ? parseInt(String(paragraphIndex), 10) : null;
 
     // 验证 user_id 和 book_id 是否存在（避免外键约束错误）
     // 注意：用户验证应该在认证中间件中完成，这里只是双重检查
@@ -82,11 +85,15 @@ router.post('/progress', authenticateToken, async (req: AuthRequest, res) => {
       const serverUpdatedAt = new Date(existing.updated_at).getTime();
       const clientTime = clientTimestamp ? new Date(clientTimestamp).getTime() : Date.now();
       
+      // 如果是同一个会话（同一设备），不判定为冲突
+      const isSameSession = sessionId && existing.last_session_id === sessionId;
+      
       // 冲突判断：
       // 1) 如果服务器进度明显更大（跨设备更新），就提示客户端是否要跳转
       // 2) 时间戳仅用于减少误判（允许网络延迟），但不再作为必须条件
+      // 3) 同一会话（同一设备）的请求不判定为冲突
       const timeDiff = serverUpdatedAt - clientTime;
-      const hasConflict = existing.progress > progressValue + 0.01 && (timeDiff > -30000); // 允许客户端时间稍新（最多30s）
+      const hasConflict = !isSameSession && existing.progress > progressValue + 0.01 && (timeDiff > -30000); // 允许客户端时间稍新（最多30s）
       
       if (hasConflict) {
         // 返回冲突信息，让客户端决定
@@ -135,6 +142,8 @@ router.post('/progress', authenticateToken, async (req: AuthRequest, res) => {
             total_pages = ?,
             chapter_index = ?,
             scroll_top = ?,
+            paragraph_index = ?,
+            last_session_id = ?,
             last_read_at = ?, 
             updated_at = ?
         WHERE user_id = ? AND book_id = ?
@@ -147,6 +156,8 @@ router.post('/progress', authenticateToken, async (req: AuthRequest, res) => {
           safeTotalPages,
           safeChapterIndex,
           safeScrollTop,
+          safeParagraphIndex,
+          sessionId || null,
           now,
           now,
           userId, 
@@ -182,9 +193,9 @@ router.post('/progress', authenticateToken, async (req: AuthRequest, res) => {
         const insertStmt = db.prepare(`
         INSERT INTO reading_progress (
           id, user_id, book_id, progress, current_position, 
-          current_page, total_pages, chapter_index, scroll_top
+          current_page, total_pages, chapter_index, scroll_top, paragraph_index, last_session_id
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `);
         insertStmt.run(
         progressId, 
@@ -195,7 +206,9 @@ router.post('/progress', authenticateToken, async (req: AuthRequest, res) => {
           safeCurrentPage,
           safeTotalPages,
           safeChapterIndex,
-          safeScrollTop
+          safeScrollTop,
+          safeParagraphIndex,
+          sessionId || null
         );
       } catch (insertError: any) {
         console.error('创建阅读进度失败:', insertError);
@@ -655,6 +668,7 @@ router.get('/progress/:bookId', authenticateToken, async (req: AuthRequest, res)
         current_page: progress.current_page || 1,
         total_pages: progress.total_pages || 1,
         scroll_top: progress.scroll_top || 0,
+        paragraph_index: progress.paragraph_index !== null && progress.paragraph_index !== undefined ? progress.paragraph_index : undefined,
         current_position: progress.current_position,
         last_read_at: progress.last_read_at,
         updated_at: progress.updated_at,

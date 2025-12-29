@@ -15,8 +15,11 @@ import api from '../utils/api';
 import toast from 'react-hot-toast';
 import { usePullToRefresh } from '../hooks/usePullToRefresh';
 import PullToRefreshIndicator from '../components/PullToRefresh';
+import { useTranslation } from 'react-i18next';
+import i18n from '../i18n/config';
 
 export default function Profile() {
+  const { t } = useTranslation();
   const { user, logout } = useAuthStore();
   const navigate = useNavigate();
   const [bookStats, setBookStats] = useState({ total: 0, reading: 0, finished: 0 });
@@ -34,11 +37,11 @@ export default function Profile() {
   const fetchBackendVersion = async () => {
     try {
       const response = await api.get('/settings/version');
-      setBackendVersion(response.data.version || '未知版本');
+      setBackendVersion(response.data.version || t('reader.unknownVersion'));
       setBackendBuildTime(response.data.buildTime || '');
     } catch (error) {
       console.error('获取后端版本号失败:', error);
-      setBackendVersion('未知版本');
+      setBackendVersion(t('reader.unknownVersion'));
       setBackendBuildTime('');
     }
   };
@@ -73,7 +76,7 @@ export default function Profile() {
   };
 
   const handleLogout = () => {
-    if (confirm('确定要退出登录吗？')) {
+    if (confirm(t('auth.confirmLogout'))) {
       logout();
       navigate('/login');
     }
@@ -83,14 +86,14 @@ export default function Profile() {
   const handleRefresh = async () => {
     await fetchUserStats();
     toast.success(
-      (t) => (
+      (_toast) => (
         <div className="flex items-center gap-3">
           <div className="flex-shrink-0 w-8 h-8 rounded-full bg-white/20 flex items-center justify-center">
             <RefreshCw className="w-5 h-5 text-white animate-spin" style={{ animationDuration: '0.5s' }} />
           </div>
           <div>
-            <div className="font-semibold text-white">刷新成功</div>
-            <div className="text-xs text-white/80 mt-0.5">数据已更新</div>
+            <div className="font-semibold text-white">{t('common.refreshSuccess')}</div>
+            <div className="text-xs text-white/80 mt-0.5">{t('common.dataUpdated')}</div>
           </div>
         </div>
       ),
@@ -118,14 +121,14 @@ export default function Profile() {
 
   // 功能菜单项
   const menuItems = [
-    { path: '/upload', label: '上传书籍', icon: Upload, color: 'bg-blue-500', adminOnly: false },
-    { path: '/history', label: '阅读历史', icon: Clock, color: 'bg-orange-500', adminOnly: false },
-    { path: '/ai-reading', label: 'AI阅读', icon: Sparkles, color: 'bg-teal-500', adminOnly: false },
-    { path: '/settings', label: '系统设置', icon: Settings, color: 'bg-green-500', adminOnly: false },
+    { path: '/upload', label: t('profile.uploadBooks'), icon: Upload, color: 'bg-blue-500', adminOnly: false },
+    { path: '/history', label: t('profile.readingHistory'), icon: Clock, color: 'bg-orange-500', adminOnly: false },
+    { path: '/ai-reading', label: t('profile.aiReading'), icon: Sparkles, color: 'bg-teal-500', adminOnly: false },
+    { path: '/settings', label: t('profile.systemSettings'), icon: Settings, color: 'bg-green-500', adminOnly: false },
     ...(user?.role === 'admin'
       ? [
-          { path: '/users', label: '用户管理', icon: Users, color: 'bg-purple-500', adminOnly: true },
-          { path: '/ip-management', label: '安全管理', icon: Shield, color: 'bg-red-500', adminOnly: true },
+          { path: '/users', label: t('profile.userManagement'), icon: Users, color: 'bg-purple-500', adminOnly: true },
+          { path: '/ip-management', label: t('profile.securityManagement'), icon: Shield, color: 'bg-red-500', adminOnly: true },
         ]
       : []),
   ];
@@ -148,7 +151,7 @@ export default function Profile() {
             <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">{user?.email}</p>
             {user?.role === 'admin' && (
               <span className="inline-block mt-2 px-2 py-1 text-xs bg-purple-100 dark:bg-purple-900/30 text-purple-600 dark:text-purple-400 rounded">
-                管理员
+                {t('profile.admin')}
               </span>
             )}
           </div>
@@ -163,15 +166,15 @@ export default function Profile() {
           <div className="grid grid-cols-3 gap-4 pt-4 border-t border-gray-200 dark:border-gray-700">
             <div className="text-center">
               <div className="text-2xl font-bold text-gray-900 dark:text-gray-100">{bookStats.total}</div>
-              <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">我的书籍</div>
+              <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">{t('profile.myBooks')}</div>
             </div>
             <div className="text-center">
               <div className="text-2xl font-bold text-blue-600 dark:text-blue-400">{bookStats.reading}</div>
-              <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">阅读中</div>
+              <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">{t('profile.reading')}</div>
             </div>
             <div className="text-center">
               <div className="text-2xl font-bold text-green-600 dark:text-green-400">{bookStats.finished}</div>
-              <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">已完成</div>
+              <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">{t('profile.finished')}</div>
             </div>
           </div>
         )}
@@ -181,7 +184,7 @@ export default function Profile() {
       <div className="card mb-6">
         <div className="flex items-center gap-2 mb-4">
           <Grid3x3 className="w-5 h-5 text-blue-600" />
-          <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">功能菜单</h2>
+          <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">{t('profile.functionMenu')}</h2>
         </div>
         <div className="grid grid-cols-3 gap-3">
           {menuItems.map((item) => {
@@ -206,7 +209,7 @@ export default function Profile() {
       <div className="card mb-6">
         <div className="flex items-center gap-2 mb-4">
           <User className="w-5 h-5 text-blue-600" />
-          <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">账号管理</h2>
+          <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">{t('profile.accountManagement')}</h2>
         </div>
         <div className="space-y-3">
           <button
@@ -215,9 +218,9 @@ export default function Profile() {
           >
             <div className="flex items-center gap-3">
               <User className="w-5 h-5 text-gray-600 dark:text-gray-400" />
-              <span className="text-gray-900 dark:text-gray-100">个人信息</span>
+              <span className="text-gray-900 dark:text-gray-100">{t('profile.personalInfo')}</span>
             </div>
-            <span className="text-gray-400">修改用户名、邮箱、密码</span>
+            <span className="text-gray-400">{t('profile.editPersonalInfoDesc')}</span>
           </button>
         </div>
       </div>
@@ -226,20 +229,20 @@ export default function Profile() {
       <div className="card mb-6">
         <div className="flex items-center gap-2 mb-4">
           <Info className="w-5 h-5 text-blue-600" />
-          <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">关于系统</h2>
+          <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">{t('profile.aboutSystem')}</h2>
         </div>
         <div className="space-y-4">
           <div>
-            <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-2">读士私人书库</h3>
+            <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-2">{t('profile.appName')}</h3>
             <p className="text-sm text-gray-600 dark:text-gray-400 mb-1">The Books Path</p>
             <p className="text-xs text-gray-500 dark:text-gray-500">
-              一个现代化的电子书管理系统，支持EPUB、PDF、TXT等多种格式，提供流畅的阅读体验和强大的管理功能。
+              {t('profile.appDescription')}
             </p>
           </div>
           <div className="pt-4 border-t border-gray-200 dark:border-gray-700">
             <div className="space-y-2 text-sm">
               <div className="flex justify-between">
-                <span className="text-gray-600 dark:text-gray-400">开发人员</span>
+                <span className="text-gray-600 dark:text-gray-400">{t('profile.developer')}</span>
                 <span className="text-gray-900 dark:text-gray-100 font-medium">ttbye</span>
               </div>
               <div className="flex justify-between">
@@ -254,16 +257,16 @@ export default function Profile() {
                 </a>
               </div>
               <div className="flex justify-between items-center">
-                <span className="text-gray-600 dark:text-gray-400">前端版本</span>
+                <span className="text-gray-600 dark:text-gray-400">{t('profile.frontendVersion')}</span>
                 <code className="text-xs font-mono bg-gray-100 dark:bg-gray-800 px-2 py-1 rounded text-blue-600 dark:text-blue-400">
-                  {import.meta.env.VITE_BUILD_VERSION || '未知版本'}
+                  {import.meta.env.VITE_BUILD_VERSION || t('reader.unknownVersion')}
                 </code>
               </div>
               {import.meta.env.VITE_BUILD_TIME && (
                 <div className="flex justify-between items-center">
-                  <span className="text-gray-600 dark:text-gray-400">前端编译时间</span>
+                  <span className="text-gray-600 dark:text-gray-400">{t('profile.frontendBuildTime')}</span>
                   <code className="text-xs font-mono bg-gray-100 dark:bg-gray-800 px-2 py-1 rounded text-gray-600 dark:text-gray-400">
-                    {new Date(import.meta.env.VITE_BUILD_TIME).toLocaleString('zh-CN', { 
+                    {new Date(import.meta.env.VITE_BUILD_TIME).toLocaleString(i18n.language === 'zh' ? 'zh-CN' : 'en-US', { 
                       year: 'numeric', 
                       month: '2-digit', 
                       day: '2-digit', 
@@ -275,16 +278,16 @@ export default function Profile() {
                 </div>
               )}
               <div className="flex justify-between items-center">
-                <span className="text-gray-600 dark:text-gray-400">后端版本</span>
+                <span className="text-gray-600 dark:text-gray-400">{t('profile.backendVersion')}</span>
                 <code className="text-xs font-mono bg-gray-100 dark:bg-gray-800 px-2 py-1 rounded text-green-600 dark:text-green-400">
-                  {backendVersion || '加载中...'}
+                  {backendVersion || t('common.loading')}
                 </code>
               </div>
               {backendBuildTime && (
                 <div className="flex justify-between items-center">
-                  <span className="text-gray-600 dark:text-gray-400">后端编译时间</span>
+                  <span className="text-gray-600 dark:text-gray-400">{t('profile.backendBuildTime')}</span>
                   <code className="text-xs font-mono bg-gray-100 dark:bg-gray-800 px-2 py-1 rounded text-gray-600 dark:text-gray-400">
-                    {new Date(backendBuildTime).toLocaleString('zh-CN', { 
+                    {new Date(backendBuildTime).toLocaleString(i18n.language === 'zh' ? 'zh-CN' : 'en-US', { 
                       year: 'numeric', 
                       month: '2-digit', 
                       day: '2-digit', 
@@ -304,24 +307,24 @@ export default function Profile() {
       <div className="card mb-6">
         <div className="flex items-center gap-2 mb-4">
           <HelpCircle className="w-5 h-5 text-blue-600" />
-          <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">使用说明</h2>
+          <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">{t('profile.usageInstructions')}</h2>
         </div>
         <div className="space-y-3 text-sm text-gray-600 dark:text-gray-400">
           <div>
-            <h4 className="font-semibold text-gray-900 dark:text-gray-100 mb-1">📚 上传书籍</h4>
-            <p>支持EPUB、PDF、TXT格式，上传后系统会自动解析书籍信息。</p>
+            <h4 className="font-semibold text-gray-900 dark:text-gray-100 mb-1">📚 {t('profile.uploadBooksTitle')}</h4>
+            <p>{t('profile.uploadBooksDesc')}</p>
           </div>
           <div>
-            <h4 className="font-semibold text-gray-900 dark:text-gray-100 mb-1">📖 阅读功能</h4>
-            <p>支持多种阅读器，可自定义字体、主题、行距等阅读设置。</p>
+            <h4 className="font-semibold text-gray-900 dark:text-gray-100 mb-1">📖 {t('profile.readingFeaturesTitle')}</h4>
+            <p>{t('profile.readingFeaturesDesc')}</p>
           </div>
           <div>
-            <h4 className="font-semibold text-gray-900 dark:text-gray-100 mb-1">📝 笔记功能</h4>
-            <p>阅读时可以添加笔记和标注，方便记录阅读心得。</p>
+            <h4 className="font-semibold text-gray-900 dark:text-gray-100 mb-1">📝 {t('profile.notesFeaturesTitle')}</h4>
+            <p>{t('profile.notesFeaturesDesc')}</p>
           </div>
           <div>
-            <h4 className="font-semibold text-gray-900 dark:text-gray-100 mb-1">🤖 AI阅读</h4>
-            <p>使用AI助手进行智能阅读，支持摘要、问答等功能。</p>
+            <h4 className="font-semibold text-gray-900 dark:text-gray-100 mb-1">🤖 {t('profile.aiReadingTitle')}</h4>
+            <p>{t('profile.aiReadingDesc')}</p>
           </div>
         </div>
       </div>
@@ -333,7 +336,7 @@ export default function Profile() {
           className="w-full flex items-center justify-center gap-2 p-4 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors"
         >
           <LogOut className="w-5 h-5" />
-          <span className="font-medium">退出登录</span>
+          <span className="font-medium">{t('auth.logout')}</span>
         </button>
       </div>
       </div>

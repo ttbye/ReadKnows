@@ -1,0 +1,51 @@
+version: '3.8'
+
+services:
+  tts-api:
+    image: ttbye/tts-api:latest
+    platform: linux/amd64  
+    build:
+      context: ../tts-api
+      dockerfile: Dockerfile
+    container_name: readknow-tts-api
+    ports:
+      - "5050:5050"
+    environment:
+      - PORT=5050
+      - NODE_ENV=production
+      - API_KEY=${API_KEY:-}
+      - IS_DOCKER=true
+      - TEMP_DIR=/app/temp
+      - MODELS_DIR=/app/models
+      - PYTHON_CMD=python3
+      - FFMPEG_BIN=ffmpeg
+      - QWEN_API_KEY=${QWEN_API_KEY:-}
+      - INDEXTTS2_PATH=${INDEXTTS2_PATH:-/app/models/indextts2/index-tts}
+      # 自动安装模型（设置为 false 可禁用）
+      - AUTO_INSTALL_INDEXTTS2=${AUTO_INSTALL_INDEXTTS2:-true}
+      - AUTO_INSTALL_COSYVOICE=${AUTO_INSTALL_COSYVOICE:-true}
+      # HuggingFace 缓存目录（用于预下载模型）
+      - HF_HOME=/app/models/.cache/huggingface
+      - TRANSFORMERS_CACHE=/app/models/.cache/huggingface
+      - HF_DATASETS_CACHE=/app/models/.cache/huggingface
+    volumes:
+      - D:\Docker\ReadKnows\tts-models:/app/models
+      - D:\Docker\ReadKnows\tts-temp:/app/temp
+      # 如果 other_models 在独立目录，取消下面的注释
+      # - D:\Docker\ReadKnows\tts-other-models:/app/models/../other_models
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5050/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - tts-network
+      - readknows-network
+
+networks:
+  tts-network:
+    driver: bridge
+  readknows-network:
+    driver: bridge
+

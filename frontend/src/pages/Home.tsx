@@ -9,6 +9,7 @@ import { Link } from 'react-router-dom';
 import { useAuthStore } from '../store/authStore';
 import api from '../utils/api';
 import { Book, TrendingUp, Clock } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 
 interface Book {
   id: string;
@@ -19,6 +20,7 @@ interface Book {
 }
 
 export default function Home() {
+  const { t } = useTranslation();
   const { isAuthenticated } = useAuthStore();
   const [recentBooks, setRecentBooks] = useState<Book[]>([]);
   const [popularBooks, setPopularBooks] = useState<Book[]>([]);
@@ -62,9 +64,9 @@ export default function Home() {
   return (
     <div>
       <div className="text-center mb-12">
-        <h1 className="text-4xl font-bold mb-4 text-gray-900 dark:text-gray-100">欢迎来到读士私人书库</h1>
+        <h1 className="text-4xl font-bold mb-4 text-gray-900 dark:text-gray-100">{t('home.welcome')}</h1>
         <p className="text-lg text-gray-600 dark:text-gray-400 mb-8">
-          支持多格式、多平台的电子书管理平台
+          {t('home.subtitle')}
         </p>
         {!isAuthenticated && (
           <div className="flex gap-4 justify-center">
@@ -72,13 +74,13 @@ export default function Home() {
               to="/register"
               className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
             >
-              立即注册
+              {t('home.registerNow')}
             </Link>
             <Link
               to="/login"
               className="px-6 py-3 border border-gray-300 dark:border-gray-700 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
             >
-              登录
+              {t('auth.login')}
             </Link>
           </div>
         )}
@@ -108,20 +110,20 @@ export default function Home() {
         <div className="card">
           <div className="flex items-center gap-3 mb-4">
             <Clock className="w-6 h-6 text-purple-600" />
-            <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">阅读历史</h2>
+            <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">{t('home.readingHistory')}</h2>
           </div>
           <p className="text-gray-600 dark:text-gray-400">
-            自动记录阅读历史和进度，随时继续阅读。
+            {t('home.readingHistoryDesc')}
           </p>
         </div>
 
         <div className="card">
           <div className="flex items-center gap-3 mb-4">
             <Book className="w-6 h-6 text-orange-600" />
-            <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">个人书架</h2>
+            <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">{t('home.personalShelf')}</h2>
           </div>
           <p className="text-gray-600 dark:text-gray-400">
-            创建个人专属书架，收藏您喜爱的书籍。
+            {t('home.personalShelfDesc')}
           </p>
         </div>
       </div>
@@ -133,13 +135,13 @@ export default function Home() {
             <section>
               <div className="flex items-center justify-between mb-4">
                 <h2 className="text-2xl font-bold bg-gradient-to-r from-purple-600 to-pink-600 bg-clip-text text-transparent">
-                  我的书籍
+                  {t('home.myBooks')}
                 </h2>
                 <Link
                   to="/books?scope=private"
                   className="text-sm text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
                 >
-                  查看全部 →
+                  {t('home.viewAll')} →
                 </Link>
               </div>
               <div className="relative">
@@ -182,7 +184,7 @@ export default function Home() {
           {/* 最新书籍 */}
           {recentBooks.length > 0 && (
             <section>
-              <h2 className="text-2xl font-bold mb-4 text-gray-900 dark:text-gray-100">最新书籍</h2>
+              <h2 className="text-2xl font-bold mb-4 text-gray-900 dark:text-gray-100">{t('home.recentBooks')}</h2>
               <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
                 {recentBooks.map((book) => (
                   <Link
@@ -218,7 +220,7 @@ export default function Home() {
           {/* 好书推荐 */}
           {popularBooks.length > 0 && (
             <section>
-              <h2 className="text-2xl font-bold mb-4 text-gray-900 dark:text-gray-100">好书推荐</h2>
+              <h2 className="text-2xl font-bold mb-4 text-gray-900 dark:text-gray-100">{t('home.recommendedBooks')}</h2>
               <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
                 {popularBooks.map((book) => (
                   <Link

@@ -73,6 +73,8 @@ export function initDatabase() {
     const hasIsPublic = booksTableInfo.some((col) => col.name === 'is_public');
     const hasParentBookId = booksTableInfo.some((col) => col.name === 'parent_book_id');
     const hasRole = usersTableInfo.some((col) => col.name === 'role');
+    const hasNickname = usersTableInfo.some((col) => col.name === 'nickname');
+    const hasLanguage = usersTableInfo.some((col) => col.name === 'language');
 
     if (!hasFileHash) {
       db.exec('ALTER TABLE books ADD COLUMN file_hash TEXT');
@@ -102,6 +104,16 @@ export function initDatabase() {
     if (!hasRole) {
       db.exec("ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'user'");
       console.log('已添加 role 字段');
+    }
+
+    if (!hasNickname) {
+      db.exec("ALTER TABLE users ADD COLUMN nickname TEXT");
+      console.log('已添加 nickname 字段');
+    }
+
+    if (!hasLanguage) {
+      db.exec("ALTER TABLE users ADD COLUMN language TEXT DEFAULT 'en'");
+      console.log('已添加 language 字段');
     }
     
     // 注意：系统会在第一个用户注册时自动设置为管理员
@@ -181,8 +193,10 @@ export function initDatabase() {
     const tableInfo = db.prepare("PRAGMA table_info(reading_progress)").all() as any[];
     const hasCurrentPage = tableInfo.some((col) => col.name === 'current_page');
     const hasTotalPages = tableInfo.some((col) => col.name === 'total_pages');
+    const hasParagraphIndex = tableInfo.some((col) => col.name === 'paragraph_index');
     const hasChapterIndex = tableInfo.some((col) => col.name === 'chapter_index');
     const hasScrollTop = tableInfo.some((col) => col.name === 'scroll_top');
+    const hasLastSessionId = tableInfo.some((col) => col.name === 'last_session_id');
 
     if (!hasCurrentPage) {
       db.exec('ALTER TABLE reading_progress ADD COLUMN current_page INTEGER DEFAULT 1');
@@ -199,6 +213,14 @@ export function initDatabase() {
     if (!hasScrollTop) {
       db.exec('ALTER TABLE reading_progress ADD COLUMN scroll_top REAL DEFAULT 0');
       console.log('已添加 scroll_top 字段');
+    }
+    if (!hasLastSessionId) {
+      db.exec('ALTER TABLE reading_progress ADD COLUMN last_session_id TEXT');
+      console.log('已添加 last_session_id 字段');
+    }
+    if (!hasParagraphIndex) {
+      db.exec('ALTER TABLE reading_progress ADD COLUMN paragraph_index INTEGER');
+      console.log('已添加 paragraph_index 字段');
     }
   } catch (e) {
     console.error('数据库迁移错误:', e);
@@ -621,6 +643,14 @@ export function initDatabase() {
     { key: 'ai_api_url', value: 'http://localhost:11434', description: 'AI API地址（Ollama默认）' },
     { key: 'ai_api_key', value: '', description: 'AI API密钥（OpenAI/DeepSeek需要）' },
     { key: 'ai_model', value: 'llama2', description: 'AI模型名称' },
+    { key: 'tts_default_model', value: 'edge', description: '默认TTS引擎（edge/qwen3/indextts2/coqui/piper）' },
+    { key: 'tts_default_voice', value: 'zh-CN-XiaoxiaoNeural', description: '默认TTS语音ID' },
+    { key: 'tts_default_speed', value: '1.0', description: '默认TTS语速（0.5-3.0）' },
+    { key: 'tts_auto_role', value: 'false', description: '是否启用自动角色识别' },
+    { key: 'tts_server_host', value: '127.0.0.1', description: 'TTS服务器地址（IP或域名）' },
+    { key: 'tts_server_port', value: '5050', description: 'TTS服务器端口' },
+    { key: 'tts_test_sample', value: 'Hello, 你好！This is a test. 这是一个测试。', description: 'TTS音频测试内容样本（中英文混读）' },
+    { key: 'system_language', value: 'zh-CN', description: '系统语言（zh-CN: 简体中文, en: English）' },
   ];
 
   const insertSetting = db.prepare('INSERT OR IGNORE INTO system_settings (id, key, value, description) VALUES (?, ?, ?, ?)');

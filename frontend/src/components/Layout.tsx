@@ -10,6 +10,7 @@ import { Book, Upload, History, LogOut, Menu, X, Settings, Library, Users, Shiel
 import { useState, useEffect, useRef } from 'react';
 import api from '../utils/api';
 import { useTheme } from '../hooks/useTheme';
+import { useTranslation } from 'react-i18next';
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -21,6 +22,8 @@ export default function Layout({ children }: LayoutProps) {
   const location = useLocation();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const { effectiveTheme, toggleTheme } = useTheme();
+  const { t } = useTranslation();
+  const [systemTitle, setSystemTitle] = useState<string>('读士私人书库');
 
   const handleLogout = () => {
     logout();
@@ -29,6 +32,35 @@ export default function Layout({ children }: LayoutProps) {
 
   // 最近阅读功能
   const [latestBook, setLatestBook] = useState<any>(null);
+  
+  // 获取系统标题
+  useEffect(() => {
+    const fetchSystemTitle = async () => {
+      try {
+        const response = await api.get('/settings');
+        const settings = response.data.settings || {};
+        const title = settings.system_title?.value || '读士私人书库';
+        setSystemTitle(title);
+        // 更新页面标题
+        document.title = title;
+        // 更新meta标签
+        const metaTitle = document.querySelector('meta[name="application-name"]');
+        if (metaTitle) {
+          metaTitle.setAttribute('content', title);
+        }
+        const appleTitle = document.querySelector('meta[name="apple-mobile-web-app-title"]');
+        if (appleTitle) {
+          appleTitle.setAttribute('content', title);
+        }
+      } catch (error) {
+        console.error('获取系统标题失败:', error);
+      }
+    };
+    
+    if (isAuthenticated) {
+      fetchSystemTitle();
+    }
+  }, [isAuthenticated]);
   
   useEffect(() => {
     if (isAuthenticated) {
@@ -59,29 +91,29 @@ export default function Layout({ children }: LayoutProps) {
   // 移动端底部导航项（5个按钮：图书馆、书架、阅读、笔记、我的）
   const mobileNavItems = isAuthenticated
     ? [
-        { path: '/books', label: '图书馆', icon: Library, onClick: null },
-        { path: '/', label: '书架', icon: Book, onClick: null },
-        { path: '#', label: '阅读', icon: BookOpen, onClick: handleReadingClick, isSpecial: true },
-        { path: '/notes', label: '笔记', icon: StickyNote, onClick: null },
-        { path: '/profile', label: '我的', icon: Settings, onClick: null },
+        { path: '/books', label: t('navigation.library'), icon: Library, onClick: null },
+        { path: '/', label: t('navigation.myShelf'), icon: Book, onClick: null },
+        { path: '#', label: t('navigation.reading'), icon: BookOpen, onClick: handleReadingClick, isSpecial: true },
+        { path: '/notes', label: t('navigation.notes'), icon: StickyNote, onClick: null },
+        { path: '/profile', label: t('navigation.my'), icon: Settings, onClick: null },
       ]
     : [
-        { path: '/books', label: '图书馆', icon: Library, onClick: null },
+        { path: '/books', label: t('navigation.library'), icon: Library, onClick: null },
       ];
 
   // 桌面端导航项（简化版，设置项合并到下拉菜单）
   const desktopNavItems = [
     ...(isAuthenticated
       ? [
-          { path: '/', label: '我的书架', icon: Book },
+          { path: '/', label: t('navigation.myShelf'), icon: Book },
         ]
       : []),
-    { path: '/books', label: '图书馆', icon: Library },
+    { path: '/books', label: t('navigation.library'), icon: Library },
     ...(isAuthenticated
       ? [
-          { path: '/history', label: '阅读历史', icon: History },
-          { path: '/notes', label: '笔记', icon: StickyNote },
-          { path: '/ai-reading', label: 'AI阅读', icon: Sparkles },
+          { path: '/history', label: t('navigation.readingHistory'), icon: History },
+          { path: '/notes', label: t('navigation.notes'), icon: StickyNote },
+          { path: '/ai-reading', label: t('navigation.aiReading'), icon: Sparkles },
         ]
       : []),
   ];
@@ -89,14 +121,14 @@ export default function Layout({ children }: LayoutProps) {
   // 设置菜单项
   const settingsMenuItems = isAuthenticated
     ? [
-        { path: '/settings', label: '系统设置', icon: Settings },
-        { path: '/upload', label: '上传书籍', icon: Upload },
+        { path: '/settings', label: t('navigation.systemSettings'), icon: Settings },
+        { path: '/upload', label: t('navigation.uploadBook'), icon: Upload },
         ...(user?.role === 'admin'
           ? [
-              { path: '/books-management', label: '书籍管理', icon: FolderOpen },
-              { path: '/users', label: '用户管理', icon: Users },
-              { path: '/ip-management', label: '安全管理', icon: Shield },
-              { path: '/category-management', label: '类型管理', icon: Type },
+              { path: '/books-management', label: t('navigation.bookManagement'), icon: FolderOpen },
+              { path: '/users', label: t('navigation.userManagement'), icon: Users },
+              { path: '/ip-management', label: t('navigation.securityManagement'), icon: Shield },
+              { path: '/category-management', label: t('navigation.categoryManagement'), icon: Type },
             ]
           : []),
       ]
@@ -168,22 +200,22 @@ export default function Layout({ children }: LayoutProps) {
 
   // 根据路径获取页面标题
   const getPageTitle = () => {
-    if (location.pathname === '/') return '我的书架';
-    if (location.pathname === '/books' || location.pathname.startsWith('/books/')) return '图书馆';
-    if (location.pathname === '/upload') return '上传书籍';
-    if (location.pathname === '/history') return '阅读历史';
-    if (location.pathname === '/settings' || location.pathname.startsWith('/settings')) return '系统设置';
-    if (location.pathname === '/profile/account') return '账号管理';
-    if (location.pathname === '/profile' || location.pathname.startsWith('/profile')) return '我的';
-    if (location.pathname === '/users') return '用户管理';
-    if (location.pathname === '/ip-management') return '安全管理';
-    if (location.pathname === '/books-management') return '书籍管理';
-    if (location.pathname === '/notes' || location.pathname.startsWith('/notes')) return '笔记';
-    if (location.pathname === '/ai-reading' || location.pathname.startsWith('/ai-reading')) return 'AI阅读';
-    if (location.pathname.startsWith('/reader/')) return '阅读';
-    if (location.pathname === '/login') return '登录';
-    if (location.pathname === '/register') return '注册';
-    return '读士私人书库';
+    if (location.pathname === '/') return t('navigation.myShelf');
+    if (location.pathname === '/books' || location.pathname.startsWith('/books/')) return t('navigation.library');
+    if (location.pathname === '/upload') return t('navigation.uploadBook');
+    if (location.pathname === '/history') return t('navigation.readingHistory');
+    if (location.pathname === '/settings' || location.pathname.startsWith('/settings')) return t('navigation.systemSettings');
+    if (location.pathname === '/profile/account') return t('navigation.accountManagement');
+    if (location.pathname === '/profile' || location.pathname.startsWith('/profile')) return t('navigation.my');
+    if (location.pathname === '/users') return t('navigation.userManagement');
+    if (location.pathname === '/ip-management') return t('navigation.securityManagement');
+    if (location.pathname === '/books-management') return t('navigation.bookManagement');
+    if (location.pathname === '/notes' || location.pathname.startsWith('/notes')) return t('navigation.notes');
+    if (location.pathname === '/ai-reading' || location.pathname.startsWith('/ai-reading')) return t('navigation.aiReading');
+    if (location.pathname.startsWith('/reader/')) return t('navigation.reading');
+    if (location.pathname === '/login') return t('auth.login');
+    if (location.pathname === '/register') return t('auth.register');
+    return 'ReadKnow';
   };
 
   // 设置HTML和body的背景色为系统主题色（非阅读器页面）
@@ -209,10 +241,10 @@ export default function Layout({ children }: LayoutProps) {
                 <button
                   onClick={() => navigate(getBackPath())}
                   className="flex items-center gap-2 px-3 py-2 text-sm text-gray-700 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors"
-                  title="返回"
+                  title={t('common.back')}
                 >
                   <ArrowLeft className="w-4 h-4" />
-                  <span>返回</span>
+                  <span>{t('common.back')}</span>
                 </button>
               )}
               <div className="flex items-center gap-2 text-xl font-bold text-blue-600 dark:text-blue-400">
@@ -302,7 +334,7 @@ export default function Layout({ children }: LayoutProps) {
                             setUserMenuOpen(false);
                           }}
                           className="flex items-center justify-center px-4 py-2 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors w-full"
-                          title={effectiveTheme === 'dark' ? '切换到亮色主题' : '切换到暗色主题'}
+                          title={effectiveTheme === 'dark' ? t('settings.switchToLight') : t('settings.switchToDark')}
                         >
                           {effectiveTheme === 'dark' ? (
                             <Sun className="w-5 h-5" />
@@ -321,7 +353,7 @@ export default function Layout({ children }: LayoutProps) {
                           className="flex items-center gap-2 px-4 py-2 text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors w-full text-left"
                         >
                           <LogOut className="w-4 h-4" />
-                          <span>退出登录</span>
+                          <span>{t('auth.logout')}</span>
                         </button>
                       </div>
                     )}
@@ -333,13 +365,13 @@ export default function Layout({ children }: LayoutProps) {
                     to="/login"
                     className="px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
                   >
-                    登录
+                    {t('auth.login')}
                   </Link>
                   <Link
                     to="/register"
                     className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors shadow-sm"
                   >
-                    注册
+                    {t('auth.register')}
                   </Link>
                 </>
               )}
@@ -388,7 +420,7 @@ export default function Layout({ children }: LayoutProps) {
                 <>
                   <div className="pt-2 border-t border-gray-200 dark:border-gray-800">
                     <div className="px-4 py-2 text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">
-                      设置
+                      {t('navigation.settings')}
                     </div>
                     {settingsMenuItems.map((item) => {
                       const Icon = item.icon;
@@ -441,7 +473,7 @@ export default function Layout({ children }: LayoutProps) {
                       setMobileMenuOpen(false);
                     }}
                     className="flex items-center justify-center px-4 py-3 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors w-full"
-                    title={effectiveTheme === 'dark' ? '切换到亮色主题' : '切换到暗色主题'}
+                    title={effectiveTheme === 'dark' ? t('settings.switchToLight') : t('settings.switchToDark')}
                   >
                     {effectiveTheme === 'dark' ? (
                       <Sun className="w-6 h-6" />
@@ -458,7 +490,7 @@ export default function Layout({ children }: LayoutProps) {
                     className="flex items-center gap-3 px-4 py-3 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors w-full text-left"
                   >
                     <LogOut className="w-5 h-5" />
-                    <span>退出登录</span>
+                    <span>{t('auth.logout')}</span>
                   </button>
                 </>
               ) : (
@@ -468,14 +500,14 @@ export default function Layout({ children }: LayoutProps) {
                     onClick={() => setMobileMenuOpen(false)}
                     className="block px-4 py-3 text-center text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
                   >
-                    登录
+                    {t('auth.login')}
                   </Link>
                   <Link
                     to="/register"
                     onClick={() => setMobileMenuOpen(false)}
                     className="block px-4 py-3 text-center bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
                   >
-                    注册
+                    {t('auth.register')}
                   </Link>
                 </div>
               )}
@@ -507,7 +539,7 @@ export default function Layout({ children }: LayoutProps) {
                 <Link
                   to={getBackPath()}
                   className="p-2 text-gray-600 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors"
-                  title="返回"
+                  title={t('common.back')}
                 >
                   <ArrowLeft className="w-5 h-5" />
                 </Link>
@@ -528,7 +560,7 @@ export default function Layout({ children }: LayoutProps) {
                         ? 'text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20'
                         : 'text-gray-600 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-gray-100 dark:hover:bg-gray-800'
                     }`}
-                    title="AI阅读"
+                    title={t('navigation.aiReading')}
                   >
                     <Sparkles className="w-5 h-5" />
                   </Link>
@@ -642,7 +674,7 @@ export default function Layout({ children }: LayoutProps) {
       {/* 桌面端底部（仅大屏幕显示） */}
       <footer className="hidden lg:block bg-white dark:bg-gray-900 border-t border-gray-200 dark:border-gray-800 py-6">
         <div className="container mx-auto px-4 text-center text-sm text-gray-600 dark:text-gray-400">
-          <p>© 2025 TTB. 保留所有权利.</p>
+          <p>{t('footer.copyright')}</p>
         </div>
       </footer>
     </div>

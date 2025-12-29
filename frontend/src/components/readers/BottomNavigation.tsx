@@ -4,9 +4,12 @@
  * 仿Kindle/微信读书风格，点击阅读内容时显示，包含各种功能按钮
  */
 
-import { BookOpen, Palette, Type, ChevronLeft, ChevronRight, StickyNote } from 'lucide-react';
+import { BookOpen, Type, StickyNote, Volume2, Bookmark, BookmarkCheck, Play, Pause, SkipBack, SkipForward, X } from 'lucide-react';
 import { BookData, ReadingPosition, ReadingSettings } from '../../types/reader';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, forwardRef } from 'react';
+import api from '../../utils/api';
+import { useTranslation } from 'react-i18next';
+import i18n from '../../i18n/config';
 
 interface BottomNavigationProps {
   book: BookData;
@@ -17,12 +20,29 @@ interface BottomNavigationProps {
   onToggleTOC: () => void;
   onToggleSettings: () => void;
   onToggleNotes?: () => void;
-  onPageTurn: (direction: 'prev' | 'next') => void;
+  onToggleTTS?: () => void;
+  onToggleBookmark?: () => void;
+  onToggleBookmarkPanel?: () => void;
+  hasBookmark?: boolean;
   onMouseEnter?: () => void;
   onMouseLeave?: () => void;
+  // TTS播放控制模式
+  isTTSMode?: boolean;
+  isTTSPlaying?: boolean;
+  ttsCurrentIndex?: number;
+  ttsTotalParagraphs?: number;
+  onTTSPlayPause?: () => void;
+  onTTSPrev?: () => void;
+  onTTSNext?: () => void;
+  onTTSClose?: () => void;
+  onTTSModelChange?: (model: string) => void;
+  onTTSVoiceChange?: (voice: string) => void;
+  onTTSSpeedChange?: (speed: number) => void;
+  onClose?: () => void; // 关闭按钮回调
+  isSettingsMode?: boolean; // 是否为设置模式
 }
 
-export default function BottomNavigation({
+const BottomNavigation = forwardRef<HTMLDivElement, BottomNavigationProps>(function BottomNavigation({
   book,
   position,
   settings,
@@ -31,12 +51,50 @@ export default function BottomNavigation({
   onToggleTOC,
   onToggleSettings,
   onToggleNotes,
-  onPageTurn,
+  onToggleTTS,
+  onToggleBookmark,
+  onToggleBookmarkPanel,
+  hasBookmark = false,
   onMouseEnter,
   onMouseLeave,
-}: BottomNavigationProps) {
+  isTTSMode = false,
+  isTTSPlaying = false,
+  ttsCurrentIndex = -1,
+  ttsTotalParagraphs = 0,
+  onTTSPlayPause,
+  onTTSPrev,
+  onTTSNext,
+  onTTSClose,
+  onTTSModelChange,
+  onTTSVoiceChange,
+  onTTSSpeedChange,
+  onClose,
+  isSettingsMode = false,
+}, ref) {
+  const { t } = useTranslation();
   const [currentTime, setCurrentTime] = useState(new Date());
   const [infoBarHeight, setInfoBarHeight] = useState(34); // 默认移动端高度
+  const [models, setModels] = useState<Array<{ id: string; name: string; description: string; type: string; available: boolean }>>([]);
+  const [voices, setVoices] = useState<Array<{ id: string; name: string; lang: string; gender?: string; style?: string }>>([]);
+  const [loadingModels, setLoadingModels] = useState(false);
+  const [loadingVoices, setLoadingVoices] = useState(false);
+  const [showTTSOptions, setShowTTSOptions] = useState(false); // 控制TTS选项的显示/隐藏
+
+  const settingsAny = settings as any;
+  // 优先从本地存储读取，如果没有则使用设置中的值，最后使用默认值（1.0倍速）
+  const getLocalStorageValue = (key: string, defaultValue: string): string => {
+    try {
+      const saved = localStorage.getItem(key);
+      return saved || defaultValue;
+    } catch (e) {
+      return defaultValue;
+    }
+  };
+  
+  const currentModel = getLocalStorageValue('tts_default_model', settingsAny.tts_default_model?.value || 'edge');
+  const currentVoice = getLocalStorageValue('tts_default_voice', settingsAny.tts_default_voice?.value || 'zh-CN-XiaoxiaoNeural');
+  const speedValue = parseFloat(getLocalStorageValue('tts_default_speed', settingsAny.tts_default_speed?.value || '1.0')) || 1.0;
+  const currentSpeed = (speedValue === 0.5 || speedValue <= 0 || isNaN(speedValue)) ? 1.0 : speedValue;
 
   // 监听窗口大小变化和设置变化，动态计算底部信息栏高度
   useEffect(() => {
@@ -64,6 +122,202 @@ export default function BottomNavigation({
     return () => clearInterval(timer);
   }, []);
 
+  // 获取TTS模型列表
+  useEffect(() => {
+    if (isTTSMode) {
+      fetchModels();
+    }
+  }, [isTTSMode]);
+
+  // 获取语音列表
+  useEffect(() => {
+    if (isTTSMode && currentModel) {
+      fetchVoices(currentModel);
+    }
+  }, [isTTSMode, currentModel]);
+
+  const fetchModels = async () => {
+    setLoadingModels(true);
+    try {
+      const resp = await api.get('/tts/models');
+      const modelsList = resp.data.models || [];
+      setModels(modelsList);
+    } catch (e: any) {
+      console.error('[BottomNavigation] 获取 models 失败', e);
+      setModels([
+        { id: 'edge', name: 'Edge-TTS', description: '微软Edge TTS（在线，高质量）', type: 'online', available: true },
+        { id: 'qwen3', name: 'Qwen3-TTS', description: '通义千问TTS（在线，高质量）', type: 'online', available: true },
+      ]);
+    } finally {
+      setLoadingModels(false);
+    }
+  };
+
+  const fetchVoices = async (modelId: string) => {
+    setLoadingVoices(true);
+    try {
+      // 获取系统语言设置，用于筛选音色
+      let systemLang = 'zh'; // 默认中文
+      try {
+        const settingsResp = await api.get('/settings');
+        const systemLanguage = settingsResp.data.settings?.system_language?.value || 'zh-CN';
+        systemLang = systemLanguage === 'zh-CN' ? 'zh' : (systemLanguage === 'en' ? 'en' : 'zh');
+      } catch (e) {
+        console.warn('[BottomNavigation] 获取系统语言设置失败，使用默认值（中文）', e);
+      }
+      
+      // console.log(`[BottomNavigation] 获取音色列表: model=${modelId}, lang=${systemLang}`);
+      const resp = await api.get('/tts/voices', { 
+        params: { 
+          model: modelId,
+          lang: systemLang  // 传递语言参数，后端会根据此参数筛选音色
+        } 
+      });
+      const voicesList = resp.data.voices || [];
+      console.log(`[BottomNavigation] 成功获取 ${voicesList.length} 个音色（已根据系统语言 ${systemLang} 筛选）`);
+      setVoices(voicesList);
+    } catch (e: any) {
+      // console.error('[BottomNavigation] 获取 voices 失败', e);
+      setVoices([]);
+    } finally {
+      setLoadingVoices(false);
+    }
+  };
+
+  const handleModelChange = async (model: string) => {
+    console.log(`[BottomNavigation] 切换模型: ${currentModel} -> ${model}`);
+    // 保存到本地存储
+    try {
+      localStorage.setItem('tts_default_model', model);
+    } catch (e) {
+      // console.warn('[BottomNavigation] 保存TTS引擎到本地存储失败:', e);
+    }
+    
+    // 切换模型时，立即从API获取新的音色列表
+    await fetchVoices(model);
+    
+    if (onTTSModelChange) {
+      onTTSModelChange(model);
+    } else {
+      onSettingsChange({
+        ...settings,
+        tts_default_model: { value: model },
+      } as any);
+    }
+  };
+
+  const handleVoiceChange = (voice: string) => {
+    // 保存到本地存储
+    try {
+      localStorage.setItem('tts_default_voice', voice);
+    } catch (e) {
+      // console.warn('[BottomNavigation] 保存TTS音色到本地存储失败:', e);
+    }
+    
+    if (onTTSVoiceChange) {
+      onTTSVoiceChange(voice);
+    } else {
+      onSettingsChange({
+        ...settings,
+        tts_default_voice: { value: voice },
+      } as any);
+    }
+  };
+
+  const handleSpeedChange = (speed: number) => {
+    // 确保速度值有效，默认为1.0
+    const validSpeed = isNaN(speed) || speed <= 0 ? 1.0 : speed;
+    
+    // 保存到本地存储
+    try {
+      localStorage.setItem('tts_default_speed', validSpeed.toString());
+      // console.log('[BottomNavigation] 播放速度已保存到本地存储:', validSpeed);
+    } catch (e) {
+      // console.warn('[BottomNavigation] 保存播放速度到本地存储失败:', e);
+    }
+    
+    if (onTTSSpeedChange) {
+      onTTSSpeedChange(validSpeed);
+    } else {
+      onSettingsChange({
+        ...settings,
+        tts_default_speed: { value: validSpeed.toString() },
+      } as any);
+    }
+  };
+  
+  // 从本地存储加载TTS设置（只在组件挂载时执行一次）
+  useEffect(() => {
+    try {
+      const savedModel = localStorage.getItem('tts_default_model');
+      const savedVoice = localStorage.getItem('tts_default_voice');
+      const savedSpeed = localStorage.getItem('tts_default_speed');
+      
+      if (savedModel && savedModel !== currentModel) {
+        if (onTTSModelChange) {
+          onTTSModelChange(savedModel);
+        } else {
+          onSettingsChange({
+            ...settings,
+            tts_default_model: { value: savedModel },
+          } as any);
+        }
+      }
+      if (savedVoice && savedVoice !== currentVoice) {
+        if (onTTSVoiceChange) {
+          onTTSVoiceChange(savedVoice);
+        } else {
+          onSettingsChange({
+            ...settings,
+            tts_default_voice: { value: savedVoice },
+          } as any);
+        }
+      }
+      // 加载播放速度，如果没有保存的值或值为0.5，则使用默认值1.0
+      if (savedSpeed) {
+        const speed = parseFloat(savedSpeed);
+        // 如果值是0.5，将其更新为1.0（修复旧版本的默认值）
+        if (speed === 0.5) {
+          console.log('[BottomNavigation] 检测到旧版本默认值0.5，更新为1.0');
+          try {
+            localStorage.setItem('tts_default_speed', '1.0');
+            if (onTTSSpeedChange) {
+              onTTSSpeedChange(1.0);
+            } else {
+              onSettingsChange({
+                ...settings,
+                tts_default_speed: { value: '1.0' },
+              } as any);
+            }
+          } catch (e) {
+            console.warn('[BottomNavigation] 更新播放速度失败:', e);
+          }
+        } else if (!isNaN(speed) && speed > 0 && speed !== currentSpeed) {
+          // console.log('[BottomNavigation] 从本地存储加载播放速度:', speed);
+          if (onTTSSpeedChange) {
+            onTTSSpeedChange(speed);
+          } else {
+            onSettingsChange({
+              ...settings,
+              tts_default_speed: { value: savedSpeed },
+            } as any);
+          }
+        }
+      } else {
+        // 如果没有保存的值，设置默认值为1.0并保存
+        console.log('[BottomNavigation] 未找到保存的播放速度，使用默认值1.0');
+        try {
+          localStorage.setItem('tts_default_speed', '1.0');
+        } catch (e) {
+          // console.warn('[BottomNavigation] 保存默认播放速度失败:', e);
+        }
+      }
+    } catch (e) {
+      // console.warn('[BottomNavigation] 从本地存储加载TTS设置失败:', e);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // 只在组件挂载时执行一次
+
   const themeStyles = {
     light: { bg: '#ffffff', text: '#000000', border: '#e0e0e0', hover: 'rgba(0, 0, 0, 0.05)' },
     dark: { bg: '#1a1a1a', text: '#ffffff', border: '#404040', hover: 'rgba(255, 255, 255, 0.1)' },
@@ -72,9 +326,15 @@ export default function BottomNavigation({
   }[settings.theme];
 
   const progressPercentage = Math.round(position.progress * 100);
+  
+  // TTS播放进度
+  const ttsProgress = ttsTotalParagraphs > 0 && ttsCurrentIndex >= 0 
+    ? ((ttsCurrentIndex + 1) / ttsTotalParagraphs) * 100 
+    : 0;
 
   return (
     <div
+      ref={ref}
       className={`fixed left-0 right-0 z-40 transition-all duration-300 ${
         isVisible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-full pointer-events-none'
       }`}
@@ -99,6 +359,195 @@ export default function BottomNavigation({
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
     >
+      {isTTSMode ? (
+        <>
+          {/* TTS播放控制模式 */}
+          {/* 关闭按钮 */}
+          <div className="flex items-center justify-between px-3 pt-2 pb-1">
+            <div className="flex items-center gap-2">
+              <Volume2 className="w-4 h-4" style={{ color: themeStyles.text }} />
+              <span className="text-xs font-medium" style={{ color: themeStyles.text }}>{t('reader.tts')}</span>
+            </div>
+            {onTTSClose && (
+              <button
+                onClick={onTTSClose}
+                className="p-1.5 rounded-full transition-all hover:scale-110"
+                style={{
+                  color: themeStyles.text,
+                  backgroundColor: settings.theme === 'dark' ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.03)',
+                }}
+                aria-label="关闭"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            )}
+          </div>
+
+          {/* TTS播放进度条 */}
+          <div className="px-3 pb-2">
+            <div className="flex items-center justify-between text-xs mb-1" style={{ color: themeStyles.text, opacity: 0.75 }}>
+              <span>{t('tts.playbackProgress')}</span>
+              <span className="font-medium">
+                {ttsCurrentIndex >= 0 ? `${ttsCurrentIndex + 1} / ${ttsTotalParagraphs}` : '0 / 0'}
+              </span>
+            </div>
+            <div className="w-full h-1.5 rounded-full overflow-hidden" style={{ backgroundColor: themeStyles.border }}>
+              <div
+                className="h-full transition-all duration-300"
+                style={{
+                  width: `${ttsProgress}%`,
+                  backgroundColor: settings.theme === 'dark' ? '#4a9eff' : '#1890ff',
+                }}
+              />
+            </div>
+          </div>
+
+          {/* TTS播放控制按钮 */}
+          <div className="flex items-center justify-center gap-4 px-3 pb-3">
+            <button
+              onClick={onTTSPrev}
+              disabled={ttsCurrentIndex <= 0}
+              className="p-2.5 rounded-full transition-all hover:scale-110 disabled:opacity-30 disabled:cursor-not-allowed"
+              style={{
+                color: themeStyles.text,
+                backgroundColor: ttsCurrentIndex > 0 ? (settings.theme === 'dark' ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.05)') : 'transparent',
+              }}
+              aria-label={t('tts.previousParagraph')}
+            >
+              <SkipBack className="w-5 h-5" />
+            </button>
+            <button
+              onClick={onTTSPlayPause}
+              className="p-3 rounded-full transition-all hover:scale-110 shadow-md"
+              style={{
+                backgroundColor: settings.theme === 'dark' ? '#4a9eff' : '#1890ff',
+                color: '#ffffff',
+              }}
+              aria-label={isTTSPlaying ? t('tts.pause') : t('tts.play')}
+            >
+              {isTTSPlaying ? <Pause className="w-5 h-5" /> : <Play className="w-5 h-5" />}
+            </button>
+            <button
+              onClick={onTTSNext}
+              disabled={ttsCurrentIndex >= ttsTotalParagraphs - 1}
+              className="p-2.5 rounded-full transition-all hover:scale-110 disabled:opacity-30 disabled:cursor-not-allowed"
+              style={{
+                color: themeStyles.text,
+                backgroundColor: ttsCurrentIndex < ttsTotalParagraphs - 1 ? (settings.theme === 'dark' ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.05)') : 'transparent',
+              }}
+              aria-label={t('tts.nextParagraph')}
+            >
+              <SkipForward className="w-5 h-5" />
+            </button>
+          </div>
+
+          {/* 播放速度控制 - 始终显示，默认速度为1.0x */}
+          <div className="px-3 pb-2 border-t" style={{ borderColor: themeStyles.border }}>
+            <div className="flex items-center justify-between pt-2">
+              <label className="text-xs font-medium" style={{ color: themeStyles.text, opacity: 0.8 }}>
+                {t('tts.playbackSpeed')}:
+              </label>
+              <select
+                value={currentSpeed}
+                onChange={(e) => handleSpeedChange(Number(e.target.value))}
+                className="px-2 py-1 rounded text-xs transition-all"
+                style={{
+                  backgroundColor: settings.theme === 'dark' ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.02)',
+                  borderColor: themeStyles.border,
+                  color: themeStyles.text,
+                  border: `1px solid ${themeStyles.border}`,
+                }}
+              >
+                <option value="0.5">0.5x</option>
+                <option value="0.75">0.75x</option>
+                <option value="0.8">0.8x</option>
+                <option value="1.0">1.0x</option>
+                <option value="1.25">1.25x</option>
+                <option value="1.5">1.5x</option>
+                <option value="2.0">2.0x</option>
+                <option value="2.5">2.5x</option>
+              </select>
+            </div>
+          </div>
+
+          {/* TTS选项展开/收起按钮 */}
+          <div className="px-3 pb-2">
+            <button
+              onClick={() => setShowTTSOptions(!showTTSOptions)}
+              className="w-full py-1.5 px-2 rounded-lg text-xs transition-all"
+              style={{
+                color: themeStyles.text,
+                backgroundColor: settings.theme === 'dark' ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.03)',
+              }}
+            >
+              {showTTSOptions ? t('tts.collapseOptions') : t('tts.expandOptions')}
+            </button>
+          </div>
+
+          {/* TTS选项面板 */}
+          {showTTSOptions && (
+            <div className="px-3 pb-3 space-y-2 border-t" style={{ borderColor: themeStyles.border }}>
+              {/* TTS引擎选择 */}
+              <div className="pt-2">
+                <label className="text-xs font-medium mb-1 block" style={{ color: themeStyles.text, opacity: 0.8 }}>
+                  {t('tts.ttsEngine')}
+                </label>
+                <select
+                  value={currentModel}
+                  onChange={(e) => handleModelChange(e.target.value)}
+                  className="w-full px-2 py-1.5 rounded text-xs transition-all"
+                  style={{
+                    backgroundColor: settings.theme === 'dark' ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.02)',
+                    borderColor: themeStyles.border,
+                    color: themeStyles.text,
+                    border: `1px solid ${themeStyles.border}`,
+                  }}
+                  disabled={loadingModels}
+                >
+                  {models.filter(m => m.available).map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.name} ({m.type === 'online' ? t('tts.online') : t('tts.offline')})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* 音色选择 */}
+              <div>
+                <label className="text-xs font-medium mb-1 block" style={{ color: themeStyles.text, opacity: 0.8 }}>
+                  {t('tts.voice')}
+                </label>
+                <select
+                  value={currentVoice}
+                  onChange={(e) => handleVoiceChange(e.target.value)}
+                  className="w-full px-2 py-1.5 rounded text-xs transition-all"
+                  style={{
+                    backgroundColor: settings.theme === 'dark' ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.02)',
+                    borderColor: themeStyles.border,
+                    color: themeStyles.text,
+                    border: `1px solid ${themeStyles.border}`,
+                  }}
+                  disabled={loadingVoices}
+                >
+                  {loadingVoices ? (
+                    <option value="">{t('common.loading')}</option>
+                  ) : voices.length === 0 ? (
+                    <option value="">{t('tts.noAvailableVoices')}</option>
+                  ) : (
+                    voices.map((v) => (
+                    <option key={v.id} value={v.id}>
+                      {v.name} {v.gender ? `(${v.gender === 'male' ? t('tts.male') : t('tts.female')})` : ''}
+                    </option>
+                    ))
+                  )}
+                </select>
+              </div>
+            </div>
+          )}
+        </>
+      ) : (
+        <>
+          {/* 正常导航模式 */}
       {/* 进度条 */}
       <div className="px-3 pt-2 pb-1.5">
         <div className="w-full h-0.5 rounded-full overflow-hidden" style={{ backgroundColor: themeStyles.border }}>
@@ -118,10 +567,10 @@ export default function BottomNavigation({
           {book.title || book.file_name}
         </span>
         <span className="mx-2">
-          第 {position.currentPage} / {position.totalPages} 页
+          {t('reader.pageNumberFormat', { current: position.currentPage, total: position.totalPages })}
         </span>
         <span>
-          {currentTime.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}
+          {currentTime.toLocaleTimeString(i18n.language === 'zh' ? 'zh-CN' : 'en-US', { hour: '2-digit', minute: '2-digit' })}
         </span>
       </div>
 
@@ -139,10 +588,10 @@ export default function BottomNavigation({
           onMouseLeave={(e) => {
             e.currentTarget.style.backgroundColor = 'transparent';
           }}
-          aria-label="目录"
+          aria-label={t('reader.toc')}
         >
           <BookOpen className="w-4 h-4" />
-          <span className="text-xs" style={{ fontSize: '10px' }}>目录</span>
+          <span className="text-xs" style={{ fontSize: '10px' }}>{t('reader.toc')}</span>
         </button>
 
         <button
@@ -157,10 +606,10 @@ export default function BottomNavigation({
           onMouseLeave={(e) => {
             e.currentTarget.style.backgroundColor = 'transparent';
           }}
-          aria-label="设置"
+          aria-label={t('common.settings')}
         >
           <Type className="w-4 h-4" />
-          <span className="text-xs" style={{ fontSize: '10px' }}>设置</span>
+          <span className="text-xs" style={{ fontSize: '10px' }}>{t('common.settings')}</span>
         </button>
 
         {onToggleNotes && (
@@ -176,67 +625,70 @@ export default function BottomNavigation({
             onMouseLeave={(e) => {
               e.currentTarget.style.backgroundColor = 'transparent';
             }}
-            aria-label="笔记"
+            aria-label={t('reader.notes')}
           >
             <StickyNote className="w-4 h-4" />
-            <span className="text-xs" style={{ fontSize: '10px' }}>笔记</span>
+            <span className="text-xs" style={{ fontSize: '10px' }}>{t('reader.notes')}</span>
           </button>
         )}
 
-        <button
-          onClick={onToggleSettings}
-          className="flex flex-col items-center gap-0.5 p-2 rounded-lg transition-colors"
-          style={{
-            color: themeStyles.text,
-          }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.backgroundColor = themeStyles.hover;
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.backgroundColor = 'transparent';
-          }}
-          aria-label="主题"
-        >
-          <Palette className="w-4 h-4" />
-          <span className="text-xs" style={{ fontSize: '10px' }}>主题</span>
-        </button>
+        {onToggleTTS && (
+          <button
+            onClick={onToggleTTS}
+            className="flex flex-col items-center gap-0.5 p-2 rounded-lg transition-colors"
+            style={{
+              color: themeStyles.text,
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.backgroundColor = themeStyles.hover;
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.backgroundColor = 'transparent';
+            }}
+            aria-label={t('reader.tts')}
+          >
+            <Volume2 className="w-4 h-4" />
+            <span className="text-xs" style={{ fontSize: '10px' }}>{t('reader.tts')}</span>
+          </button>
+        )}
 
-        <button
-          onClick={() => onPageTurn('prev')}
-          className="flex flex-col items-center gap-0.5 p-2 rounded-lg transition-colors"
-          style={{
-            color: themeStyles.text,
-          }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.backgroundColor = themeStyles.hover;
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.backgroundColor = 'transparent';
-          }}
-          aria-label="上一页"
-        >
-          <ChevronLeft className="w-4 h-4" />
-          <span className="text-xs" style={{ fontSize: '10px' }}>上一页</span>
-        </button>
-
-        <button
-          onClick={() => onPageTurn('next')}
-          className="flex flex-col items-center gap-0.5 p-2 rounded-lg transition-colors"
-          style={{
-            color: themeStyles.text,
-          }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.backgroundColor = themeStyles.hover;
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.backgroundColor = 'transparent';
-          }}
-          aria-label="下一页"
-        >
-          <ChevronRight className="w-4 h-4" />
-          <span className="text-xs" style={{ fontSize: '10px' }}>下一页</span>
-        </button>
+        {onToggleBookmark && (
+          <button
+            onClick={onToggleBookmark}
+            onDoubleClick={(e) => {
+              e.preventDefault();
+              onToggleBookmarkPanel?.();
+            }}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              onToggleBookmarkPanel?.();
+            }}
+            className="flex flex-col items-center gap-0.5 p-2 rounded-lg transition-colors"
+            style={{
+              color: hasBookmark ? '#ff9800' : themeStyles.text,
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.backgroundColor = themeStyles.hover;
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.backgroundColor = 'transparent';
+            }}
+            aria-label={hasBookmark ? t('reader.deleteBookmark') : t('reader.addBookmark')}
+            title={t('reader.bookmarkTooltip')}
+          >
+            {hasBookmark ? (
+              <BookmarkCheck className="w-4 h-4" />
+            ) : (
+              <Bookmark className="w-4 h-4" />
+            )}
+            <span className="text-xs" style={{ fontSize: '10px' }}>{t('reader.bookmark')}</span>
+          </button>
+        )}
       </div>
+        </>
+      )}
     </div>
   );
-}
+});
+
+export default BottomNavigation;

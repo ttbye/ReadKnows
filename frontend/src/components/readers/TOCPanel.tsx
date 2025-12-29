@@ -5,6 +5,7 @@
 
 import { X } from 'lucide-react';
 import { TOCItem } from '../../types/reader';
+import { useTranslation } from 'react-i18next';
 
 interface TOCPanelProps {
   toc: TOCItem[];
@@ -14,6 +15,7 @@ interface TOCPanelProps {
 }
 
 export default function TOCPanel({ toc, currentChapter, onClose, onChapterSelect }: TOCPanelProps) {
+  const { t } = useTranslation();
   const renderTOCItem = (item: TOCItem, index: number, level: number = 0) => {
     return (
       <div key={item.id || index}>
@@ -41,11 +43,11 @@ export default function TOCPanel({ toc, currentChapter, onClose, onChapterSelect
     >
       <div className="w-full sm:w-96 h-full sm:h-auto sm:max-h-[80vh] bg-white dark:bg-gray-900 rounded-t-2xl sm:rounded-2xl shadow-2xl flex flex-col border border-gray-200/70 dark:border-gray-800/80 overflow-hidden">
         <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200/70 dark:border-gray-800/80 bg-white/80 dark:bg-gray-900/70 backdrop-blur-md">
-          <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">目录</h2>
+          <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">{t('common.toc')}</h2>
           <button
             onClick={onClose}
             className="p-2 hover:bg-gray-100/80 dark:hover:bg-gray-800/70 rounded-lg transition-colors text-gray-600 dark:text-gray-300"
-            aria-label="关闭"
+            aria-label={t('common.close')}
           >
             <X className="w-5 h-5" />
           </button>
@@ -53,7 +55,7 @@ export default function TOCPanel({ toc, currentChapter, onClose, onChapterSelect
         <div className="flex-1 overflow-y-auto bg-gray-50/60 dark:bg-gray-950/20">
           {toc.length === 0 ? (
             <div className="flex items-center justify-center h-full text-gray-500 dark:text-gray-400">
-              暂无目录
+              {t('reader.noTOC')}
             </div>
           ) : (
             <div className="py-2">

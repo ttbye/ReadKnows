@@ -10,6 +10,8 @@ import api from '../utils/api';
 import toast from 'react-hot-toast';
 import { Upload as UploadIcon, FileText, Folder, Scan, CheckCircle, XCircle, Loader, History, Trash2, Clock } from 'lucide-react';
 import CategoryCombobox from '../components/CategoryCombobox';
+import { useTranslation } from 'react-i18next';
+import i18n from '../i18n/config';
 
 interface ScannedFile {
   path: string;
@@ -37,6 +39,7 @@ interface LocalFile {
 }
 
 export default function Upload() {
+  const { t } = useTranslation();
   const { isAuthenticated } = useAuthStore();
   const [scanPath, setScanPath] = useState('');
   const [scanning, setScanning] = useState(false);
@@ -54,9 +57,12 @@ export default function Upload() {
   const [autoConvertMobi, setAutoConvertMobi] = useState(true);
   const [autoFetchDouban, setAutoFetchDouban] = useState(true);
   const [isPublic, setIsPublic] = useState(true); // 默认改为公开
-  const [category, setCategory] = useState('未分类');
+  const [category, setCategory] = useState('');
   const [deleteSource, setDeleteSource] = useState(false); // 是否删除源文件
   const [bookCategories, setBookCategories] = useState<string[]>([]);
+  
+  // 免责声明同意状态
+  const [agreedToDisclaimer, setAgreedToDisclaimer] = useState(false);
   
   // 导入历史
   const [importHistory, setImportHistory] = useState<ImportHistoryItem[]>([]);
@@ -81,7 +87,7 @@ export default function Upload() {
       
       if (!response.data || !response.data.categories) {
         console.warn('API返回数据格式不正确:', response.data);
-        setBookCategories(['未分类']);
+        setBookCategories([t('book.uncategorized')]);
         return;
       }
       
@@ -96,14 +102,14 @@ export default function Upload() {
         setBookCategories(cats);
       } else {
         console.warn('书籍类型列表为空，使用默认值');
-        setBookCategories(['未分类']);
+        setBookCategories([t('book.uncategorized')]);
       }
     } catch (error: any) {
       console.error('获取书籍类型列表失败:', error);
       console.error('错误状态码:', error.response?.status);
       console.error('错误详情:', error.response?.data || error.message);
       // 使用默认分类列表
-      setBookCategories(['未分类', '小说', '文学', '历史', '哲学', '武侠', '传记', '科技', '计算机', '编程', '经济', '管理', '心理学', '社会科学', '自然科学', '艺术', '教育', '儿童读物', '漫画']);
+      setBookCategories([t('book.uncategorized')]);
     }
   };
 
@@ -120,16 +126,16 @@ export default function Upload() {
   };
 
   const handleClearHistory = async () => {
-    if (!window.confirm('确定要清空导入历史吗？')) {
+    if (!window.confirm(t('upload.confirmClearHistory'))) {
       return;
     }
 
     try {
       await api.delete('/scan/import-history');
       setImportHistory([]);
-      toast.success('导入历史已清空');
+      toast.success(t('upload.historyCleared'));
     } catch (error: any) {
-      toast.error(error.response?.data?.error || '清空失败');
+      toast.error(error.response?.data?.error || t('upload.clearFailed'));
     }
   };
 
@@ -147,7 +153,7 @@ export default function Upload() {
     }));
 
     setLocalFiles(prev => [...prev, ...newLocalFiles]);
-    toast.success(`已添加 ${files.length} 个文件`);
+    toast.success(t('upload.filesAdded', { count: files.length }));
     e.target.value = ''; // 重置input，允许再次选择相同文件
   };
 
@@ -166,9 +172,15 @@ export default function Upload() {
 
   // 批量上传本地文件
   const handleBatchUpload = async () => {
+    // 检查是否同意免责声明
+    if (!agreedToDisclaimer) {
+      toast.error(t('upload.pleaseAgreeDisclaimer'));
+      return;
+    }
+    
     const selectedFiles = localFiles.filter((f) => f.selected);
     if (selectedFiles.length === 0) {
-      toast.error('请至少选择一个文件');
+      toast.error(t('upload.selectAtLeastOneFile'));
       return;
     }
 
@@ -192,6 +204,7 @@ export default function Upload() {
           formData.append('isPublic', String(isPublic));
           formData.append('autoConvertTxt', String(autoConvertTxt));
           formData.append('autoConvertMobi', String(autoConvertMobi));
+          formData.append('autoFetchDouban', String(autoFetchDouban));
           formData.append('category', category);
 
           await api.post('/books/upload', formData, {
@@ -207,16 +220,16 @@ export default function Upload() {
         } catch (error: any) {
           console.error(`上传失败 ${localFile.name}:`, error);
           failed++;
-          toast.error(`✗ ${localFile.name}: ${error.response?.data?.error || '上传失败'}`, { duration: 3000 });
+          toast.error(`✗ ${localFile.name}: ${error.response?.data?.error || t('upload.uploadFailed')}`, { duration: 3000 });
         }
       }
 
       // 显示汇总结果
       if (uploaded > 0) {
-        toast.success(`成功上传 ${uploaded} 本书籍`);
+        toast.success(t('upload.uploadSuccess', { count: uploaded }));
       }
       if (failed > 0) {
-        toast.error(`失败 ${failed} 本`);
+        toast.error(t('upload.uploadFailedCount', { count: failed }));
       }
 
       // 移除已上传的文件
@@ -227,7 +240,7 @@ export default function Upload() {
         fetchImportHistory();
       }
     } catch (error: any) {
-      toast.error(error.response?.data?.error || '批量上传失败');
+      toast.error(error.response?.data?.error || t('upload.batchUploadFailed'));
     } finally {
       setBatchUploading(false);
       setBatchProgress({ current: 0, total: 0 });
@@ -241,7 +254,7 @@ export default function Upload() {
 
   const handleScanDirectory = async () => {
     if (!scanPath.trim()) {
-      toast.error('请输入扫描路径');
+      toast.error(t('upload.pleaseEnterScanPath'));
       return;
     }
 
@@ -261,14 +274,14 @@ export default function Upload() {
       setScannedFiles(files);
       const errorCount = response.data.errors || 0;
       if (errorCount > 0) {
-        toast.success(`扫描完成，找到 ${files.length} 个文件（${errorCount} 个错误）`, {
+        toast.success(t('upload.scanCompleteWithErrors', { count: files.length, errors: errorCount }), {
           duration: 4000,
         });
       } else {
-        toast.success(`扫描完成，找到 ${files.length} 个文件`);
+        toast.success(t('upload.scanComplete', { count: files.length }));
       }
     } catch (error: any) {
-      const errorMessage = error.response?.data?.error || error.response?.data?.message || '扫描失败';
+      const errorMessage = error.response?.data?.error || error.response?.data?.message || t('upload.scanFailed');
       console.error('扫描错误:', error.response?.data);
       toast.error(errorMessage);
     } finally {
@@ -288,9 +301,15 @@ export default function Upload() {
   };
 
   const handleImportAll = async () => {
+    // 检查是否同意免责声明
+    if (!agreedToDisclaimer) {
+      toast.error(t('upload.pleaseAgreeDisclaimer'));
+      return;
+    }
+    
     const selectedFiles = scannedFiles.filter((f) => f.selected);
     if (selectedFiles.length === 0) {
-      toast.error('请至少选择一个文件');
+      toast.error(t('upload.selectAtLeastOneFile'));
       return;
     }
 
@@ -340,13 +359,13 @@ export default function Upload() {
 
       // 显示汇总结果
       if (imported > 0) {
-        toast.success(`导入成功 ${imported} 本书籍`);
+        toast.success(t('upload.importSuccess', { count: imported }));
       }
       if (skipped > 0) {
-        toast(`跳过 ${skipped} 本（已存在或不支持）`, { icon: 'ℹ️' });
+        toast(t('upload.skipped', { count: skipped }), { icon: 'ℹ️' });
       }
       if (failed > 0) {
-        toast.error(`失败 ${failed} 本`);
+        toast.error(t('upload.failed', { count: failed }));
       }
 
       // 移除已导入的文件
@@ -357,7 +376,7 @@ export default function Upload() {
         fetchImportHistory();
       }
     } catch (error: any) {
-      toast.error(error.response?.data?.error || '批量导入失败');
+      toast.error(error.response?.data?.error || t('upload.batchImportFailed'));
     } finally {
       setImporting(false);
       setImportProgress({ current: 0, total: 0 });
@@ -371,13 +390,13 @@ export default function Upload() {
   };
 
   const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleString('zh-CN');
+    return new Date(dateString).toLocaleString(i18n.language === 'zh' ? 'zh-CN' : 'en-US');
   };
 
   if (!isAuthenticated) {
     return (
       <div className="text-center py-12">
-        <p className="text-gray-500 dark:text-gray-400">请先登录</p>
+        <p className="text-gray-500 dark:text-gray-400">{t('upload.pleaseLogin')}</p>
       </div>
     );
   }
@@ -419,7 +438,7 @@ export default function Upload() {
           className="btn btn-secondary flex items-center gap-2"
         >
           <History className="w-4 h-4" />
-          {showHistory ? '隐藏历史' : '导入历史'}
+          {showHistory ? t('upload.hideHistory') : t('upload.importHistory')}
         </button>
       </div>
 
@@ -430,8 +449,65 @@ export default function Upload() {
             <FileText className="w-5 h-5 text-white" />
           </div>
           <div>
-            <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">导入选项</h2>
-            <p className="text-sm text-gray-600 dark:text-gray-400">这些选项适用于所有导入方式（批量选择和目录扫描）</p>
+            <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">{t('upload.importOptions')}</h2>
+            <p className="text-sm text-gray-600 dark:text-gray-400">{t('upload.importOptionsDesc')}</p>
+          </div>
+        </div>
+        
+        {/* 免责声明 */}
+        <div className="mb-4 p-4 rounded-lg border-2 border-red-300 dark:border-red-700 bg-red-50 dark:bg-red-900/20">
+          <div className="flex items-start gap-3 mb-3">
+            <div className="text-red-600 dark:text-red-400 mt-0.5 flex-shrink-0">
+              <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+              </svg>
+            </div>
+            <div className="flex-1">
+              <p className="text-sm font-bold text-red-800 dark:text-red-200 mb-2">
+                {t('upload.importantDisclaimer')}
+              </p>
+              <div className="text-xs text-red-700 dark:text-red-300 leading-relaxed space-y-2">
+                <p>
+                  <strong>{t('upload.disclaimer1Title')}</strong>{t('upload.disclaimer1Content')}
+                </p>
+                <p>
+                  <strong>{t('upload.disclaimer2Title')}</strong>{t('upload.disclaimer2Content')}
+                </p>
+                <p>
+                  <strong>{t('upload.disclaimer3Title')}</strong>{t('upload.disclaimer3Content')}
+                </p>
+                <p>
+                  <strong>{t('upload.disclaimer4Title')}</strong>{t('upload.disclaimer4Content')}
+                </p>
+                <p>
+                  <strong>{t('upload.disclaimer5Title')}</strong>{t('upload.disclaimer5Content')}
+                </p>
+                <p>
+                  <strong>{t('upload.disclaimer6Title')}</strong>{t('upload.disclaimer6Content')}
+                </p>
+              </div>
+            </div>
+          </div>
+          
+          {/* 同意复选框 */}
+          <div className="mt-3 pt-3 border-t border-red-200 dark:border-red-800">
+            <label className="flex items-start gap-2 cursor-pointer group">
+              <input
+                type="checkbox"
+                checked={agreedToDisclaimer}
+                onChange={(e) => setAgreedToDisclaimer(e.target.checked)}
+                className="w-5 h-5 mt-0.5 rounded border-red-300 dark:border-red-700 text-red-600 focus:ring-red-500 focus:ring-2"
+                required
+              />
+              <span className="text-sm font-semibold text-red-800 dark:text-red-200 group-hover:text-red-900 dark:group-hover:text-red-100 transition-colors">
+                {t('upload.agreeDisclaimer')}
+              </span>
+            </label>
+            {!agreedToDisclaimer && (
+              <p className="text-xs text-red-600 dark:text-red-400 mt-2 ml-7">
+                {t('upload.mustAgreeDisclaimer')}
+              </p>
+            )}
           </div>
         </div>
         
@@ -439,16 +515,16 @@ export default function Upload() {
           {/* 书籍分类 */}
           <div className="space-y-2">
             <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 flex items-center gap-2">
-              📚 书籍分类
+              📚 {t('upload.bookCategory')}
             </label>
             <CategoryCombobox
               value={category}
               onChange={setCategory}
               categories={bookCategories}
-              placeholder="选择或输入书籍分类"
+              placeholder={t('upload.selectOrEnterCategory')}
             />
             <p className="text-xs text-gray-500 dark:text-gray-400">
-              导入的所有书籍将使用此分类，可在书籍详情页单独修改
+              {t('upload.categoryDesc')}
             </p>
           </div>
 
@@ -464,11 +540,11 @@ export default function Upload() {
                   className="w-5 h-5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                 />
                 <span className="text-sm font-medium text-gray-700 dark:text-gray-300 group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
-                  🔍 自动从豆瓣获取书籍信息
+                  🔍 {t('upload.autoFetchDouban')}
                 </span>
               </label>
               <p className="text-xs text-gray-500 dark:text-gray-400 ml-7">
-                自动获取书籍封面、简介、评分等详细信息
+                {t('upload.autoFetchDoubanDesc')}
               </p>
             </div>
 
@@ -482,11 +558,11 @@ export default function Upload() {
                   className="w-5 h-5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                 />
                 <span className="text-sm font-medium text-gray-700 dark:text-gray-300 group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
-                  🌐 设为公开书籍
+                  🌐 {t('upload.setPublic')}
                 </span>
               </label>
               <p className="text-xs text-gray-500 dark:text-gray-400 ml-7">
-                {isPublic ? '✅ 所有用户都可以查看（默认）' : '🔒 仅自己可见'}
+                {isPublic ? t('upload.publicDesc') : t('upload.privateDesc')}
               </p>
             </div>
           </div>
@@ -503,11 +579,11 @@ export default function Upload() {
                   className="w-5 h-5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                 />
                 <span className="text-sm font-medium text-gray-700 dark:text-gray-300 group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
-                  📄 自动将TXT转换为EPUB
+                  📄 {t('upload.autoConvertTxt')}
                 </span>
               </label>
               <p className="text-xs text-gray-500 dark:text-gray-400 ml-7">
-                TXT文件会转换为EPUB格式以获得更好的阅读体验
+                {t('upload.autoConvertTxtDesc')}
               </p>
             </div>
 
@@ -521,11 +597,11 @@ export default function Upload() {
                   className="w-5 h-5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                 />
                 <span className="text-sm font-medium text-gray-700 dark:text-gray-300 group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
-                  📱 自动将MOBI转换为EPUB
+                  📱 {t('upload.autoConvertMobi')}
                 </span>
               </label>
               <p className="text-xs text-gray-500 dark:text-gray-400 ml-7">
-                MOBI文件会转换为EPUB格式以支持在线阅读（需要安装 Calibre）
+                {t('upload.autoConvertMobiDesc')}
               </p>
             </div>
 
@@ -539,11 +615,11 @@ export default function Upload() {
                   className="w-5 h-5 rounded border-gray-300 text-red-600 focus:ring-red-500"
                 />
                 <span className="text-sm font-medium text-gray-700 dark:text-gray-300 group-hover:text-red-600 dark:group-hover:text-red-400 transition-colors">
-                  🗑️ 导入后删除源文件
+                  🗑️ {t('upload.deleteSource')}
                 </span>
               </label>
               <p className="text-xs text-gray-500 dark:text-gray-400 ml-7">
-                {deleteSource ? '⚠️ 导入成功后将删除原始文件' : '✅ 保留原始文件（默认）'}
+                {deleteSource ? t('upload.deleteSourceDesc') : t('upload.keepSourceDesc')}
               </p>
             </div>
           </div>
@@ -555,21 +631,21 @@ export default function Upload() {
         <div className="card bg-gradient-to-br from-purple-50 to-pink-50 dark:from-purple-900/20 dark:to-pink-900/20 border-2 border-purple-200 dark:border-purple-700">
           <div className="flex items-center gap-3 mb-4">
             <FileText className="w-6 h-6 text-purple-600" />
-            <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">批量选择</h2>
+            <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">{t('upload.batchSelect')}</h2>
           </div>
           <div className="space-y-4">
             <div>
               <label className="block text-sm font-medium mb-2 text-gray-900 dark:text-gray-100">
-                从本地选择文件
+                {t('upload.selectFromLocal')}
               </label>
               <label className="flex items-center justify-center w-full h-32 border-2 border-dashed border-purple-300 dark:border-purple-700 rounded-lg cursor-pointer hover:border-purple-500 transition-colors bg-white dark:bg-gray-800">
                 <div className="text-center">
                   <FileText className="w-8 h-8 mx-auto mb-2 text-purple-400" />
                   <p className="text-sm text-gray-600 dark:text-gray-400">
-                    点击选择文件（支持单个或多个）
+                    {t('upload.clickToSelectFiles')}
                   </p>
                   <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                    支持 EPUB, PDF, TXT, MOBI, Word, Excel, PowerPoint, Markdown
+                    {t('upload.supportedFormats')}
                   </p>
                 </div>
                 <input
@@ -584,7 +660,7 @@ export default function Upload() {
             </div>
             {localFiles.length > 0 && (
               <div className="text-sm text-purple-600 dark:text-purple-400">
-                <p>📚 已选择 {localFiles.length} 个文件</p>
+                <p>📚 {t('upload.selectedFiles', { count: localFiles.length })}</p>
               </div>
             )}
           </div>
@@ -594,16 +670,16 @@ export default function Upload() {
         <div className="card">
           <div className="flex items-center gap-3 mb-4">
             <Folder className="w-6 h-6 text-green-600" />
-            <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">目录扫描</h2>
+            <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">{t('upload.directoryScan')}</h2>
           </div>
           <div className="space-y-4">
             <div>
-              <label className="block text-sm font-medium mb-2">服务器路径</label>
+              <label className="block text-sm font-medium mb-2">{t('upload.serverPath')}</label>
               <div className="flex gap-2">
                 <input
                   type="text"
                   className="input flex-1"
-                  placeholder="例如: /app/scan"
+                  placeholder={t('upload.serverPathPlaceholder')}
                   value={scanPath}
                   onChange={(e) => setScanPath(e.target.value)}
                   onKeyPress={(e) => {
@@ -620,12 +696,12 @@ export default function Upload() {
                   {scanning ? (
                     <>
                       <Loader className="w-4 h-4 animate-spin" />
-                      扫描中...
+                      {t('upload.scanning')}
                     </>
                   ) : (
                     <>
                       <Scan className="w-4 h-4" />
-                      扫描
+                      {t('upload.scan')}
                     </>
                   )}
                 </button>
@@ -642,7 +718,7 @@ export default function Upload() {
             <div className="flex items-center gap-3">
               <FileText className="w-5 h-5 text-purple-600" />
               <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">
-                本地文件列表 ({localFiles.length} 个文件)
+                {t('upload.localFileList', { count: localFiles.length })}
               </h2>
             </div>
             <div className="flex items-center gap-4">
@@ -650,25 +726,25 @@ export default function Upload() {
                 onClick={handleSelectAllLocalFiles}
                 className="text-sm text-purple-600 hover:text-purple-700 dark:text-purple-400"
               >
-                {localFiles.every((f) => f.selected) ? '取消全选' : '全选'}
+                {localFiles.every((f) => f.selected) ? t('upload.deselectAll') : t('upload.selectAll')}
               </button>
               <span className="text-sm text-gray-600 dark:text-gray-400">
-                已选择 {selectedLocalCount} 个
+                {t('upload.selectedCount', { count: selectedLocalCount })}
               </span>
               <button
                 onClick={handleBatchUpload}
-                disabled={batchUploading || selectedLocalCount === 0}
-                className="btn btn-primary bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700"
+                disabled={batchUploading || selectedLocalCount === 0 || !agreedToDisclaimer}
+                className="btn btn-primary bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {batchUploading ? (
                   <>
                     <Loader className="w-4 h-4 animate-spin" />
-                    上传中 ({batchProgress.current}/{batchProgress.total})...
+                    {t('upload.uploading', { current: batchProgress.current, total: batchProgress.total })}
                   </>
                 ) : (
                   <>
                     <UploadIcon className="w-4 h-4" />
-                    批量上传 ({selectedLocalCount})
+                    {t('upload.batchUpload', { count: selectedLocalCount })}
                   </>
                 )}
               </button>
@@ -687,10 +763,10 @@ export default function Upload() {
                       className="w-4 h-4"
                     />
                   </th>
-                  <th className="text-left py-3 px-4">文件名</th>
-                  <th className="text-left py-3 px-4">格式</th>
-                  <th className="text-left py-3 px-4">大小</th>
-                  <th className="text-left py-3 px-4">操作</th>
+                  <th className="text-left py-3 px-4">{t('upload.fileName')}</th>
+                  <th className="text-left py-3 px-4">{t('upload.format')}</th>
+                  <th className="text-left py-3 px-4">{t('upload.size')}</th>
+                  <th className="text-left py-3 px-4">{t('upload.action')}</th>
                 </tr>
               </thead>
               <tbody>
@@ -720,7 +796,7 @@ export default function Upload() {
                       <button
                         onClick={() => handleRemoveLocalFile(index)}
                         className="text-red-600 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300 text-sm"
-                        title="移除"
+                        title={t('upload.remove')}
                       >
                         <Trash2 className="w-4 h-4" />
                       </button>
@@ -735,12 +811,12 @@ export default function Upload() {
             <div className="flex items-start gap-3">
               <div className="text-purple-600 mt-0.5">💡</div>
               <div className="text-sm text-gray-600 dark:text-gray-400">
-                <p className="font-medium text-gray-900 dark:text-gray-100 mb-1">使用说明：</p>
+                <p className="font-medium text-gray-900 dark:text-gray-100 mb-1">{t('upload.usageInstructions')}</p>
                 <ul className="space-y-1 text-xs">
-                  <li>• 点击上方"批量选择"按钮，可一次选择多个文件</li>
-                  <li>• 勾选要上传的文件，点击"批量上传"开始上传</li>
-                  <li>• 系统会逐个上传文件，实时显示进度</li>
-                  <li>• 上传成功的文件会自动从列表中移除</li>
+                  <li>• {t('upload.usageTip1')}</li>
+                  <li>• {t('upload.usageTip2')}</li>
+                  <li>• {t('upload.usageTip3')}</li>
+                  <li>• {t('upload.usageTip4')}</li>
                 </ul>
               </div>
             </div>
@@ -755,7 +831,7 @@ export default function Upload() {
             <div className="flex items-center gap-3">
               <Folder className="w-5 h-5 text-green-600" />
               <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">
-                服务器目录扫描结果 ({scannedFiles.length} 个文件)
+                {t('upload.scanResult', { count: scannedFiles.length })}
               </h2>
             </div>
             <div className="flex items-center gap-4">
@@ -763,25 +839,25 @@ export default function Upload() {
                 onClick={handleSelectAll}
                 className="text-sm text-blue-600 hover:text-blue-700"
               >
-                {scannedFiles.every((f) => f.selected) ? '取消全选' : '全选'}
+                {scannedFiles.every((f) => f.selected) ? t('upload.deselectAll') : t('upload.selectAll')}
               </button>
               <span className="text-sm text-gray-600 dark:text-gray-400">
-                已选择 {selectedCount} 个
+                {t('upload.selectedCount', { count: selectedCount })}
               </span>
               <button
                 onClick={handleImportAll}
-                disabled={importing || selectedCount === 0}
-                className="btn btn-primary"
+                disabled={importing || selectedCount === 0 || !agreedToDisclaimer}
+                className="btn btn-primary disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {importing ? (
                   <>
                     <Loader className="w-4 h-4 animate-spin" />
-                    导入中 ({importProgress.current}/{importProgress.total})...
+                    {t('upload.importing', { current: importProgress.current, total: importProgress.total })}
                   </>
                 ) : (
                   <>
                     <UploadIcon className="w-4 h-4" />
-                    导入所有 ({selectedCount})
+                    {t('upload.importAll', { count: selectedCount })}
                   </>
                 )}
               </button>
@@ -800,11 +876,11 @@ export default function Upload() {
                       className="w-4 h-4"
                     />
                   </th>
-                  <th className="text-left py-3 px-4">文件名</th>
-                  <th className="text-left py-3 px-4">格式</th>
-                  <th className="text-left py-3 px-4">大小</th>
-                  <th className="text-left py-3 px-4">修改时间</th>
-                  <th className="text-left py-3 px-4">路径</th>
+                  <th className="text-left py-3 px-4">{t('upload.fileName')}</th>
+                  <th className="text-left py-3 px-4">{t('upload.format')}</th>
+                  <th className="text-left py-3 px-4">{t('upload.size')}</th>
+                  <th className="text-left py-3 px-4">{t('upload.modifiedTime')}</th>
+                  <th className="text-left py-3 px-4">{t('upload.path')}</th>
                 </tr>
               </thead>
               <tbody>
@@ -850,7 +926,7 @@ export default function Upload() {
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-3">
               <History className="w-5 h-5 text-purple-600" />
-              <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">导入历史</h2>
+              <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">{t('upload.importHistory')}</h2>
             </div>
             {importHistory.length > 0 && (
               <button
@@ -858,7 +934,7 @@ export default function Upload() {
                 className="btn btn-secondary flex items-center gap-2"
               >
                 <Trash2 className="w-4 h-4" />
-                清空历史
+                {t('upload.clearHistory')}
               </button>
             )}
           </div>
@@ -866,12 +942,12 @@ export default function Upload() {
           {loadingHistory ? (
             <div className="text-center py-8">
               <Loader className="w-6 h-6 animate-spin mx-auto text-blue-600" />
-              <p className="text-sm text-gray-500 dark:text-gray-400 mt-2">加载中...</p>
+              <p className="text-sm text-gray-500 dark:text-gray-400 mt-2">{t('common.loading')}</p>
             </div>
           ) : importHistory.length === 0 ? (
             <div className="text-center py-8">
               <History className="w-12 h-12 mx-auto text-gray-400 mb-2" />
-              <p className="text-gray-500 dark:text-gray-400">暂无导入历史</p>
+              <p className="text-gray-500 dark:text-gray-400">{t('upload.noImportHistory')}</p>
             </div>
           ) : (
             <div className="space-y-2 max-h-96 overflow-y-auto">
@@ -890,7 +966,7 @@ export default function Upload() {
                     </p>
                     <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400 mt-1">
                       <Clock className="w-3 h-3" />
-                      <span>{new Date(item.created_at).toLocaleString('zh-CN')}</span>
+                      <span>{new Date(item.created_at).toLocaleString(i18n.language === 'zh' ? 'zh-CN' : 'en-US')}</span>
                     </div>
                   </div>
                 </div>

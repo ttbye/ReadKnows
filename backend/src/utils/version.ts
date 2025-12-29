@@ -36,9 +36,9 @@ const getPackageJsonPath = () => {
 
 /**
  * 生成带随机码的版本号
- * 格式：1.125.12-XXXXXX
+ * 格式：1.225.12-XXXXXX
  * 1: 大版本号（固定）
- * 125: 小版本号 = "1" + 年份后两位（2025 -> "25"） = "1" + "25" = "125"
+ * 225: 小版本号 = "2" + 年份后两位（2025 -> "25"） = "2" + "25" = "225"
  * 12: 编译月份
  * XXXXXX: 6位随机码
  */
@@ -48,18 +48,18 @@ export function generateVersion(): string {
     const year = now.getFullYear();
     const month = now.getMonth() + 1; // 月份从0开始，需要+1
     
-    // 计算小版本号：字符串拼接 "1" + 年份后两位
+    // 计算小版本号：字符串拼接 "2" + 年份后两位
     const yearLastTwo = (year % 100).toString().padStart(2, '0'); // 2025 -> "25"
-    const minorVersion = `1${yearLastTwo}`; // "1" + "25" = "125"
+    const minorVersion = `2${yearLastTwo}`; // "2" + "25" = "225"
     
     // 生成6位随机码
     const randomCode = Math.random().toString(36).substring(2, 8).toUpperCase(); // 6位随机码
     
-    // 格式：1.125.12(XXXXXX)
+    // 格式：1.225.12(XXXXXX)
     return `1.${minorVersion}.${month.toString().padStart(2, '0')}(${randomCode})`;
   } catch (error) {
     console.error('生成版本号失败:', error);
-    return '1.0.0-UNKNOWN';
+    return '1.2.0-UNKNOWN';
   }
 }
 

@@ -1,613 +1,638 @@
- # 📚 ReadKnows (读士私人书库)
+# 📚 ReadKnows (Private Digital Library)
+
+<div align="right">
+<sub>[English](README.md) | [中文](README-zh.md)</sub>
+</div>
 
 <div align="center">
 
-![Version](https://img.shields.io/badge/version-0.2025.12-blue.svg)
-![License](https://img.shields.io/badge/license-MIT-green.svg)
+![Version](https://img.shields.io/badge/version-1.225.12-blue.svg)
+![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)
 ![Docker](https://img.shields.io/badge/docker-ready-blue.svg)
 ![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux%20%7C%20NAS-lightgrey.svg)
 
-**支持多格式、多平台、多用户的私人电子书管理平台**
+**Multi-format, Multi-platform, Multi-user Private E-book Management Platform**
 
-[功能特性](#-功能特性) • [快速开始](#-快速开始) • [安装部署](#-安装部署) • [使用文档](#-使用文档) • [开发指南](#-开发指南)
+[Features](#-features) • [Quick Start](#-quick-start) • [Installation](#-installation) • [Documentation](#-documentation) • [Development Guide](#-development-guide)
 
 </div>
 
 ---
 
-## 📖 项目简介
-友情提醒：中国境内网站，个人是不允许进行在线出版的，维护公开的书籍网站是违法违规的行为！本系统仅供个人学习和图书、文档资料管理使用！
+## 📖 Project Introduction
 
-ReadKnows（读士私人书库）是一个功能强大的私人电子书管理平台，支持 EPUB、PDF、TXT、MOBI 等多种格式的电子书阅读和管理。采用现代化的 Web 技术栈，提供流畅的阅读体验和强大的管理功能。
+**Friendly Reminder**: In China, individuals are not allowed to publish online. Maintaining a public book website is illegal! This system is for personal learning and book/document management only!
 
-### ✨ 核心特性
+ReadKnows is a powerful private e-book management platform that supports reading and management of e-books in multiple formats including EPUB, PDF, TXT, MOBI, etc. Built with modern web technologies, it provides a smooth reading experience and powerful management features.
 
-- 📚 **多格式支持**: EPUB、PDF、TXT、MOBI（自动转换为 EPUB）
-- 🌐 **多平台访问**: 支持 Web、iOS、iPad、Mac、Windows 等平台
-- 👥 **多用户系统**: 支持多用户，个人书架和阅读进度独立管理
-- 📱 **PWA 支持**: 支持渐进式 Web 应用，可安装到设备主屏幕
-- 🎨 **专业阅读器**: 内置专业的 EPUB 和 PDF 阅读器，支持多种阅读主题
-- 🔍 **智能搜索**: 支持全文搜索，快速定位内容
-- 📊 **阅读统计**: 详细的阅读历史和进度统计
-- 🤖 **AI 集成**: 支持 Ollama 等 AI 服务，提供智能阅读辅助
-- 📦 **批量导入**: 支持批量扫描和导入本地书籍
-- 🔐 **安全可靠**: JWT 认证，IP 访问控制，数据加密存储
-- 📝 **笔记管理**: 支持阅读笔记、高亮标记
-- 🏷️ **分类管理**: 支持书籍分类和标签管理
-- 📡 **OPDS 支持**: 支持 OPDS 协议，兼容主流阅读器
+### ✨ Core Features
 
----
-
-## 🚀 功能特性
-
-### 📖 阅读功能
-
-- ✅ **多格式阅读器**
-  - EPUB: 专业级阅读器，支持目录导航、书签、高亮、笔记
-  - PDF: 完整 PDF 阅读体验，支持缩放、翻页、目录、搜索
-  - TXT: 纯文本阅读，自动格式化，支持编码识别
-  - MOBI: 自动转换为 EPUB 格式（需安装 Calibre）
-
-- ✅ **阅读设置**
-  - 多种阅读主题（浅色、深色、护眼、绿色）
-  - 字体大小、字体类型、行间距自定义
-  - 支持自定义字体（可上传字体文件）
-  - 阅读进度自动保存
-  - 阅读历史记录
-  - 翻页动画效果
-
-- ✅ **阅读辅助**
-  - 目录导航（支持多级目录）
-  - 书签管理（添加、删除、跳转）
-  - 笔记和高亮（离线可用，联网自动同步）
-  - 全文搜索（支持正则表达式）
-  - 阅读进度同步（多设备同步 + 跨设备进度变更提醒）
-  - 进度展示：EPUB 默认使用“百分比进度（保留 2 位小数）”，跨设备更稳定
-
-### 📚 管理功能
-
-- ✅ **书籍管理**
-  - 上传、删除、编辑书籍信息
-  - 自动提取书籍元数据（标题、作者、封面等）
-  - 支持豆瓣 API 自动获取书籍信息
-  - 书籍分类和标签管理
-  - 批量操作（批量删除、批量分类）
-  - 书籍详情编辑（标题、作者、简介、标签）
-
-- ✅ **书架管理**
-  - 创建个人专属书架
-  - 书籍收藏和分类
-  - 批量操作
-  - 书架统计（书籍数量、阅读进度）
-
-- ✅ **批量导入**
-  - 扫描本地目录自动导入
-  - 支持自动转换（TXT → EPUB, MOBI → EPUB）
-  - 自动获取书籍元数据
-  - 文件监控自动导入（监控 import 目录）
-  - 支持子目录递归扫描
-
-- ✅ **分类管理**
-  - 创建和管理书籍分类
-  - 分类层级管理
-  - 分类统计
-
-### 👥 用户功能
-
-- ✅ **用户系统**
-  - 多用户支持
-  - 用户注册、登录、权限管理
-  - 管理员后台
-  - 用户角色管理（普通用户、管理员）
-  - 用户统计（上传书籍数、书架数）
-
-- ✅ **个人中心**
-  - 阅读统计（阅读时长、阅读进度、阅读历史）
-  - 阅读历史（最近阅读、阅读记录）
-  - 个人设置（账户信息、密码修改）
-  - 个人资料管理
-
-- ✅ **用户管理**（管理员功能）
-  - 用户列表查看
-  - 创建新用户
-  - 编辑用户信息
-  - 重置用户密码
-  - 删除用户
-  - 用户权限管理
-
-### 🤖 AI 功能
-
-- ✅ **AI 集成**
-  - 支持 Ollama 本地 AI 服务
-  - 智能阅读辅助
-  - 书籍内容分析
-  - AI 对话功能
-  - 阅读助手（问答、总结、翻译）
-
-### 🔐 安全功能
-
-- ✅ **安全特性**
-  - JWT 身份认证
-  - IP 访问控制（白名单/黑名单）
-  - 验证码保护（登录、注册）
-  - 数据加密存储
-  - 密码加密（bcrypt）
-  - 会话管理
-
-- ✅ **IP 管理**（管理员功能）
-  - IP 白名单管理
-  - IP 黑名单管理
-  - IP 访问日志
-
-### 📝 笔记功能
-
-- ✅ **笔记管理**
-  - 创建阅读笔记
-  - 编辑和删除笔记
-  - 笔记分类
-  - 笔记搜索
-  - 笔记/高亮导出为 Markdown
-  - 一键导出为“笔记书”（私有书籍，分类为「笔记」，封面叠加“笔记”标识）
-
-### ✨ 阅读器体验增强（近期更新）
-
-- ✅ **文本选择菜单增强（EPUB）**
-  - 高亮/取消高亮
-  - 新建笔记（修复移动端/PWA 点击不弹窗的问题）
-  - 复制 / 百度搜索 / 词典 / 翻译
-  - 点击已高亮区域自动选中该高亮内容并弹出菜单
-
-- ✅ **离线与同步（高亮）**
-  - 离线：本地缓存与队列
-  - 联网：自动同步到服务端并持久化
-  - 重新打开书籍：自动渲染历史高亮
-
-- ✅ **跨设备进度提醒（EPUB/TXT/MD/PDF）**
-  - A、B 设备进度不一致时：回到前台/聚焦自动拉取服务端进度并提示是否跳转
-  - 提示信息包含：本机/另一端的进度与章节标题
-  - 409 冲突不再刷屏（作为正常冲突信号处理，提示一次并暂停上报）
-
-- ✅ **阅读体验修复**
-  - EPUB：修复 epubjs hooks 入参异常导致的多种 TypeError（getElementsByTagName/createElement/ownerDocument 等）
-  - PDF：修复移动端/PWA 纵向拉伸导致文字变形
-  - Markdown：增加上下左右边距与更清晰的排版样式
-  - 导航栏：顶部栏固定，避免下拉刷新/弹性滚动导致导航栏晃动
-  - 笔记/目录面板：支持 safe-area（刘海屏）与阅读主题适配
-
-### 📡 OPDS 支持
-
-- ✅ **OPDS 协议**
-  - 支持 OPDS 1.2 协议
-  - 兼容主流阅读器（如 Calibre、KOReader 等）
-  - OPDS 目录浏览
-  - OPDS 搜索
+- 📚 **Multi-format Support**: EPUB, PDF, TXT, MOBI (auto-convert to EPUB)
+- 🌐 **Multi-platform Access**: Supports Web, iOS, iPad, Mac, Windows, and more
+- 👥 **Multi-user System**: Supports multiple users with independent personal libraries and reading progress
+- 📱 **PWA Support**: Progressive Web App support, can be installed to device home screen
+- 🎨 **Professional Reader**: Built-in professional EPUB and PDF readers with multiple reading themes
+- 🔍 **Smart Search**: Full-text search support for quick content location
+- 📊 **Reading Statistics**: Detailed reading history and progress statistics
+- 🤖 **AI Integration**: Supports Ollama and other AI services for intelligent reading assistance
+- 📦 **Batch Import**: Supports batch scanning and importing local books
+- 🔐 **Secure & Reliable**: JWT authentication, IP access control, encrypted data storage
+- 📝 **Note Management**: Supports reading notes, highlights, export and import as note books
+- 🏷️ **Category Management**: Supports book categories and tag management
+- 📡 **OPDS Support**: Supports OPDS protocol, compatible with mainstream readers
+- 🔊 **Voice Reading**: Supports online TTS voice reading (Beta)
+- 📄 **Office Documents**: Supports uploading and browsing Office documents (Word, Excel, PowerPoint)
+- 🤖 **TTS Service**: Supports both TTS-API and TTS-API-Lite TTS services
 
 ---
 
-## 🛠️ 技术栈
+## 🚀 Features
 
-### 前端
+### 📖 Reading Features
 
-- **框架**: React 18 + TypeScript
-- **构建工具**: Vite 5
-- **UI 框架**: Tailwind CSS 3.4
-- **状态管理**: Zustand 4.4
-- **路由**: React Router v6
-- **阅读器**: 
-  - EPUB.js (EPUB 阅读)
-  - PDF.js (PDF 阅读)
-  - react-pdf (PDF 渲染)
+- ✅ **Multi-format Reader**
+  - EPUB: Professional-grade reader with table of contents navigation, bookmarks, highlights, notes
+  - PDF: Complete PDF reading experience with zoom, page turning, table of contents, search
+  - TXT: Plain text reading with automatic formatting and encoding detection
+  - MOBI: Auto-convert to EPUB format (requires Calibre installation)
+
+- ✅ **Reading Settings**
+  - Multiple reading themes (light, dark, eye-care, green)
+  - Customizable font size, font type, line spacing
+  - Support for custom fonts (can upload font files)
+  - Automatic reading progress saving
+  - Reading history records
+  - Page turning animation effects
+
+- ✅ **Reading Assistance**
+  - Table of contents navigation (supports multi-level)
+  - Bookmark management (add, delete, jump)
+  - Notes and highlights (offline available, auto-sync when online)
+  - Full-text search (supports regular expressions)
+  - Reading progress sync (multi-device sync + cross-device progress change notifications)
+  - Progress display: EPUB defaults to "percentage progress (2 decimal places)" for better cross-device stability
+
+### 📚 Management Features
+
+- ✅ **Book Management**
+  - Upload, delete, edit book information
+  - Automatic book metadata extraction (title, author, cover, etc.)
+  - Supports Douban API for automatic book information retrieval
+  - Book categories and tag management
+  - Batch operations (batch delete, batch categorize)
+  - Book detail editing (title, author, description, tags)
+
+- ✅ **Library Management**
+  - Create personal exclusive libraries
+  - Book collection and categorization
+  - Batch operations
+  - Library statistics (book count, reading progress)
+
+- ✅ **Batch Import**
+  - Scan local directories for automatic import
+  - Supports automatic conversion (TXT → EPUB, MOBI → EPUB)
+  - Automatic book metadata retrieval
+  - File monitoring for automatic import (monitors import directory)
+  - Supports recursive subdirectory scanning
+
+- ✅ **Category Management**
+  - Create and manage book categories
+  - Category hierarchy management
+  - Category statistics
+
+### 👥 User Features
+
+- ✅ **User System**
+  - Multi-user support
+  - User registration, login, permission management
+  - Admin backend
+  - User role management (regular user, admin)
+  - User statistics (uploaded books count, library count)
+
+- ✅ **Personal Center**
+  - Reading statistics (reading duration, reading progress, reading history)
+  - Reading history (recent reading, reading records)
+  - Personal settings (account information, password change)
+  - Personal profile management
+
+- ✅ **User Management** (Admin feature)
+  - View user list
+  - Create new users
+  - Edit user information
+  - Reset user passwords
+  - Delete users
+  - User permission management
+
+### 🤖 AI Features
+
+- ✅ **AI Integration**
+  - Supports Ollama local AI service
+  - Intelligent reading assistance
+  - Book content analysis
+  - AI conversation functionality
+  - Reading assistant (Q&A, summary, translation)
+
+### 🔐 Security Features
+
+- ✅ **Security Features**
+  - JWT authentication
+  - IP access control (whitelist/blacklist)
+  - Captcha protection (login, registration)
+  - Encrypted data storage
+  - Password encryption (bcrypt)
+  - Session management
+
+- ✅ **IP Management** (Admin feature)
+  - IP whitelist management
+  - IP blacklist management
+  - IP access logs
+
+### 📝 Note Features
+
+- ✅ **Note Management**
+  - Create reading notes
+  - Edit and delete notes
+  - Note categorization
+  - Note search
+  - Export notes/highlights as Markdown
+  - One-click export as "Note Book" (private book, categorized as "Notes", cover with "Notes" overlay)
+  - Supports adding exported notes as new books to server
+
+### 🔊 Voice Reading Feature (Beta)
+
+- ✅ **TTS Service Support**
+  - **TTS-API-Lite**: Lightweight TTS online generation API system, recommended for regular servers
+  - **TTS-API**: Supports online TTS and local TTS generation, requires higher GPU hardware
+  - Online Edge-TTS voice reading (Beta, for experience only)
+
+### 📄 Office Document Support
+
+- ✅ **Office Document Browsing**
+  - Supports Word (.docx) document upload and browsing
+  - Supports Excel (.xlsx) document upload and browsing
+  - Simple document browsing functionality
+
+### ✨ Reader Experience Enhancements (Recent Updates)
+
+- ✅ **Text Selection Menu Enhancement (EPUB)**
+  - Highlight/unhighlight
+  - New note (fixed mobile/PWA click not opening popup issue)
+  - Copy / Baidu Search / Dictionary / Translate
+  - Clicking highlighted area automatically selects the highlight and shows menu
+
+- ✅ **Offline & Sync (Highlights)**
+  - Offline: Local cache and queue
+  - Online: Auto-sync to server and persist
+  - Reopen book: Auto-render historical highlights
+
+- ✅ **Cross-device Progress Notifications (EPUB/TXT/MD/PDF)**
+  - When Device A and B progress differ: Auto-fetch server progress when returning to foreground/focus and prompt to jump
+  - Notification includes: Local/other device progress and chapter title
+  - 409 conflicts no longer spam (handled as normal conflict signal, prompt once and pause reporting)
+
+- ✅ **Reading Experience Fixes**
+  - EPUB: Fixed various TypeErrors caused by epubjs hooks parameter issues (getElementsByTagName/createElement/ownerDocument, etc.)
+  - PDF: Fixed mobile/PWA vertical stretch causing text distortion
+  - Markdown: Added top/bottom/left/right margins and clearer layout styles
+  - Navigation bar: Fixed top bar to avoid navigation bar shaking caused by pull-to-refresh/elastic scrolling
+  - Note/TOC panel: Supports safe-area (notch screens) and reading theme adaptation
+
+### 📡 OPDS Support
+
+- ✅ **OPDS Protocol**
+  - Supports OPDS 1.2 protocol
+  - Compatible with mainstream readers (such as Calibre, KOReader, etc.)
+  - OPDS catalog browsing
+  - OPDS search
+
+---
+
+## 🛠️ Tech Stack
+
+### Frontend
+
+- **Framework**: React 18 + TypeScript
+- **Build Tool**: Vite 5
+- **UI Framework**: Tailwind CSS 3.4
+- **State Management**: Zustand 4.4
+- **Routing**: React Router v6
+- **Readers**: 
+  - EPUB.js (EPUB reading)
+  - PDF.js (PDF reading)
+  - react-pdf (PDF rendering)
 - **PWA**: Vite PWA Plugin
-- **HTTP 客户端**: Axios
-- **图标**: Lucide React
-- **通知**: React Hot Toast
+- **HTTP Client**: Axios
+- **Icons**: Lucide React
+- **Notifications**: React Hot Toast
 
-### 后端
+### Backend
 
-- **运行时**: Node.js 20
-- **框架**: Express.js 4.18
-- **语言**: TypeScript 5.3
-- **数据库**: SQLite (better-sqlite3)
-- **认证**: JWT (jsonwebtoken)
-- **文件处理**:
-  - EPUB 解析和生成 (epub-gen)
-  - PDF 解析和元数据提取 (pdf-parse, pdfjs-dist)
-  - 图片处理 (Canvas, Sharp)
-  - 文档转换 (mammoth, xlsx, pptx2json)
-- **格式转换**: Calibre (MOBI → EPUB)
-- **验证码**: svg-captcha
-- **邮件**: nodemailer
+- **Runtime**: Node.js 20
+- **Framework**: Express.js 4.18
+- **Language**: TypeScript 5.3
+- **Database**: SQLite (better-sqlite3)
+- **Authentication**: JWT (jsonwebtoken)
+- **File Processing**:
+  - EPUB parsing and generation (epub-gen)
+  - PDF parsing and metadata extraction (pdf-parse, pdfjs-dist)
+  - Image processing (Canvas, Sharp)
+  - Document conversion (mammoth, xlsx, pptx2json)
+- **Format Conversion**: Calibre (MOBI → EPUB)
+- **Captcha**: svg-captcha
+- **Email**: nodemailer
 
-### 部署
+### Deployment
 
-- **容器化**: Docker + Docker Compose
-- **Web 服务器**: Nginx (前端)
-- **平台支持**: 
+- **Containerization**: Docker + Docker Compose
+- **Web Server**: Nginx (frontend)
+- **Platform Support**: 
   - macOS
   - Windows (WSL)
   - Linux
-  - 群晖 NAS (Synology)
-  - 其他支持 Docker 的平台
+  - Synology NAS
+  - Other Docker-supported platforms
 
 ---
 
-## 📦 快速开始
+## 📦 Quick Start
 
-### 前置要求
+### Prerequisites
 
-- **Docker**: 20.10+ 和 Docker Compose 2.0+
-- **内存**: 至少 2GB 可用内存（推荐 4GB+）
-- **磁盘空间**: 至少 5GB 可用磁盘空间（推荐 10GB+）
-- **网络**: 需要访问互联网（用于下载镜像和依赖）
+- **Docker**: 20.10+ and Docker Compose 2.0+
+- **Memory**: At least 2GB available memory (4GB+ recommended)
+- **Disk Space**: At least 5GB available disk space (10GB+ recommended)
+- **Network**: Internet access required (for downloading images and dependencies)
 
-### 系统要求
+### System Requirements
 
 #### macOS
-- macOS 10.15+ (Catalina 或更高版本)
+- macOS 10.15+ (Catalina or later)
 - Docker Desktop for Mac
 
 #### Windows
-- Windows 10/11 (64位)
-- WSL 2 或 Docker Desktop for Windows
+- Windows 10/11 (64-bit)
+- WSL 2 or Docker Desktop for Windows
 
 #### Linux
 - Ubuntu 20.04+ / Debian 11+ / CentOS 8+ / Fedora 34+
 - Docker Engine 20.10+
 - Docker Compose 2.0+
 
-#### 群晖 NAS
-- DSM 7.0+ 或 DSM 6.2+
-- Docker 套件
+#### Synology NAS
+- DSM 7.0+ or DSM 6.2+
+- Docker Package
 
 ---
 
-## 🐳 安装部署
+## 🐳 Installation
 
-### 方式一：一键安装脚本（推荐）
+### Method 1: One-Click Installation Script (Recommended)
 
-这是最简单快捷的安装方式，脚本会自动完成所有配置。
+This is the simplest and fastest installation method. The script will automatically complete all configurations.
 
-#### 1. 克隆项目
+#### 1. Clone the Project
 
 ```bash
-# 克隆项目到本地
+# Clone project to local
 git clone https://github.com/ttbye/readknows.git
 cd readknows
 ```
 
-#### 2. 运行安装脚本
+#### 2. Run Installation Script
 
 ```bash
-# 赋予执行权限
+# Grant execute permission
 chmod +x install.sh
 
-# 运行安装脚本
+# Run installation script
 ./install.sh
 ```
 
-#### 3. 安装脚本功能说明
+The installation script will prompt you to select your preferred language (English or Chinese) at the beginning.
 
-安装脚本 `install.sh` 会自动执行以下操作：
+#### 3. Installation Script Features
 
-1. **环境检查**
-   - 检查 Docker 是否安装
-   - 检查 Docker Compose 是否安装
-   - 检查 Docker 服务是否运行
-   - 检查 Docker 镜像源配置
+The `install.sh` script automatically performs the following operations:
 
-2. **平台检测**
-   - 自动检测操作系统平台（macOS/Windows/Linux/群晖）
-   - 自动选择对应的 docker-compose 配置文件
-   - 支持手动选择配置文件
+1. **Environment Check**
+   - Check if Docker is installed
+   - Check if Docker Compose is installed
+   - Check if Docker service is running
+   - Check Docker registry mirror configuration
 
-3. **配置文件创建**
-   - 自动创建 `.env` 环境变量文件
-   - 自动生成 JWT_SECRET（随机密钥）
-   - 配置默认环境变量
+2. **Platform Detection**
+   - Auto-detect operating system platform (macOS/Windows/Linux/Synology)
+   - Auto-select corresponding docker-compose configuration file
+   - Support manual configuration file selection
 
-4. **目录创建**
-   - 创建数据目录结构
-   - 创建书籍存储目录
-   - 创建封面存储目录
-   - 创建字体存储目录
-   - 创建导入目录
+3. **Configuration File Creation**
+   - Automatically create `.env` environment variable file
+   - Automatically generate JWT_SECRET (random key)
+   - Configure default environment variables
 
-5. **端口检查**
-   - 检查端口 1280（前端）是否被占用
-   - 检查端口 1281（后端）是否被占用
-   - 提示端口冲突解决方案
+4. **Directory Creation**
+   - Create data directory structure
+   - Create book storage directory
+   - Create cover storage directory
+   - Create font storage directory
+   - Create import directory
 
-6. **容器管理**
-   - 检查并停止现有容器
-   - 构建 Docker 镜像（如果不存在）
-   - 启动服务容器
+5. **Port Check**
+   - Check if port 1280 (frontend) is occupied
+   - Check if port 1281 (backend) is occupied
+   - Provide port conflict solutions
 
-7. **服务就绪检查**
-   - 等待服务启动完成
-   - 检查服务健康状态
+6. **Container Management**
+   - Check and stop existing containers
+   - Build Docker images (if not exist)
+   - Start service containers
 
-8. **Calibre 安装**（可选）
-   - 检查 Calibre 是否已安装
-   - 提示安装 Calibre（MOBI 转 EPUB 功能）
+7. **Service Readiness Check**
+   - Wait for services to start
+   - Check service health status
 
-9. **管理员初始化**（可选）
-   - 初始化默认管理员账户
-   - 设置默认管理员密码
+8. **Calibre Installation** (Optional)
+   - Check if Calibre is installed
+   - Prompt to install Calibre (MOBI to EPUB conversion)
 
-#### 4. 安装脚本交互说明
+9. **Admin Initialization** (Optional)
+   - Initialize default admin account
+   - Set default admin password
 
-安装过程中，脚本会提示您进行以下选择：
+#### 4. Installation Script Interaction
 
-- **选择部署环境**（如果自动检测失败）:
+During installation, the script will prompt you for the following choices:
+
+- **Select Deployment Environment** (if auto-detection fails):
   ```
-  1) 标准环境 (sh/docker-compose.yml)
-  2) macOS 环境 (sh/docker-compose-MACOS.yml)
-  3) Windows 环境 (sh/docker-compose-WINDOWS.yml)
-  4) Linux 环境 (sh/docker-compose-Linux.yml)
-  5) 群晖/Synology 环境 (sh/docker-compose-Synology.yml)
+  1) Standard environment (sh/docker-compose.yml)
+  2) macOS environment (sh/docker-compose-MACOS.yml)
+  3) Windows environment (sh/docker-compose-WINDOWS.yml)
+  4) Linux environment (sh/docker-compose-Linux.yml)
+  5) Synology environment (sh/docker-compose-Synology.yml)
   ```
 
-- **是否预拉取基础镜像**（加快构建速度）:
-  - 选择 `Y` 会先下载基础镜像（node、nginx 等）
-  - 选择 `n` 会在构建时自动下载
+- **Pre-pull Base Images** (speed up build):
+  - Select `Y` to download base images (node, nginx, etc.) first
+  - Select `n` to download automatically during build
 
-- **是否安装 Calibre**（MOBI 转 EPUB 功能）:
-  - 选择 `Y` 会自动安装 Calibre
-  - 选择 `n` 可以稍后手动安装
+- **Install Calibre** (MOBI to EPUB conversion):
+  - Select `Y` to automatically install Calibre
+  - Select `n` to install manually later
 
-- **是否初始化管理员账户**:
-  - 选择 `Y` 会创建默认管理员账户
-  - 选择 `n` 可以稍后手动初始化
+- **Initialize Admin Account**:
+  - Select `Y` to create default admin account
+  - Select `n` to initialize manually later
 
-#### 5. 安装完成
+#### 5. Installation Complete
 
-安装完成后，您会看到：
+After installation completes, you will see:
 
 ```
 ========================================
-安装完成
+Installation Complete
 ========================================
-✅ ReadKnows (读士私人书库) 已成功安装并启动！
+✅ ReadKnows has been successfully installed and started!
 
-访问地址:
-  🌐 前端: http://localhost:1280
-  🔌 后端API: http://localhost:1281
+Access addresses:
+  🌐 Frontend: http://localhost:1280
+  🔌 Backend API: http://localhost:1281
 
-下一步:
-  1. 打开浏览器访问 http://localhost:1280
-  2. 使用初始化时创建的管理员账户登录
-  3. 开始使用 ReadKnows (读士私人书库)！
+Next steps:
+  1. Open browser and visit http://localhost:1280
+  2. Login with the admin account created during initialization
+  3. Start using ReadKnows!
 ```
 
-### 方式二：手动 Docker 部署
+### Method 2: Manual Docker Deployment
 
-如果您想手动控制部署过程，可以按照以下步骤操作。
+If you want to manually control the deployment process, follow these steps.
 
-#### 1. 克隆项目
+#### 1. Clone the Project
 
 ```bash
 git clone https://github.com/ttbye/readknows.git
 cd readknows
 ```
 
-#### 2. 创建环境变量文件
+#### 2. Create Environment Variables File
 
-创建 `.env` 文件：
+Create `.env` file:
 
 ```bash
 cat > .env << EOF
-# JWT配置
+# JWT Configuration
 JWT_SECRET=$(openssl rand -base64 32)
 JWT_EXPIRES_IN=7d
 
-# 豆瓣API配置（可选）
+# Douban API Configuration (Optional)
 DOUBAN_API_BASE=
 
-# AI配置（可选）
+# AI Configuration (Optional)
 AI_PROVIDER=ollama
 AI_API_URL=http://frontend:1280/ollama-proxy
 AI_API_KEY=
 AI_MODEL=llama2
 
-# Ollama服务器地址
+# Ollama Server Address
 OLLAMA_URL=http://host.docker.internal:11434
 EOF
 ```
 
-#### 3. 创建数据目录
+#### 3. Create Data Directories
 
 ```bash
-# 创建数据目录结构
+# Create data directory structure
 mkdir -p data/backend/{data,books,covers,fonts,import}
 ```
 
-#### 4. 选择 docker-compose 文件
+#### 4. Select docker-compose File
 
-根据您的平台选择对应的配置文件：
+Select the corresponding configuration file based on your platform:
 
-- **标准环境**: `sh/docker-compose.yml`
+- **Standard Environment**: `sh/docker-compose.yml`
 - **macOS**: `sh/docker-compose-MACOS.yml`
 - **Windows**: `sh/docker-compose-WINDOWS.yml`
 - **Linux**: `sh/docker-compose-Linux.yml`
-- **群晖 NAS**: `sh/docker-compose-Synology.yml`
+- **Synology NAS**: `sh/docker-compose-Synology.yml`
 
-#### 5. 构建并启动服务
+#### 5. Build and Start Services
 
 ```bash
-# 进入 sh 目录
+# Enter sh directory
 cd sh
 
-# 使用标准配置构建并启动
+# Build and start with standard configuration
 docker compose -f docker-compose.yml up -d --build
 
-# 或使用平台特定配置（以 Linux 为例）
+# Or use platform-specific configuration (Linux example)
 docker compose -f docker-compose-Linux.yml up -d --build
 ```
 
-#### 6. 查看服务状态
+#### 6. Check Service Status
 
 ```bash
-# 查看容器状态
+# Check container status
 docker compose -f docker-compose.yml ps
 
-# 查看日志
+# View logs
 docker compose -f docker-compose.yml logs -f
 ```
 
-#### 7. 初始化管理员账户
+#### 7. Initialize Admin Account
 
 ```bash
-# 执行初始化脚本
+# Execute initialization script
 docker compose -f docker-compose.yml exec backend node scripts/initAdmin.js
 
-# 或使用项目根目录的脚本
+# Or use script in project root
 cd ..
 chmod +x sh/init-admin.sh
 ./sh/init-admin.sh
 ```
 
-### 方式三：群晖 NAS 部署
+### Method 3: Synology NAS Deployment
 
-#### 1. 通过 SSH 连接到群晖
+#### 1. Connect to Synology via SSH
 
 ```bash
 ssh admin@your-nas-ip
 ```
 
-#### 2. 克隆项目
+#### 2. Clone the Project
 
 ```bash
-cd /volume1/docker  # 或其他您希望安装的目录
+cd /volume1/docker  # Or other directory where you want to install
 git clone https://github.com/ttbye/readknows.git
 cd readknows
 ```
 
-#### 3. 修改 docker-compose-Synology.yml
+#### 3. Modify docker-compose-Synology.yml
 
-根据您的群晖配置，修改数据目录路径：
+Modify data directory paths according to your Synology configuration:
 
 ```yaml
 volumes:
   - /volume1/docker/ReadKnows/data:/app/data
   - /volume1/docker/ReadKnows/books:/app/books
-  # ... 其他目录
+  # ... other directories
 ```
 
-#### 4. 运行安装脚本
+#### 4. Run Installation Script
 
 ```bash
 chmod +x install.sh
 ./install.sh
 ```
 
-安装脚本会自动检测群晖环境并使用对应的配置。
+The installation script will automatically detect Synology environment and use corresponding configuration.
 
-#### 5. 通过群晖 Docker 套件管理
+#### 5. Manage via Synology Docker Package
 
-您也可以通过群晖的 Docker 套件图形界面来管理容器：
+You can also manage containers through Synology's Docker Package GUI:
 
-1. 打开 **Docker** 套件
-2. 选择 **容器** 标签
-3. 找到 `readknows-backend` 和 `readknows-frontend` 容器
-4. 可以在这里启动、停止、查看日志等
+1. Open **Docker** Package
+2. Select **Container** tab
+3. Find `readknows-backend` and `readknows-frontend` containers
+4. You can start, stop, view logs, etc. here
 
 ---
 
-## ⚙️ 配置说明
+## ⚙️ Configuration
 
-### 环境变量配置
+### Environment Variables
 
-`.env` 文件包含以下配置项：
+The `.env` file contains the following configuration items:
 
 ```env
 # ============================================
-# JWT 认证配置
+# JWT Authentication Configuration
 # ============================================
 JWT_SECRET=your-secret-key-here-change-in-production
 JWT_EXPIRES_IN=7d
 
 # ============================================
-# 豆瓣 API 配置（可选）
+# Douban API Configuration (Optional)
 # ============================================
-# 用于自动获取书籍信息，需要申请豆瓣 API Key
+# Used for automatic book information retrieval, requires Douban API Key
 DOUBAN_API_BASE=https://api.douban.com/v2
 
 # ============================================
-# AI 配置（可选）
+# AI Configuration (Optional)
 # ============================================
-# AI 服务提供商：ollama, openai, anthropic 等
+# AI service provider: ollama, openai, anthropic, etc.
 AI_PROVIDER=ollama
 
-# AI API 地址
-# 如果使用 Ollama，前端 nginx 会代理到 OLLAMA_URL
+# AI API Address
+# If using Ollama, frontend nginx will proxy to OLLAMA_URL
 AI_API_URL=http://frontend:1280/ollama-proxy
 
-# AI API Key（某些服务需要）
+# AI API Key (required for some services)
 AI_API_KEY=
 
-# AI 模型名称
+# AI Model Name
 AI_MODEL=llama2
 
 # ============================================
-# Ollama 服务器配置
+# Ollama Server Configuration
 # ============================================
-# Ollama 服务器地址
-# 如果 Ollama 在宿主机上：http://host.docker.internal:11434
-# 如果 Ollama 在局域网其他机器：http://192.168.1.100:11434
+# Ollama Server Address
+# If Ollama is on host machine: http://host.docker.internal:11434
+# If Ollama is on another machine in LAN: http://192.168.1.100:11434
 OLLAMA_URL=http://host.docker.internal:11434
 ```
 
-### 数据目录结构
+### Data Directory Structure
 
-默认数据目录结构：
+Default data directory structure:
 
 ```
 data/
 ├── backend/
-│   ├── data/          # SQLite 数据库文件
+│   ├── data/          # SQLite database files
 │   │   └── database.db
-│   ├── books/         # 书籍文件存储目录
-│   │   ├── public/    # 公共书籍
-│   │   └── user/      # 用户私有书籍
-│   ├── covers/        # 封面图片存储目录
-│   ├── fonts/         # 字体文件存储目录
-│   └── import/        # 导入目录（监控此目录自动导入）
+│   ├── books/         # Book file storage directory
+│   │   ├── public/    # Public books
+│   │   └── user/      # User private books
+│   ├── covers/        # Cover image storage directory
+│   ├── fonts/         # Font file storage directory
+│   └── import/        # Import directory (monitors this directory for auto-import)
 ```
 
-### 端口配置
+### Port Configuration
 
-默认端口配置：
+Default port configuration:
 
-- **前端**: 1280 (HTTP)
-- **后端 API**: 1281 (HTTP)
+- **Frontend**: 1280 (HTTP)
+- **Backend API**: 1281 (HTTP)
 
-修改端口：
+To modify ports:
 
-在 `docker-compose.yml` 中修改端口映射：
+Modify port mappings in `docker-compose.yml`:
 
 ```yaml
 services:
   frontend:
     ports:
-      - "8080:1280"  # 将前端端口改为 8080
+      - "8080:1280"  # Change frontend port to 8080
   backend:
     ports:
-      - "8081:1281"  # 将后端端口改为 8081
+      - "8081:1281"  # Change backend port to 8081
 ```
 
-### 网络配置
+### Network Configuration
 
-#### 访问宿主机服务
+#### Access Host Services
 
-如果需要在容器内访问宿主机上的服务（如 Ollama），使用 `host.docker.internal`：
+If you need to access services on the host machine (such as Ollama) from containers, use `host.docker.internal`:
 
 ```env
 OLLAMA_URL=http://host.docker.internal:11434
 ```
 
-#### 访问局域网其他设备
+#### Access Other Devices on LAN
 
-直接使用 IP 地址：
+Use IP address directly:
 
 ```env
 OLLAMA_URL=http://192.168.1.100:11434
@@ -615,192 +640,192 @@ OLLAMA_URL=http://192.168.1.100:11434
 
 ---
 
-## 📖 使用文档
+## 📖 Documentation
 
-### 首次登录
+### First Login
 
-安装完成后，使用默认管理员账户登录：
+After installation, login with default admin account:
 
-- **用户名**: `books`
-- **密码**: `books`
-- **邮箱**: `admin@readknows.local`
+- **Username**: `books`
+- **Password**: `books`
+- **Email**: `admin@readknows.local`
 
-> ⚠️ **安全提示**: 首次登录后请立即修改默认密码！
+> ⚠️ **Security Warning**: Please change the default password immediately after first login!
 
-### 安装 Calibre（MOBI 转 EPUB）
+### Install Calibre (MOBI to EPUB Conversion)
 
-如果需要 MOBI 转 EPUB 功能，需要安装 Calibre：
+If you need MOBI to EPUB conversion, install Calibre:
 
 ```bash
-# 方法一：使用安装脚本（推荐）
+# Method 1: Use installation script (Recommended)
 chmod +x sh/install-calibre.sh
 ./sh/install-calibre.sh
 
-# 方法二：手动安装
+# Method 2: Manual installation
 docker compose exec backend bash
-# 在容器内执行安装脚本
+# Execute installation script inside container
 ```
 
-安装完成后，系统会自动支持 MOBI 格式转换。
+After installation, the system will automatically support MOBI format conversion.
 
-### 初始化管理员账户
+### Initialize Admin Account
 
-如果安装时跳过了管理员初始化，可以手动初始化：
+If you skipped admin initialization during installation, you can initialize manually:
 
 ```bash
-# 方法一：使用脚本
+# Method 1: Use script
 chmod +x sh/init-admin.sh
 ./sh/init-admin.sh
 
-# 方法二：直接执行
+# Method 2: Direct execution
 docker compose exec backend node scripts/initAdmin.js
 ```
 
-### 批量导入书籍
+### Batch Import Books
 
-#### 方法一：通过 Web 界面导入
+#### Method 1: Import via Web Interface
 
-1. 登录系统
-2. 进入 **上传** 页面
-3. 点击 **批量导入** 或 **扫描导入**
-4. 选择要导入的目录
-5. 系统会自动扫描并导入书籍
+1. Login to system
+2. Go to **Upload** page
+3. Click **Batch Import** or **Scan Import**
+4. Select directory to import
+5. System will automatically scan and import books
 
-#### 方法二：文件监控自动导入
+#### Method 2: File Monitoring Auto-Import
 
-1. 将书籍文件放入 `data/backend/import/` 目录
-2. 系统会自动监控此目录
-3. 检测到新文件后自动导入
+1. Place book files in `data/backend/import/` directory
+2. System will automatically monitor this directory
+3. Auto-import when new files are detected
 
-#### 方法三：手动复制文件
+#### Method 3: Manual File Copy
 
-1. 将书籍文件复制到 `data/backend/books/public/` 或 `data/backend/books/user/{username}/`
-2. 在 Web 界面点击 **扫描导入**
-3. 系统会扫描并识别新文件
+1. Copy book files to `data/backend/books/public/` or `data/backend/books/user/{username}/`
+2. Click **Scan Import** in Web interface
+3. System will scan and identify new files
 
-### 常用管理命令
+### Common Management Commands
 
 ```bash
-# 查看服务状态
+# Check service status
 docker compose -f sh/docker-compose.yml ps
 
-# 查看日志
+# View logs
 docker compose -f sh/docker-compose.yml logs -f
 
-# 查看后端日志
+# View backend logs
 docker compose -f sh/docker-compose.yml logs -f backend
 
-# 查看前端日志
+# View frontend logs
 docker compose -f sh/docker-compose.yml logs -f frontend
 
-# 重启服务
+# Restart services
 docker compose -f sh/docker-compose.yml restart
 
-# 停止服务
+# Stop services
 docker compose -f sh/docker-compose.yml stop
 
-# 启动服务
+# Start services
 docker compose -f sh/docker-compose.yml start
 
-# 停止并删除容器
+# Stop and remove containers
 docker compose -f sh/docker-compose.yml down
 
-# 停止并删除容器和卷（注意：会删除数据）
+# Stop and remove containers and volumes (Warning: will delete data)
 docker compose -f sh/docker-compose.yml down -v
 
-# 重建镜像
+# Rebuild images
 docker compose -f sh/docker-compose.yml build --no-cache
 
-# 进入后端容器
+# Enter backend container
 docker compose -f sh/docker-compose.yml exec backend bash
 
-# 进入前端容器
+# Enter frontend container
 docker compose -f sh/docker-compose.yml exec frontend sh
 ```
 
-### 数据备份
+### Data Backup
 
-#### 备份数据库
+#### Backup Database
 
 ```bash
-# 备份数据库文件
+# Backup database file
 cp data/backend/data/database.db backup/database-$(date +%Y%m%d).db
 ```
 
-#### 备份书籍文件
+#### Backup Book Files
 
 ```bash
-# 备份书籍目录
+# Backup books directory
 tar -czf backup/books-$(date +%Y%m%d).tar.gz data/backend/books/
 ```
 
-#### 完整备份
+#### Full Backup
 
 ```bash
-# 备份整个数据目录
+# Backup entire data directory
 tar -czf backup/readknows-$(date +%Y%m%d).tar.gz data/backend/
 ```
 
-### 数据恢复
+### Data Restore
 
 ```bash
-# 恢复数据库
+# Restore database
 cp backup/database-20251213.db data/backend/data/database.db
 
-# 恢复书籍文件
+# Restore book files
 tar -xzf backup/books-20251213.tar.gz -C data/backend/
 
-# 恢复完整数据
+# Restore full data
 tar -xzf backup/readknows-20251213.tar.gz -C data/backend/
 ```
 
-### 镜像管理
+### Image Management
 
-#### 导出镜像（用于迁移）
+#### Export Images (for migration)
 
 ```bash
-# 使用脚本导出
+# Use script to export
 chmod +x sh/Dockerexport-images.sh
 ./sh/Dockerexport-images.sh
 
-# 或手动导出
+# Or manually export
 docker save ttbye/readknows-backend:latest -o docker-images/readknows-backend-latest.tar
 docker save ttbye/readknows-frontend:latest -o docker-images/readknows-frontend-latest.tar
 ```
 
-#### 导入镜像（在新服务器上）
+#### Import Images (on new server)
 
 ```bash
-# 使用脚本导入
+# Use script to import
 chmod +x sh/Dockerimport-images.sh
 ./sh/Dockerimport-images.sh
 
-# 或手动导入
+# Or manually import
 docker load -i docker-images/readknows-backend-latest.tar
 docker load -i docker-images/readknows-frontend-latest.tar
 ```
 
 ---
 
-## 🔧 开发指南
+## 🔧 Development Guide
 
-### 本地开发环境搭建
+### Local Development Environment Setup
 
-#### 1. 安装依赖
+#### 1. Install Dependencies
 
 ```bash
-# 安装后端依赖
+# Install backend dependencies
 cd backend
 npm install
 
-# 安装前端依赖
+# Install frontend dependencies
 cd ../frontend
 npm install
 ```
 
-#### 2. 配置环境变量
+#### 2. Configure Environment Variables
 
-创建 `backend/.env`：
+Create `backend/.env`:
 
 ```env
 PORT=1281
@@ -810,288 +835,333 @@ DB_PATH=./data/database.db
 BOOKS_DIR=./books
 ```
 
-#### 3. 初始化数据库
+#### 3. Initialize Database
 
 ```bash
 cd backend
 npm run build
 npm start
-# 数据库会自动创建
+# Database will be created automatically
 ```
 
-#### 4. 启动开发服务器
+#### 4. Start Development Servers
 
 ```bash
-# 终端1：启动后端
+# Terminal 1: Start backend
 cd backend
 npm run dev
 
-# 终端2：启动前端
+# Terminal 2: Start frontend
 cd frontend
 npm run dev
 ```
 
-访问地址：
-- 前端开发服务器: http://localhost:5173
-- 后端开发服务器: http://localhost:1281
+Access addresses:
+- Frontend dev server: http://localhost:5173
+- Backend dev server: http://localhost:1281
 
-### 项目结构
+### Project Structure
 
 ```
 readknows/
-├── backend/                 # 后端服务
-│   ├── src/                # 源代码
-│   │   ├── db/            # 数据库相关
-│   │   ├── routes/        # API 路由
-│   │   ├── utils/         # 工具函数
-│   │   └── index.ts       # 入口文件
-│   ├── scripts/           # 工具脚本
-│   │   ├── initAdmin.js   # 初始化管理员
+├── backend/                 # Backend service
+│   ├── src/                # Source code
+│   │   ├── db/            # Database related
+│   │   ├── routes/        # API routes
+│   │   ├── utils/         # Utility functions
+│   │   └── index.ts       # Entry file
+│   ├── scripts/           # Utility scripts
+│   │   ├── initAdmin.js   # Initialize admin
 │   │   ├── resetPassword.js
 │   │   └── clearDatabase.js
-│   ├── dist/              # 编译输出
-│   ├── Dockerfile         # Docker 配置
-│   ├── Dockerfile.debian  # Debian 版本 Dockerfile
+│   ├── dist/              # Compiled output
+│   ├── Dockerfile         # Docker configuration
+│   ├── Dockerfile.debian  # Debian version Dockerfile
 │   └── package.json
-├── frontend/              # 前端应用
-│   ├── src/              # 源代码
-│   │   ├── components/   # 组件
-│   │   ├── pages/        # 页面
+├── frontend/              # Frontend application
+│   ├── src/              # Source code
+│   │   ├── components/   # Components
+│   │   ├── pages/        # Pages
 │   │   ├── hooks/        # Hooks
-│   │   ├── store/         # 状态管理
-│   │   ├── utils/         # 工具函数
-│   │   └── App.tsx        # 入口组件
-│   ├── public/           # 静态资源
-│   ├── dist/             # 构建输出
-│   ├── Dockerfile        # Docker 配置
+│   │   ├── store/         # State management
+│   │   ├── utils/         # Utility functions
+│   │   └── App.tsx        # Entry component
+│   ├── public/           # Static resources
+│   ├── dist/             # Build output
+│   ├── Dockerfile        # Docker configuration
 │   └── package.json
-├── sh/                   # 脚本目录
-│   ├── docker-compose.yml           # 标准配置
-│   ├── docker-compose-MACOS.yml     # macOS 配置
-│   ├── docker-compose-WINDOWS.yml   # Windows 配置
-│   ├── docker-compose-Linux.yml     # Linux 配置
-│   ├── docker-compose-Synology.yml  # 群晖配置
-│   ├── install-calibre.sh           # Calibre 安装脚本
-│   ├── init-admin.sh                 # 管理员初始化脚本
-│   └── ...                          # 其他脚本
-├── data/                 # 数据目录（运行时创建）
-├── docker-images/        # 导出的镜像文件
-├── install.sh           # 一键安装脚本
-├── .env                 # 环境变量配置
-└── README.md            # 项目文档
+├── sh/                   # Scripts directory
+│   ├── docker-compose.yml           # Standard configuration
+│   ├── docker-compose-MACOS.yml     # macOS configuration
+│   ├── docker-compose-WINDOWS.yml   # Windows configuration
+│   ├── docker-compose-Linux.yml     # Linux configuration
+│   ├── docker-compose-Synology.yml  # Synology configuration
+│   ├── install-calibre.sh           # Calibre installation script
+│   ├── init-admin.sh                 # Admin initialization script
+│   └── ...                          # Other scripts
+├── data/                 # Data directory (created at runtime)
+├── docker-images/        # Exported image files
+├── install.sh           # One-click installation script
+├── install-en.sh        # English installation script
+├── install-zh.sh        # Chinese installation script
+├── .env                 # Environment variables configuration
+└── README.md            # Project documentation
 ```
 
-### 构建项目
+### Build Project
 
-#### 构建后端
+#### Build Backend
 
 ```bash
 cd backend
 npm run build
 ```
 
-#### 构建前端
+#### Build Frontend
 
 ```bash
 cd frontend
 npm run build
 ```
 
-#### 构建 Docker 镜像
+#### Build Docker Images
 
 ```bash
-# 构建后端镜像
+# Build backend image
 cd backend
 docker build -t ttbye/readknows-backend:latest -f Dockerfile.debian .
 
-# 构建前端镜像
+# Build frontend image
 cd frontend
 docker build -t ttbye/readknows-frontend:latest .
 ```
 
-### API 文档
+### API Documentation
 
-#### 认证相关
+#### Authentication
 
-- `POST /api/auth/login` - 用户登录
-- `POST /api/auth/register` - 用户注册
-- `GET /api/auth/me` - 获取当前用户信息
-- `POST /api/auth/logout` - 用户登出
+- `POST /api/auth/login` - User login
+- `POST /api/auth/register` - User registration
+- `GET /api/auth/me` - Get current user information
+- `POST /api/auth/logout` - User logout
 
-#### 书籍相关
+#### Books
 
-- `GET /api/books` - 获取书籍列表（支持分页、搜索、排序）
-- `GET /api/books/:id` - 获取书籍详情
-- `POST /api/books/upload` - 上传书籍
-- `PUT /api/books/:id` - 更新书籍信息
-- `DELETE /api/books/:id` - 删除书籍
-- `GET /api/books/recent` - 获取最近新增书籍
-- `POST /api/books/:id/extract-cover` - 提取书籍封面
+- `GET /api/books` - Get book list (supports pagination, search, sorting)
+- `GET /api/books/:id` - Get book details
+- `POST /api/books/upload` - Upload book
+- `PUT /api/books/:id` - Update book information
+- `DELETE /api/books/:id` - Delete book
+- `GET /api/books/recent` - Get recently added books
+- `POST /api/books/:id/extract-cover` - Extract book cover
 
-#### 书架相关
+#### Library
 
-- `GET /api/shelf/my` - 获取我的书架
-- `POST /api/shelf/add` - 添加到书架
-- `DELETE /api/shelf/remove/:bookId` - 从书架移除
-- `GET /api/shelf/check/:bookId` - 检查是否在书架
+- `GET /api/shelf/my` - Get my library
+- `POST /api/shelf/add` - Add to library
+- `DELETE /api/shelf/remove/:bookId` - Remove from library
+- `GET /api/shelf/check/:bookId` - Check if in library
 
-#### 阅读相关
+#### Reading
 
-- `GET /api/reading/progress` - 获取所有阅读进度
-- `GET /api/reading/progress/:bookId` - 获取书籍阅读进度
-- `POST /api/reading/progress` - 更新阅读进度
-- `GET /api/reading/history` - 获取阅读历史
-- `GET /api/reading/history/stats/summary` - 获取阅读统计
+- `GET /api/reading/progress` - Get all reading progress
+- `GET /api/reading/progress/:bookId` - Get book reading progress
+- `POST /api/reading/progress` - Update reading progress
+- `GET /api/reading/history` - Get reading history
+- `GET /api/reading/history/stats/summary` - Get reading statistics
 
-#### 笔记相关
+#### Notes
 
-- `GET /api/notes` - 获取笔记列表
-- `POST /api/notes` - 创建笔记
-- `PUT /api/notes/:id` - 更新笔记
-- `DELETE /api/notes/:id` - 删除笔记
+- `GET /api/notes` - Get note list
+- `POST /api/notes` - Create note
+- `PUT /api/notes/:id` - Update note
+- `DELETE /api/notes/:id` - Delete note
 
-#### 高亮相关（EPUB）
+#### Highlights (EPUB)
 
-- `GET /api/highlights/book/:bookId` - 获取某本书的高亮列表
-- `POST /api/highlights` - 新增/更新高亮（支持离线补传 upsert）
-- `DELETE /api/highlights/:id` - 删除高亮（软删除）
+- `GET /api/highlights/book/:bookId` - Get highlight list for a book
+- `POST /api/highlights` - Add/update highlight (supports offline upsert)
+- `DELETE /api/highlights/:id` - Delete highlight (soft delete)
 
-#### AI 相关
+#### AI
 
-- `GET /api/ai/test` - 测试 AI 配置
-- `POST /api/ai/chat` - AI 对话
+- `GET /api/ai/test` - Test AI configuration
+- `POST /api/ai/chat` - AI chat
 
-#### 用户管理（管理员）
+#### User Management (Admin)
 
-- `GET /api/users` - 获取用户列表
-- `POST /api/users` - 创建用户
-- `PUT /api/users/:id` - 更新用户信息
-- `DELETE /api/users/:id` - 删除用户
-- `POST /api/users/:id/reset-password` - 重置用户密码
+- `GET /api/users` - Get user list
+- `POST /api/users` - Create user
+- `PUT /api/users/:id` - Update user information
+- `DELETE /api/users/:id` - Delete user
+- `POST /api/users/:id/reset-password` - Reset user password
 
-#### IP 管理（管理员）
+#### IP Management (Admin)
 
-- `GET /api/ip/whitelist` - 获取 IP 白名单
-- `POST /api/ip/whitelist` - 添加 IP 到白名单
-- `DELETE /api/ip/whitelist/:id` - 从白名单移除
-- `GET /api/ip/blacklist` - 获取 IP 黑名单
-- `POST /api/ip/blacklist` - 添加 IP 到黑名单
-- `DELETE /api/ip/blacklist/:id` - 从黑名单移除
+- `GET /api/ip/whitelist` - Get IP whitelist
+- `POST /api/ip/whitelist` - Add IP to whitelist
+- `DELETE /api/ip/whitelist/:id` - Remove from whitelist
+- `GET /api/ip/blacklist` - Get IP blacklist
+- `POST /api/ip/blacklist` - Add IP to blacklist
+- `DELETE /api/ip/blacklist/:id` - Remove from blacklist
 
-#### 其他
+#### Others
 
-- `GET /api/health` - 健康检查
-- `GET /api/fonts` - 获取字体列表
-- `POST /api/fonts/upload` - 上传字体
-- `GET /opds` - OPDS 目录
-
----
-
-## 🤝 贡献指南
-
-我们欢迎所有形式的贡献！
-
-### 贡献方式
-
-1. **报告问题**: 在 [Issues](https://github.com/ttbye/readknows/issues) 中报告 Bug 或提出功能建议
-2. **提交代码**: Fork 项目，创建功能分支，提交 Pull Request
-3. **改进文档**: 帮助改进项目文档
-4. **分享反馈**: 分享使用体验和改进建议
-
-### 开发流程
-
-1. Fork 本仓库
-2. 创建功能分支 (`git checkout -b feature/AmazingFeature`)
-3. 提交更改 (`git commit -m 'Add some AmazingFeature'`)
-4. 推送到分支 (`git push origin feature/AmazingFeature`)
-5. 开启 Pull Request
-
-### 代码规范
-
-- 使用 TypeScript 进行类型检查
-- 遵循 ESLint 代码规范
-- 提交前运行测试
-- 编写清晰的提交信息
-- 添加必要的注释
+- `GET /api/health` - Health check
+- `GET /api/fonts` - Get font list
+- `POST /api/fonts/upload` - Upload font
+- `GET /opds` - OPDS catalog
 
 ---
 
-## 📝 版本说明
+## 🤝 Contributing
 
-### v1.125.12 (2025-12-13)
+We welcome all forms of contributions!
 
-#### ✨ 新功能
+### How to Contribute
 
-- ✅ 初始版本发布
-- ✅ 支持 EPUB、PDF、TXT、MOBI 格式
-- ✅ 多用户系统
-- ✅ PWA 支持
-- ✅ Docker 部署
-- ✅ AI 集成（Ollama）
-- ✅ 批量导入功能
-- ✅ 阅读笔记和高亮
-- ✅ 书籍分类管理
-- ✅ 用户管理功能
-- ✅ IP 访问控制
-- ✅ OPDS 支持
-- ✅ 全文搜索
-- ✅ 阅读统计
-- ✅ 文件监控自动导入
+1. **Report Issues**: Report bugs or suggest features in [Issues](https://github.com/ttbye/readknows/issues)
+2. **Submit Code**: Fork the project, create a feature branch, submit Pull Request
+3. **Improve Documentation**: Help improve project documentation
+4. **Share Feedback**: Share usage experience and improvement suggestions
 
-#### 🐛 已知问题
+### Development Workflow
 
-- MOBI 转 EPUB 需要安装 Calibre（已提供安装脚本）
-- 某些 PDF 文件可能无法正确提取文本
-- 大文件上传可能需要较长时间
-- 某些 EPUB 文件的封面可能无法正确提取
+1. Fork this repository
+2. Create feature branch (`git checkout -b feature/AmazingFeature`)
+3. Commit changes (`git commit -m 'Add some AmazingFeature'`)
+4. Push to branch (`git push origin feature/AmazingFeature`)
+5. Open Pull Request
 
-#### 📋 技术细节
+### Code Standards
 
-- **后端版本**: 1.125.12(0RL0A3)
-- **构建时间**: 2025-12-13T17:35:08.131Z
+- Use TypeScript for type checking
+- Follow ESLint code standards
+- Run tests before committing
+- Write clear commit messages
+- Add necessary comments
+
+---
+
+## 📝 Version History
+
+### v1.225.12 (2025-12-26)
+
+#### ✨ New Features
+
+1. **TTS-API-Lite (Lightweight TTS Online Generation API System)**
+   - Lightweight TTS service, recommended for regular servers
+   - Provides online TTS generation API
+   - Low resource usage, suitable for production environments
+
+2. **TTS-API (Full TTS Service)**
+   - Supports online TTS and local TTS generation
+   - Requires higher GPU hardware
+   - Slower voice generation, for experience only
+
+3. **Office Document Support**
+   - Added Office document (Word, Excel, PowerPoint) upload functionality
+   - Supports simple document browsing
+
+4. **Note Export and Import Enhancement**
+   - Notes and highlights can be exported as Markdown
+   - Supports adding exported notes as new books to server
+
+5. **Voice Reading Feature (Beta)**
+   - Uses online Edge-TTS for voice reading
+   - Currently Beta version, for experience only
+   - Will continue to be improved in future versions
+
+#### 🐛 Fixes
+
+1. **Fixed Ollama Local Service Connection Issue**
+   - Fixed local Ollama service connection problem
+   - Improved service discovery and connection mechanism
+
+2. **Fixed Multiple Bugs**
+   - Fixed multiple known issues
+   - Improved system stability and performance
+
+#### ⚠️ Known Issues
+
+1. **Voice Reading Feature Experience Needs Improvement**
+   - Current voice reading feature is Beta version
+   - Experience needs improvement
+   - Will continue to optimize in future versions
+
+2. **OPDS Feature Has Temporary Issues**
+   - OPDS feature currently has some issues
+   - Being fixed, expected to be resolved in next version
+
+#### 📋 Technical Details
+
+- **Version**: 1.225.12
+- **Build Date**: 2025-12-26
 - **Node.js**: 20.x
-- **数据库**: SQLite
+- **Database**: SQLite
 
-### v0.2025.12 (2025-12-17)
+### v1.2025.12 (2025-12-17)
 
-#### ✨ 新功能 / 优化
+#### ✨ New Features / Optimizations
 
-- ✅ EPUB 高亮（离线缓存 + 联网同步）与高亮点击回选
-- ✅ 文本选择菜单升级（高亮/笔记/复制/搜索/词典/翻译）
-- ✅ 笔记与高亮导出 Markdown；可导入为“笔记书”（私有书籍，分类「笔记」，封面叠加“笔记”）
-- ✅ 跨设备进度变更提醒（回到前台/聚焦检测；提示包含章节信息；避免重复提示）
-- ✅ EPUB 进度展示改为百分比（2 位小数），更稳定
+- ✅ EPUB highlights (offline cache + online sync) and highlight click re-selection
+- ✅ Text selection menu upgrade (highlight/note/copy/search/dictionary/translate)
+- ✅ Notes and highlights export to Markdown; can import as "Note Book" (private book, categorized as "Notes", cover with "Notes" overlay)
+- ✅ Cross-device progress change notifications (detect when returning to foreground/focus; includes chapter info; avoid duplicate notifications)
+- ✅ EPUB progress display changed to percentage (2 decimal places) for better stability
 
-#### 🐛 修复
+#### 🐛 Fixes
 
-- ✅ epubjs hooks 兼容：修复多种 TypeError 与 Locations.parse(ownerDocument) 相关报错
-- ✅ PDF 移动端/PWA 纵向拉伸变形问题
-- ✅ Markdown 阅读器边距与渲染样式优化
-- ✅ 顶部导航栏固定与下拉刷新体验修复
+- ✅ epubjs hooks compatibility: Fixed various TypeErrors and Locations.parse(ownerDocument) related errors
+- ✅ PDF mobile/PWA vertical stretch distortion issue
+- ✅ Markdown reader margins and rendering style optimization
+- ✅ Top navigation bar fixed and pull-to-refresh experience fixes
 
 ---
 
-## 截图
+### Previous Versions
+
+#### Versions before v1.1025.12
+
+- ✅ Initial version release
+- ✅ Support for EPUB, PDF, TXT, MOBI formats
+- ✅ Multi-user system
+- ✅ PWA support
+- ✅ Docker deployment
+- ✅ AI integration (Ollama)
+- ✅ Batch import functionality
+- ✅ Reading notes and highlights
+- ✅ Book category management
+- ✅ User management features
+- ✅ IP access control
+- ✅ OPDS support
+- ✅ Full-text search
+- ✅ Reading statistics
+- ✅ File monitoring auto-import
+
+---
+
+## Screenshots
 <img width="2634" height="2434" alt="image" src="https://github.com/user-attachments/assets/b097653e-546d-4541-a233-b328ec977956" />
 <img width="2628" height="2382" alt="image" src="https://github.com/user-attachments/assets/a75f07ab-188f-4d38-bac3-13a7269bee5a" />
 <img width="856" height="1858" alt="image" src="https://github.com/user-attachments/assets/8118a411-1eed-4367-a7fa-2aa47ec671ee" />
 <img width="856" height="1862" alt="image" src="https://github.com/user-attachments/assets/1015994a-67e1-4ed2-b883-87c0516097da" />
 
 
-## 🐛 常见问题
+## 🐛 FAQ
 
-### Docker 相关问题
+### Docker Related Issues
 
-#### Q: 容器启动失败怎么办？
+#### Q: What to do if container fails to start?
 
-A: 检查以下几点：
+A: Check the following:
 
-1. **检查 Docker 服务是否运行**:
+1. **Check if Docker service is running**:
    ```bash
    docker info
    ```
 
-2. **检查端口是否被占用**:
+2. **Check if ports are occupied**:
    ```bash
    # Linux/macOS
    lsof -i :1280
@@ -1102,136 +1172,136 @@ A: 检查以下几点：
    netstat -ano | findstr :1281
    ```
 
-3. **查看容器日志**:
+3. **View container logs**:
    ```bash
    docker compose logs backend
    docker compose logs frontend
    ```
 
-4. **检查磁盘空间**:
+4. **Check disk space**:
    ```bash
    df -h
    ```
 
-#### Q: EPUB 封面无法提取/显示
+#### Q: EPUB cover cannot be extracted/displayed
 
-A: 通常是目录权限问题：
+A: Usually a directory permission issue:
 
 ```bash
-# 修复权限
+# Fix permissions
 sudo chmod -R 777 data/backend/covers
 
-# 重启容器
+# Restart container
 docker compose restart backend
 ```
 
-#### Q: 无法访问宿主机服务（如 Ollama）
+#### Q: Cannot access host services (such as Ollama)
 
-A: 检查网络配置：
+A: Check network configuration:
 
-1. **使用 host.docker.internal**:
+1. **Use host.docker.internal**:
    ```env
    OLLAMA_URL=http://host.docker.internal:11434
    ```
 
-2. **Linux 需要额外配置**:
+2. **Linux requires additional configuration**:
    ```bash
-   # 在 docker-compose.yml 中添加
+   # Add to docker-compose.yml
    extra_hosts:
      - "host.docker.internal:host-gateway"
    ```
 
-### 功能相关问题
+### Feature Related Issues
 
-#### Q: MOBI 文件无法转换
+#### Q: MOBI files cannot be converted
 
-A: 需要安装 Calibre：
+A: Need to install Calibre:
 
 ```bash
 ./sh/install-calibre.sh
 ```
 
-#### Q: 上传大文件失败
+#### Q: Large file upload fails
 
-A: 检查以下配置：
+A: Check the following configurations:
 
-1. **Nginx 上传大小限制**（前端）:
-   修改 `frontend/nginx.conf` 中的 `client_max_body_size`
+1. **Nginx upload size limit** (frontend):
+   Modify `client_max_body_size` in `frontend/nginx.conf`
 
-2. **后端请求大小限制**:
-   已在代码中设置为 500MB
+2. **Backend request size limit**:
+   Already set to 500MB in code
 
-#### Q: 忘记管理员密码
+#### Q: Forgot admin password
 
-A: 重置密码：
+A: Reset password:
 
 ```bash
 docker compose exec backend node scripts/resetPassword.js
 ```
 
-### 性能优化
+### Performance Optimization
 
-#### Q: 如何提高性能？
+#### Q: How to improve performance?
 
-A: 建议：
+A: Recommendations:
 
-1. **使用 SSD 存储数据目录**
-2. **增加 Docker 内存限制**
-3. **定期清理未使用的镜像和容器**
-4. **使用反向代理（Nginx）缓存静态资源**
-
----
-
-## 🔒 安全说明
-
-### 生产环境安全建议
-
-1. **修改默认密码**: 首次登录后立即修改默认管理员密码
-2. **使用强密码**: JWT_SECRET 应使用强随机字符串
-3. **配置 HTTPS**: 建议使用 Nginx 反向代理配置 HTTPS
-4. **定期备份**: 定期备份数据库和书籍文件
-5. **IP 访问控制**: 配置 IP 白名单限制访问
-6. **更新依赖**: 定期更新依赖包修复安全漏洞
-7. **防火墙配置**: 配置防火墙规则限制端口访问
-
-### 数据安全
-
-- 密码使用 bcrypt 加密存储
-- JWT Token 有过期时间
-- 支持 IP 访问控制
-- 数据库文件权限控制
+1. **Use SSD storage for data directory**
+2. **Increase Docker memory limit**
+3. **Regularly clean unused images and containers**
+4. **Use reverse proxy (Nginx) to cache static resources**
 
 ---
 
-## 📄 许可证
+## 🔒 Security
 
-本项目采用 [MIT License](LICENSE) 许可证。
+### Production Environment Security Recommendations
+
+1. **Change Default Password**: Change default admin password immediately after first login
+2. **Use Strong Password**: JWT_SECRET should use strong random string
+3. **Configure HTTPS**: Recommend using Nginx reverse proxy to configure HTTPS
+4. **Regular Backups**: Regularly backup database and book files
+5. **IP Access Control**: Configure IP whitelist to limit access
+6. **Update Dependencies**: Regularly update dependencies to fix security vulnerabilities
+7. **Firewall Configuration**: Configure firewall rules to limit port access
+
+### Data Security
+
+- Passwords stored encrypted with bcrypt
+- JWT Token has expiration time
+- Supports IP access control
+- Database file permission control
 
 ---
 
-## 🙏 致谢
+## 📄 License
 
-- [EPUB.js](https://github.com/futurepress/epub.js) - EPUB 阅读器
-- [PDF.js](https://github.com/mozilla/pdf.js) - PDF 阅读器
-- [Calibre](https://calibre-ebook.com/) - 电子书管理工具
-- [React](https://react.dev/) - UI 框架
-- [Express](https://expressjs.com/) - Web 框架
-- [Tailwind CSS](https://tailwindcss.com/) - CSS 框架
-- [Vite](https://vitejs.dev/) - 构建工具
+This project is licensed under [Apache License 2.0](LICENSE).
 
 ---
 
-## 📮 联系方式
+## 🙏 Acknowledgments
 
-- **作者**: ttbye
-- **项目地址**: https://github.com/ttbye/readknows
-- **问题反馈**: https://github.com/ttbye/readknows/issues
+- [EPUB.js](https://github.com/futurepress/epub.js) - EPUB reader
+- [PDF.js](https://github.com/mozilla/pdf.js) - PDF reader
+- [Calibre](https://calibre-ebook.com/) - E-book management tool
+- [React](https://react.dev/) - UI framework
+- [Express](https://expressjs.com/) - Web framework
+- [Tailwind CSS](https://tailwindcss.com/) - CSS framework
+- [Vite](https://vitejs.dev/) - Build tool
+
+---
+
+## 📮 Contact
+
+- **Author**: ttbye
+- **Project URL**: https://github.com/ttbye/readknows
+- **Issue Tracker**: https://github.com/ttbye/readknows/issues
 
 ---
 
 ## ⭐ Star History
 
-如果这个项目对你有帮助，请给一个 Star ⭐！
+If this project helps you, please give it a Star ⭐!
 
 ---
 
@@ -1239,6 +1309,7 @@ A: 建议：
 
 **Made with ❤️ by ttbye**
 
-[⬆ 回到顶部](#-readknows-读士私人书库)
+[⬆ Back to Top](#-readknows-private-digital-library)
 
 </div>
+

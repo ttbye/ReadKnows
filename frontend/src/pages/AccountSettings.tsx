@@ -5,6 +5,7 @@
  */
 
 import { useState, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../store/authStore';
 import { User, Lock, ArrowLeft, Save, Mail, Plus, Trash2, Edit2, X } from 'lucide-react';
@@ -12,6 +13,7 @@ import api from '../utils/api';
 import toast from 'react-hot-toast';
 
 export default function AccountSettings() {
+  const { t } = useTranslation();
   const { user, setUser } = useAuthStore();
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
@@ -21,6 +23,7 @@ export default function AccountSettings() {
   const [formData, setFormData] = useState({
     username: '',
     email: '',
+    nickname: '',
   });
   
   const [passwordData, setPasswordData] = useState({
@@ -42,6 +45,7 @@ export default function AccountSettings() {
       setFormData({
         username: user.username || '',
         email: user.email || '',
+        nickname: (user as any).nickname || '',
       });
       fetchPushEmails();
     }
@@ -55,7 +59,7 @@ export default function AccountSettings() {
       setPushEmails(response.data.emails || []);
     } catch (error: any) {
       console.error('获取推送邮箱列表失败:', error);
-      toast.error(error.response?.data?.error || '获取推送邮箱列表失败');
+      toast.error(error.response?.data?.error || t('accountSettings.fetchPushEmailsFailed'));
     } finally {
       setLoadingEmails(false);
     }
@@ -64,33 +68,33 @@ export default function AccountSettings() {
   // 添加推送邮箱
   const handleAddEmail = async () => {
     if (!newEmail.trim() || !newEmail.includes('@')) {
-      toast.error('请输入有效的邮箱地址');
+      toast.error(t('accountSettings.emailPlaceholder') || t('bookDetail.enterValidEmail'));
       return;
     }
 
     try {
       await api.post('/users/me/push-emails', { email: newEmail.trim() });
-      toast.success('推送邮箱添加成功');
+      toast.success(t('accountSettings.pushEmailAdded'));
       setNewEmail('');
       setShowAddEmail(false);
       fetchPushEmails();
     } catch (error: any) {
-      toast.error(error.response?.data?.error || '添加推送邮箱失败');
+      toast.error(error.response?.data?.error || t('accountSettings.addPushEmailFailed'));
     }
   };
 
   // 删除推送邮箱
   const handleDeleteEmail = async (id: string) => {
-    if (!confirm('确定要删除这个推送邮箱吗？')) {
+    if (!confirm(t('accountSettings.confirmDeletePushEmail'))) {
       return;
     }
 
     try {
       await api.delete(`/users/me/push-emails/${id}`);
-      toast.success('推送邮箱删除成功');
+      toast.success(t('accountSettings.pushEmailDeleted'));
       fetchPushEmails();
     } catch (error: any) {
-      toast.error(error.response?.data?.error || '删除推送邮箱失败');
+      toast.error(error.response?.data?.error || t('accountSettings.deletePushEmailFailed'));
     }
   };
 
@@ -109,24 +113,24 @@ export default function AccountSettings() {
   // 保存编辑
   const handleSaveEdit = async (id: string) => {
     if (!editingEmailValue.trim() || !editingEmailValue.includes('@')) {
-      toast.error('请输入有效的邮箱地址');
+      toast.error(t('accountSettings.emailPlaceholder') || t('bookDetail.enterValidEmail'));
       return;
     }
 
     try {
       await api.put(`/users/me/push-emails/${id}`, { email: editingEmailValue.trim() });
-      toast.success('推送邮箱更新成功');
+      toast.success(t('accountSettings.pushEmailUpdated'));
       setEditingEmail(null);
       setEditingEmailValue('');
       fetchPushEmails();
     } catch (error: any) {
-      toast.error(error.response?.data?.error || '更新推送邮箱失败');
+      toast.error(error.response?.data?.error || t('accountSettings.updatePushEmailFailed'));
     }
   };
 
   const handleSave = async () => {
     if (!formData.email.trim()) {
-      toast.error('请填写邮箱');
+      toast.error(t('accountSettings.pleaseFillEmail'));
       return;
     }
 
@@ -138,9 +142,9 @@ export default function AccountSettings() {
       
       // 更新store中的用户信息
       setUser(response.data.user);
-      toast.success('个人信息已更新');
+      toast.success(t('accountSettings.personalInfoUpdated'));
     } catch (error: any) {
-      toast.error(error.response?.data?.error || '更新失败');
+      toast.error(error.response?.data?.error || t('accountSettings.updateFailed'));
     } finally {
       setSaving(false);
     }
@@ -148,17 +152,17 @@ export default function AccountSettings() {
 
   const handleChangePassword = async () => {
     if (!passwordData.currentPassword || !passwordData.newPassword || !passwordData.confirmPassword) {
-      toast.error('请填写所有密码字段');
+      toast.error(t('accountSettings.pleaseFillAllPasswordFields'));
       return;
     }
 
     if (passwordData.newPassword.length < 6) {
-      toast.error('新密码长度至少6位');
+      toast.error(t('accountSettings.newPasswordMinLength'));
       return;
     }
 
     if (passwordData.newPassword !== passwordData.confirmPassword) {
-      toast.error('两次输入的新密码不一致');
+      toast.error(t('accountSettings.passwordsNotMatch'));
       return;
     }
 
@@ -169,14 +173,14 @@ export default function AccountSettings() {
         newPassword: passwordData.newPassword,
       });
       
-      toast.success('密码修改成功');
+      toast.success(t('accountSettings.passwordChanged'));
       setPasswordData({
         currentPassword: '',
         newPassword: '',
         confirmPassword: '',
       });
     } catch (error: any) {
-      toast.error(error.response?.data?.error || '密码修改失败');
+      toast.error(error.response?.data?.error || t('accountSettings.changePasswordFailed'));
     } finally {
       setChangingPassword(false);
     }
@@ -188,13 +192,13 @@ export default function AccountSettings() {
       <div className="card mb-6">
         <div className="flex items-center gap-2 mb-4">
           <User className="w-5 h-5 text-blue-600" />
-          <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">个人信息</h2>
+          <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">{t('accountSettings.personalInfo')}</h2>
         </div>
         
         <div className="space-y-4">
           <div>
             <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
-              用户名
+              {t('userManagement.username')}
             </label>
             <input
               type="text"
@@ -202,24 +206,40 @@ export default function AccountSettings() {
               value={formData.username}
               readOnly
               disabled
-              placeholder="用户名"
+              placeholder={t('userManagement.username')}
             />
             <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-              用户名注册后无法修改
+              {t('userManagement.usernameCannotChange')}
             </p>
           </div>
           
           <div>
             <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
-              邮箱
+              {t('userManagement.email')}
             </label>
             <input
               type="email"
               className="input w-full"
               value={formData.email}
               onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-              placeholder="请输入邮箱"
+              placeholder={t('userManagement.emailPlaceholder')}
             />
+          </div>
+          
+          <div>
+            <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
+              {t('userManagement.nickname')}
+            </label>
+            <input
+              type="text"
+              className="input w-full"
+              value={formData.nickname}
+              onChange={(e) => setFormData({ ...formData, nickname: e.target.value })}
+              placeholder={t('userManagement.nicknamePlaceholder')}
+            />
+            <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+              {t('userManagement.nicknameHint')}
+            </p>
           </div>
           
           <button
@@ -230,12 +250,12 @@ export default function AccountSettings() {
             {saving ? (
               <>
                 <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
-                保存中...
+                {t('common.loading')}
               </>
             ) : (
               <>
                 <Save className="w-4 h-4" />
-                保存修改
+                {t('common.save')}
               </>
             )}
           </button>
@@ -247,7 +267,7 @@ export default function AccountSettings() {
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-2">
             <Mail className="w-5 h-5 text-blue-600" />
-            <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">推送邮箱管理</h2>
+            <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">{t('accountSettings.pushEmails')}</h2>
           </div>
           {!showAddEmail && (
             <button
@@ -255,7 +275,7 @@ export default function AccountSettings() {
               className="btn btn-sm btn-primary flex items-center gap-2"
             >
               <Plus className="w-4 h-4" />
-              添加邮箱
+              {t('accountSettings.addPushEmail')}
             </button>
           )}
         </div>
@@ -270,7 +290,7 @@ export default function AccountSettings() {
                   className="input flex-1"
                   value={newEmail}
                   onChange={(e) => setNewEmail(e.target.value)}
-                  placeholder="请输入推送邮箱地址（如：example@kindle.com）"
+                  placeholder={t('accountSettings.emailPlaceholder')}
                   onKeyPress={(e) => {
                     if (e.key === 'Enter') {
                       handleAddEmail();
@@ -281,7 +301,7 @@ export default function AccountSettings() {
                   onClick={handleAddEmail}
                   className="btn btn-primary"
                 >
-                  添加
+                  {t('common.add')}
                 </button>
                 <button
                   onClick={() => {
@@ -294,7 +314,7 @@ export default function AccountSettings() {
                 </button>
               </div>
               <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
-                支持Kindle邮箱（@kindle.com）和普通邮箱
+                {t('book.supportKindleEmail')}
               </p>
             </div>
           )}
@@ -303,13 +323,13 @@ export default function AccountSettings() {
           {loadingEmails ? (
             <div className="text-center py-8 text-gray-500 dark:text-gray-400">
               <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-gray-400 mx-auto"></div>
-              <p className="mt-2">加载中...</p>
+              <p className="mt-2">{t('common.loading')}</p>
             </div>
           ) : pushEmails.length === 0 ? (
             <div className="text-center py-8 text-gray-500 dark:text-gray-400">
               <Mail className="w-12 h-12 mx-auto mb-2 opacity-50" />
-              <p>暂无推送邮箱</p>
-              <p className="text-xs mt-1">添加邮箱后，推送书籍时会自动记录</p>
+              <p>{t('accountSettings.noPushEmails')}</p>
+              <p className="text-xs mt-1">{t('accountSettings.pushEmailHint')}</p>
             </div>
           ) : (
             <div className="space-y-2">
@@ -362,21 +382,21 @@ export default function AccountSettings() {
                         </div>
                         {email.last_used_at && (
                           <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                            最后使用：{new Date(email.last_used_at).toLocaleString('zh-CN')}
+                            {t('accountSettings.lastUsed')}：{new Date(email.last_used_at).toLocaleString()}
                           </p>
                         )}
                       </div>
                       <button
                         onClick={() => startEditEmail(email.id, email.email)}
                         className="btn btn-sm btn-secondary"
-                        title="编辑"
+                        title={t('common.edit')}
                       >
                         <Edit2 className="w-4 h-4" />
                       </button>
                       <button
                         onClick={() => handleDeleteEmail(email.id)}
                         className="btn btn-sm btn-danger"
-                        title="删除"
+                        title={t('common.delete')}
                       >
                         <Trash2 className="w-4 h-4" />
                       </button>
@@ -393,46 +413,46 @@ export default function AccountSettings() {
       <div className="card">
         <div className="flex items-center gap-2 mb-4">
           <Lock className="w-5 h-5 text-blue-600" />
-          <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">修改密码</h2>
+          <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">{t('accountSettings.changePassword')}</h2>
         </div>
         
         <div className="space-y-4">
           <div>
             <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
-              当前密码
+              {t('accountSettings.currentPassword')}
             </label>
             <input
               type="password"
               className="input w-full"
               value={passwordData.currentPassword}
               onChange={(e) => setPasswordData({ ...passwordData, currentPassword: e.target.value })}
-              placeholder="请输入当前密码"
+              placeholder={t('accountSettings.currentPasswordPlaceholder')}
             />
           </div>
           
           <div>
             <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
-              新密码
+              {t('accountSettings.newPassword')}
             </label>
             <input
               type="password"
               className="input w-full"
               value={passwordData.newPassword}
               onChange={(e) => setPasswordData({ ...passwordData, newPassword: e.target.value })}
-              placeholder="请输入新密码（至少6位）"
+              placeholder={t('userManagement.passwordPlaceholder')}
             />
           </div>
           
           <div>
             <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
-              确认新密码
+              {t('accountSettings.confirmPassword')}
             </label>
             <input
               type="password"
               className="input w-full"
               value={passwordData.confirmPassword}
               onChange={(e) => setPasswordData({ ...passwordData, confirmPassword: e.target.value })}
-              placeholder="请再次输入新密码"
+              placeholder={t('accountSettings.confirmPasswordPlaceholder')}
             />
           </div>
           
@@ -444,12 +464,12 @@ export default function AccountSettings() {
             {changingPassword ? (
               <>
                 <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
-                修改中...
+                {t('common.loading')}
               </>
             ) : (
               <>
                 <Lock className="w-4 h-4" />
-                修改密码
+                {t('accountSettings.changePassword')}
               </>
             )}
           </button>

@@ -10,6 +10,7 @@ import api from '../utils/api';
 import toast from 'react-hot-toast';
 import { Book, Clock, Trash2, ChevronDown, ChevronUp, Calendar, TrendingUp } from 'lucide-react';
 import { getCoverUrl } from '../utils/coverHelper';
+import { useTranslation } from 'react-i18next';
 
 interface HistoryItem {
   history_id: string;
@@ -40,6 +41,7 @@ interface Stats {
 }
 
 export default function ReadingHistory() {
+  const { t, i18n } = useTranslation();
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [stats, setStats] = useState<Stats | null>(null);
   const [loading, setLoading] = useState(true);
@@ -63,7 +65,7 @@ export default function ReadingHistory() {
       if (error.statusText !== 'OK (Offline Cache)' && error.statusText !== 'OK (Offline, No Cache)') {
         // 只有在在线且确实失败时才显示错误
         if (navigator.onLine) {
-          toast.error('获取阅读历史失败');
+          toast.error(t('reading.fetchHistoryFailed'));
         }
       }
     } finally {
@@ -119,18 +121,18 @@ export default function ReadingHistory() {
 
   const handleDelete = async (bookId: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!confirm('确定要删除这本书的阅读历史吗？')) {
+    if (!confirm(t('reading.confirmDeleteHistory'))) {
       return;
     }
 
     try {
       await api.delete(`/reading/history/${bookId}`);
-      toast.success('阅读历史已删除');
+      toast.success(t('reading.historyDeleted'));
       setHistory((prev) => prev.filter((item) => item.id !== bookId));
       setStats((prev) => prev ? { ...prev, totalBooks: prev.totalBooks - 1 } : null);
     } catch (error: any) {
       console.error('删除阅读历史失败:', error);
-      toast.error(error.response?.data?.error || '删除失败');
+      toast.error(error.response?.data?.error || t('reading.deleteFailed'));
     }
   };
 
@@ -141,13 +143,13 @@ export default function ReadingHistory() {
     const days = Math.floor(diff / (1000 * 60 * 60 * 24));
 
     if (days === 0) {
-      return '今天';
+      return t('reading.today');
     } else if (days === 1) {
-      return '昨天';
+      return t('reading.yesterday');
     } else if (days < 7) {
-      return `${days}天前`;
+      return t('reading.daysAgo', { days });
     } else {
-      return date.toLocaleDateString('zh-CN', {
+      return date.toLocaleDateString(i18n.language === 'zh' ? 'zh-CN' : 'en-US', {
         year: 'numeric',
         month: 'long',
         day: 'numeric',
@@ -157,20 +159,20 @@ export default function ReadingHistory() {
 
   const formatDuration = (seconds: number) => {
     if (seconds < 60) {
-      return `${seconds}秒`;
+      return t('reading.seconds', { seconds });
     } else if (seconds < 3600) {
       const minutes = Math.floor(seconds / 60);
-      return `${minutes}分钟`;
+      return t('reading.minutes', { minutes });
     } else {
       const hours = Math.floor(seconds / 3600);
       const minutes = Math.floor((seconds % 3600) / 60);
-      return `${hours}小时${minutes}分钟`;
+      return t('reading.hours', { hours, minutes });
     }
   };
 
   const formatTime = (dateString: string) => {
     const date = new Date(dateString);
-    return date.toLocaleString('zh-CN', {
+    return date.toLocaleString(i18n.language === 'zh' ? 'zh-CN' : 'en-US', {
       year: 'numeric',
       month: 'long',
       day: 'numeric',
@@ -198,7 +200,7 @@ export default function ReadingHistory() {
                 <div className="w-7 h-7 rounded-md bg-blue-500 dark:bg-blue-600 flex items-center justify-center flex-shrink-0">
                   <Book className="w-4 h-4 text-white" />
                 </div>
-                <div className="text-xs text-gray-600 dark:text-gray-400 font-medium">已阅读</div>
+                <div className="text-xs text-gray-600 dark:text-gray-400 font-medium">{t('reading.read')}</div>
               </div>
               <div className="text-xl sm:text-2xl font-bold text-gray-900 dark:text-gray-100">
                 {stats.totalBooks}
@@ -212,7 +214,7 @@ export default function ReadingHistory() {
                 <div className="w-7 h-7 rounded-md bg-orange-500 dark:bg-orange-600 flex items-center justify-center flex-shrink-0">
                   <Clock className="w-4 h-4 text-white" />
                 </div>
-                <div className="text-xs text-gray-600 dark:text-gray-400 font-medium">本月</div>
+                <div className="text-xs text-gray-600 dark:text-gray-400 font-medium">{t('reading.thisMonth')}</div>
               </div>
               <div className="text-xl sm:text-2xl font-bold text-gray-900 dark:text-gray-100">
                 {formatDuration(stats.monthReadingTime)}
@@ -226,7 +228,7 @@ export default function ReadingHistory() {
                 <div className="w-7 h-7 rounded-md bg-purple-500 dark:bg-purple-600 flex items-center justify-center flex-shrink-0">
                   <Clock className="w-4 h-4 text-white" />
                 </div>
-                <div className="text-xs text-gray-600 dark:text-gray-400 font-medium">年度</div>
+                <div className="text-xs text-gray-600 dark:text-gray-400 font-medium">{t('reading.thisYear')}</div>
               </div>
               <div className="text-xl sm:text-2xl font-bold text-gray-900 dark:text-gray-100">
                 {formatDuration(stats.yearReadingTime)}
@@ -239,7 +241,7 @@ export default function ReadingHistory() {
       {history.length === 0 ? (
         <div className="text-center py-12">
           <Clock className="w-16 h-16 text-gray-400 mx-auto mb-4" />
-          <p className="text-gray-500">暂无阅读历史</p>
+          <p className="text-gray-500">{t('reading.noHistory')}</p>
         </div>
       ) : (
         <div className="space-y-4">
@@ -296,22 +298,22 @@ export default function ReadingHistory() {
                         </h3>
                       </Link>
                       <p className="text-sm text-gray-500 dark:text-gray-400 mb-3">
-                        {item.author || '未知作者'}
+                        {item.author || t('book.unknownAuthor')}
                       </p>
 
                       {/* 统计信息 */}
                       <div className="grid grid-cols-2 gap-3 mb-3">
                         <div className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400">
                           <Clock className="w-4 h-4" />
-                          <span>总时长: {formatDuration(item.total_reading_time)}</span>
+                          <span>{t('reading.totalDuration')}: {formatDuration(item.total_reading_time)}</span>
                         </div>
                         <div className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400">
                           <TrendingUp className="w-4 h-4" />
-                          <span>进度: {(item.total_progress * 100).toFixed(1)}%</span>
+                          <span>{t('reading.progress')}: {(item.total_progress * 100).toFixed(1)}%</span>
                         </div>
                         <div className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400">
                           <Book className="w-4 h-4" />
-                          <span>阅读次数: {item.read_count}次</span>
+                          <span>{t('reading.readCount')}: {item.read_count}{t('reading.times')}</span>
                         </div>
                         <div className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400">
                           <Calendar className="w-4 h-4" />
@@ -328,12 +330,12 @@ export default function ReadingHistory() {
                           {isExpanded ? (
                             <>
                               <ChevronUp className="w-4 h-4" />
-                              收起详情
+                              {t('reading.collapseDetails')}
                             </>
                           ) : (
                             <>
                               <ChevronDown className="w-4 h-4" />
-                              查看详情
+                              {t('reading.viewDetails')}
                             </>
                           )}
                         </button>
@@ -342,7 +344,7 @@ export default function ReadingHistory() {
                           className="flex items-center gap-1 px-3 py-1.5 text-sm bg-red-100 dark:bg-red-900/20 text-red-600 dark:text-red-400 hover:bg-red-200 dark:hover:bg-red-900/30 rounded-lg transition-colors"
                         >
                           <Trash2 className="w-4 h-4" />
-                          删除
+                          {t('reading.deleteHistory')}
                         </button>
                       </div>
                     </div>
@@ -357,11 +359,11 @@ export default function ReadingHistory() {
                         <div className="inline-block animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600"></div>
                       </div>
                     ) : sessions.length === 0 ? (
-                      <p className="text-sm text-gray-500 text-center py-4">暂无阅读会话记录</p>
+                      <p className="text-sm text-gray-500 text-center py-4">{t('reading.noSessions')}</p>
                     ) : (
                       <div className="space-y-3">
                         <h4 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">
-                          阅读会话记录 ({sessions.length}次)
+                          {t('reading.readingSessions')} ({sessions.length}{t('reading.times')})
                         </h4>
                         {sessions.map((session) => (
                           <div
@@ -375,7 +377,7 @@ export default function ReadingHistory() {
                                 </div>
                                 {session.end_time && (
                                   <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                                    结束: {formatTime(session.end_time)}
+                                    {t('reading.endTime')}: {formatTime(session.end_time)}
                                   </div>
                                 )}
                               </div>
@@ -384,7 +386,7 @@ export default function ReadingHistory() {
                                   {formatDuration(session.duration)}
                                 </div>
                                 <div className="text-xs text-gray-500 dark:text-gray-400">
-                                  进度: {(session.progress_before * 100).toFixed(1)}% →{' '}
+                                  {t('reading.progress')}: {(session.progress_before * 100).toFixed(1)}% →{' '}
                                   {(session.progress_after * 100).toFixed(1)}%
                                 </div>
                               </div>

@@ -10,6 +10,7 @@ import ReactDOM from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
 import App from './App';
 import './index.css';
+import './i18n/config';
 
 // 初始化主题（在React渲染之前执行，避免闪烁）
 function initTheme() {
@@ -27,10 +28,8 @@ function initTheme() {
     // 用户手动设置的主题
     isDark = savedTheme === 'dark';
   } else {
-    // 使用系统主题
-    if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
-      isDark = true;
-    }
+    // 默认使用深色主题
+    isDark = true;
   }
   
   if (isDark) {

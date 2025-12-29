@@ -6,12 +6,13 @@
 
 import { BookOpen, Copy, Highlighter, Languages, Search, StickyNote, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 
 interface TextSelectionToolbarProps {
   selectedText: string;
   position: { x: number; y: number };
   onAddNote: (text: string) => void;
-  onToggleHighlight?: () => void;
+  onToggleHighlight?: (color?: string) => void;
   isHighlighted?: boolean;
   onCopy?: () => void;
   onSearch?: () => void;
@@ -32,8 +33,17 @@ export default function TextSelectionToolbar({
   onTranslate,
   onClose,
 }: TextSelectionToolbarProps) {
+  const { t } = useTranslation();
   const toolbarRef = useRef<HTMLDivElement>(null);
   const [adjustedPosition, setAdjustedPosition] = useState(position);
+  const [showColorPicker, setShowColorPicker] = useState(false);
+
+  const colors = [
+    { name: 'yellow', value: 'rgba(255, 235, 59, 0.65)', class: 'bg-[#FFEB3B]' },
+    { name: 'green', value: 'rgba(139, 195, 74, 0.65)', class: 'bg-[#8BC34A]' },
+    { name: 'blue', value: 'rgba(33, 150, 243, 0.65)', class: 'bg-[#2196F3]' },
+    { name: 'pink', value: 'rgba(233, 30, 99, 0.65)', class: 'bg-[#E91E63]' },
+  ];
 
   useEffect(() => {
     if (!toolbarRef.current) return;
@@ -92,10 +102,10 @@ export default function TextSelectionToolbar({
             onCopy();
           }}
           className="flex flex-col items-center justify-center w-10 h-10 rounded-md transition-colors bg-gray-100 hover:bg-gray-200 text-gray-800 dark:bg-gray-800/70 dark:hover:bg-gray-800 dark:text-gray-100"
-          title="复制"
+          title={t('reader.copy')}
         >
           <Copy className="w-4 h-4" />
-          <span className="mt-0.5 text-[9px] leading-none opacity-90">复制</span>
+          <span className="mt-0.5 text-[9px] leading-none opacity-90">{t('reader.copy')}</span>
         </button>
       )}
       {onSearch && (
@@ -106,10 +116,10 @@ export default function TextSelectionToolbar({
             onSearch();
           }}
           className="flex flex-col items-center justify-center w-10 h-10 rounded-md transition-colors bg-gray-100 hover:bg-gray-200 text-gray-800 dark:bg-gray-800/70 dark:hover:bg-gray-800 dark:text-gray-100"
-          title="百度搜索"
+          title={t('reader.search')}
         >
           <Search className="w-4 h-4" />
-          <span className="mt-0.5 text-[9px] leading-none opacity-90">搜索</span>
+          <span className="mt-0.5 text-[9px] leading-none opacity-90">{t('reader.search')}</span>
         </button>
       )}
       {onDictionary && (
@@ -120,10 +130,10 @@ export default function TextSelectionToolbar({
             onDictionary();
           }}
           className="flex flex-col items-center justify-center w-10 h-10 rounded-md transition-colors bg-gray-100 hover:bg-gray-200 text-gray-800 dark:bg-gray-800/70 dark:hover:bg-gray-800 dark:text-gray-100"
-          title="词典"
+          title={t('reader.dictionary')}
         >
           <BookOpen className="w-4 h-4" />
-          <span className="mt-0.5 text-[9px] leading-none opacity-90">词典</span>
+          <span className="mt-0.5 text-[9px] leading-none opacity-90">{t('reader.dictionary')}</span>
         </button>
       )}
       {onTranslate && (
@@ -134,33 +144,59 @@ export default function TextSelectionToolbar({
             onTranslate();
           }}
           className="flex flex-col items-center justify-center w-10 h-10 rounded-md transition-colors bg-gray-100 hover:bg-gray-200 text-gray-800 dark:bg-gray-800/70 dark:hover:bg-gray-800 dark:text-gray-100"
-          title="翻译"
+          title={t('reader.translate')}
         >
           <Languages className="w-4 h-4" />
-          <span className="mt-0.5 text-[9px] leading-none opacity-90">翻译</span>
+          <span className="mt-0.5 text-[9px] leading-none opacity-90">{t('reader.translate')}</span>
         </button>
       )}
 
       {onToggleHighlight && (
-        <button
-          onPointerDown={(e) => {
-            // 用 pointerdown 触发，避免移动端/PWA click 被选区/手势吞掉
-            e.preventDefault();
-            e.stopPropagation();
-            onToggleHighlight();
-          }}
-          className={`flex flex-col items-center justify-center w-11 h-10 rounded-md transition-colors ${
-            isHighlighted
-              ? 'bg-gray-100 hover:bg-gray-200 text-gray-800 dark:bg-gray-800/70 dark:hover:bg-gray-800 dark:text-gray-100'
-              : 'bg-amber-500 hover:bg-amber-600 text-white'
-          }`}
-          title={isHighlighted ? '取消高亮' : '高亮标注'}
-        >
-          <Highlighter className="w-4 h-4" />
-          <span className="mt-0.5 text-[9px] leading-none opacity-90">
-            {isHighlighted ? '取消' : '高亮'}
-          </span>
-        </button>
+        <div className="relative flex items-center">
+          <button
+            onPointerDown={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              if (isHighlighted) {
+                // 如果已高亮，直接触发取消
+                onToggleHighlight();
+              } else {
+                // 如果未高亮，显示颜色选择
+                setShowColorPicker(!showColorPicker);
+              }
+            }}
+            className={`flex flex-col items-center justify-center w-11 h-10 rounded-md transition-colors ${
+              isHighlighted
+                ? 'bg-gray-100 hover:bg-gray-200 text-gray-800 dark:bg-gray-800/70 dark:hover:bg-gray-800 dark:text-gray-100'
+                : 'bg-amber-500 hover:bg-amber-600 text-white'
+            }`}
+            title={isHighlighted ? t('reader.removeHighlight') : t('reader.addHighlight')}
+          >
+            <Highlighter className="w-4 h-4" />
+            <span className="mt-0.5 text-[9px] leading-none opacity-90">
+              {isHighlighted ? t('reader.removeHighlightShort') : t('reader.highlight')}
+            </span>
+          </button>
+
+          {showColorPicker && (
+            <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 p-1.5 bg-white dark:bg-gray-800 rounded-lg shadow-xl border border-gray-200 dark:border-gray-700 flex gap-2 animate-in fade-in slide-in-from-bottom-2 duration-200">
+              {colors.map((color) => (
+                <button
+                  key={color.name}
+                  onPointerDown={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    onToggleHighlight(color.value);
+                    setShowColorPicker(false);
+                  }}
+                  className={`w-7 h-7 rounded-full ${color.class} border-2 border-transparent hover:border-gray-400 dark:hover:border-white transition-all transform hover:scale-110 shadow-sm`}
+                  title={color.name}
+                />
+              ))}
+              <div className="absolute left-1/2 -bottom-1 -translate-x-1/2 w-2 h-2 bg-white dark:bg-gray-800 border-r border-b border-gray-200 dark:border-gray-700 rotate-45"></div>
+            </div>
+          )}
+        </div>
       )}
       <button
         onPointerDown={(e) => {
@@ -169,10 +205,10 @@ export default function TextSelectionToolbar({
           onAddNote(selectedText);
         }}
         className="flex flex-col items-center justify-center w-11 h-10 rounded-md transition-colors bg-blue-600 hover:bg-blue-700 text-white"
-        title="新建笔记"
+        title={t('notes.createNote')}
       >
         <StickyNote className="w-4 h-4" />
-        <span className="mt-0.5 text-[9px] leading-none opacity-90">笔记</span>
+        <span className="mt-0.5 text-[9px] leading-none opacity-90">{t('reader.notes')}</span>
       </button>
       <button
         onPointerDown={(e) => {
@@ -181,10 +217,10 @@ export default function TextSelectionToolbar({
           onClose();
         }}
         className="flex flex-col items-center justify-center w-10 h-10 rounded-md transition-colors text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 hover:bg-gray-100/70 dark:hover:bg-gray-800/60"
-        title="关闭"
+        title={t('common.close')}
       >
         <X className="w-4 h-4" />
-        <span className="mt-0.5 text-[9px] leading-none opacity-80">关闭</span>
+        <span className="mt-0.5 text-[9px] leading-none opacity-80">{t('common.close')}</span>
       </button>
     </div>
   );

@@ -17,6 +17,7 @@ import { useAuthStore } from '../store/authStore';
 import { offlineDataCache } from '../utils/offlineDataCache';
 import { useNetworkStatus } from '../hooks/useNetworkStatus';
 import BookDetailModal from '../components/BookDetailModal';
+import { useTranslation } from 'react-i18next';
 
 interface ShelfBook {
   id: string;
@@ -47,6 +48,7 @@ interface BookItem {
 export default function MyShelf() {
   const navigate = useNavigate();
   const { isAuthenticated } = useAuthStore();
+  const { t } = useTranslation();
   const [books, setBooks] = useState<ShelfBook[]>([]);
   const [recentReadBooks, setRecentReadBooks] = useState<BookItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -262,16 +264,16 @@ export default function MyShelf() {
   };
 
   const handleRemove = async (bookId: string) => {
-    if (!confirm('确定要从书架移除这本书吗？')) {
+    if (!confirm(t('shelf.confirmRemove'))) {
       return;
     }
 
     try {
       await api.delete(`/shelf/remove/${bookId}`);
-      toast.success('已从书架移除');
+      toast.success(t('shelf.removed'));
       fetchShelf();
     } catch (error: any) {
-      toast.error(error.response?.data?.error || '移除失败');
+      toast.error(error.response?.data?.error || t('shelf.removeFailed'));
     }
   };
 
@@ -282,14 +284,14 @@ export default function MyShelf() {
       isAuthenticated && fetchRecentReadBooks(),
     ]);
     toast.success(
-      (t) => (
+      (toastInstance) => (
         <div className="flex items-center gap-3">
           <div className="flex-shrink-0 w-8 h-8 rounded-full bg-white/20 flex items-center justify-center">
             <RefreshCw className="w-5 h-5 text-white animate-spin" style={{ animationDuration: '0.5s' }} />
           </div>
           <div>
-            <div className="font-semibold text-white">刷新成功</div>
-            <div className="text-xs text-white/80 mt-0.5">书架已更新</div>
+            <div className="font-semibold text-white">{t('shelf.refreshSuccess')}</div>
+            <div className="text-xs text-white/80 mt-0.5">{t('shelf.shelfUpdated')}</div>
           </div>
         </div>
       ),
@@ -354,7 +356,7 @@ export default function MyShelf() {
                   />
                   {book.category === '笔记' && (
                     <div className="absolute top-2 left-2 px-2 py-0.5 rounded-md text-[10px] font-bold tracking-wide bg-black/70 text-white backdrop-blur">
-                      笔记
+                      {t('shelf.note')}
                     </div>
                   )}
                 </>
@@ -376,7 +378,7 @@ export default function MyShelf() {
               {book.title.length > 20 ? `${book.title.substring(0, 20)}...` : book.title}
             </h3>
             <p className="text-[10px] text-gray-500 dark:text-gray-400 line-clamp-1 mt-auto">
-              {book.author || '未知作者'}
+              {book.author || t('shelf.unknownAuthor')}
             </p>
           </div>
         </div>
@@ -387,7 +389,7 @@ export default function MyShelf() {
           handleRemove(book.id);
         }}
         className="absolute top-2 right-2 p-1.5 bg-red-500/90 backdrop-blur-sm text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-600 shadow-lg z-10"
-        title="从书架移除"
+        title={t('shelf.removeFromShelf')}
       >
         <Trash2 className="w-3 h-3" />
       </button>
@@ -432,7 +434,7 @@ export default function MyShelf() {
                 />
                 {book.category === '笔记' && (
                   <div className="absolute top-2 left-2 px-2 py-0.5 rounded-md text-[10px] font-bold tracking-wide bg-black/70 text-white backdrop-blur">
-                    笔记
+                    {t('shelf.note')}
                   </div>
                 )}
               </>
@@ -454,7 +456,7 @@ export default function MyShelf() {
             {book.title.length > 20 ? `${book.title.substring(0, 20)}...` : book.title}
           </h3>
           <p className="text-[10px] text-gray-500 dark:text-gray-400 line-clamp-1 mt-auto">
-            {book.author || '未知作者'}
+            {book.author || t('shelf.unknownAuthor')}
           </p>
         </div>
       </div>
@@ -488,14 +490,14 @@ export default function MyShelf() {
             <button
               onClick={() => scroll('left')}
               className="p-1.5 rounded-lg bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
-              title="向左滚动"
+              title={t('book.scrollLeft')}
             >
               <ChevronLeft className="w-4 h-4" />
             </button>
             <button
               onClick={() => scroll('right')}
               className="p-1.5 rounded-lg bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
-              title="向右滚动"
+              title={t('book.scrollRight')}
             >
               <ChevronRight className="w-4 h-4" />
             </button>
@@ -562,7 +564,7 @@ export default function MyShelf() {
             {book.title.length > 30 ? `${book.title.substring(0, 30)}...` : book.title}
           </h3>
           <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">
-            {book.author || '未知作者'}
+            {book.author || t('shelf.unknownAuthor')}
           </p>
           {book.rating && (
             <div className="flex items-center gap-1">
@@ -578,7 +580,7 @@ export default function MyShelf() {
           handleRemove(book.id);
         }}
         className="p-2 bg-red-500/90 text-white rounded-lg opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-600"
-        title="从书架移除"
+        title={t('shelf.removeFromShelf')}
       >
         <Trash2 className="w-4 h-4" />
       </button>
@@ -602,7 +604,7 @@ export default function MyShelf() {
       <div className="w-full overflow-hidden pt-4 lg:pt-6">
       {/* 最近阅读（仅登录用户）- 显示在页面顶部 */}
       {isAuthenticated && recentReadBooks.length > 0 && (
-        <HorizontalBookList title="最近阅读" books={recentReadBooks} />
+        <HorizontalBookList title={t('shelf.lastRead')} books={recentReadBooks} />
       )}
 
       {/* 我的笔记（从书架中筛选分类=笔记的书籍） */}
@@ -620,7 +622,7 @@ export default function MyShelf() {
           }));
 
         return noteBooks.length > 0 ? (
-          <HorizontalBookList title="我的笔记" books={noteBooks} />
+          <HorizontalBookList title={t('shelf.myNotes')} books={noteBooks} />
         ) : null;
       })()}
 
@@ -636,7 +638,7 @@ export default function MyShelf() {
                     ? 'bg-blue-600 text-white shadow-md'
                     : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700'
                 }`}
-                title="网格视图"
+                title={t('shelf.gridView')}
               >
                 <Grid3x3 className="w-5 h-5" />
               </button>
@@ -647,7 +649,7 @@ export default function MyShelf() {
                     ? 'bg-blue-600 text-white shadow-md'
                     : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700'
                 }`}
-                title="列表视图"
+                title={t('shelf.listView')}
               >
                 <List className="w-5 h-5" />
               </button>
@@ -668,15 +670,15 @@ export default function MyShelf() {
                   setSortMenuOpen(!sortMenuOpen);
                 }}
                 className="flex items-center gap-2 px-3 py-2 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors shadow-sm"
-                title="排序"
+                title={t('shelf.sort')}
               >
                 <ArrowUpDown className="w-4 h-4 text-gray-600 dark:text-gray-400" />
                 <span className="text-sm text-gray-700 dark:text-gray-300 hidden sm:inline">
-                  {sortBy === 'added_at' && (sortOrder === 'desc' ? '最近添加' : '最早添加')}
-                  {sortBy === 'title' && (sortOrder === 'asc' ? '标题 A-Z' : '标题 Z-A')}
-                  {sortBy === 'author' && (sortOrder === 'asc' ? '作者 A-Z' : '作者 Z-A')}
-                  {sortBy === 'rating' && (sortOrder === 'desc' ? '评分最高' : '评分最低')}
-                  {sortBy === 'created_at' && (sortOrder === 'desc' ? '书籍最新' : '书籍最早')}
+                  {sortBy === 'added_at' && (sortOrder === 'desc' ? t('shelf.recentAdded') : t('shelf.earliestAdded'))}
+                  {sortBy === 'title' && (sortOrder === 'asc' ? t('shelf.titleAZ') : t('shelf.titleZA'))}
+                  {sortBy === 'author' && (sortOrder === 'asc' ? t('shelf.authorAZ') : t('shelf.authorZA'))}
+                  {sortBy === 'rating' && (sortOrder === 'desc' ? t('shelf.ratingHighest') : t('shelf.ratingLowest'))}
+                  {sortBy === 'created_at' && (sortOrder === 'desc' ? t('shelf.bookNewest') : t('shelf.bookOldest'))}
                 </span>
               </button>
               
@@ -694,14 +696,14 @@ export default function MyShelf() {
                     }}
                   >
                     <div className="px-3 py-2 text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase border-b border-gray-200 dark:border-gray-700">
-                      排序方式
+                      {t('shelf.sortBy')}
                     </div>
                     
                     {/* 添加时间 */}
                     <div className="px-3 py-1.5">
                       <div className="text-xs text-gray-500 dark:text-gray-400 mb-1.5 flex items-center gap-1">
                         <Clock className="w-3 h-3" />
-                        添加时间
+                        {t('shelf.addTime')}
                       </div>
                       <div className="flex gap-1">
                         <button
@@ -717,7 +719,7 @@ export default function MyShelf() {
                           }`}
                         >
                           <ArrowDown className="w-3 h-3" />
-                          最近
+                          {t('shelf.recent')}
                         </button>
                         <button
                           onClick={() => {
@@ -732,7 +734,7 @@ export default function MyShelf() {
                           }`}
                         >
                           <ArrowUp className="w-3 h-3" />
-                          最早
+                          {t('shelf.earliest')}
                         </button>
                       </div>
                     </div>
@@ -741,7 +743,7 @@ export default function MyShelf() {
                     <div className="px-3 py-1.5">
                       <div className="text-xs text-gray-500 dark:text-gray-400 mb-1.5 flex items-center gap-1">
                         <Book className="w-3 h-3" />
-                        标题
+                        {t('book.title')}
                       </div>
                       <div className="flex gap-1">
                         <button
@@ -781,7 +783,7 @@ export default function MyShelf() {
                     <div className="px-3 py-1.5">
                       <div className="text-xs text-gray-500 dark:text-gray-400 mb-1.5 flex items-center gap-1">
                         <Book className="w-3 h-3" />
-                        作者
+                        {t('book.author')}
                       </div>
                       <div className="flex gap-1">
                         <button
@@ -821,7 +823,7 @@ export default function MyShelf() {
                     <div className="px-3 py-1.5">
                       <div className="text-xs text-gray-500 dark:text-gray-400 mb-1.5 flex items-center gap-1">
                         <Star className="w-3 h-3" />
-                        评分
+                        {t('shelf.rating')}
                       </div>
                       <div className="flex gap-1">
                         <button
@@ -837,7 +839,7 @@ export default function MyShelf() {
                           }`}
                         >
                           <ArrowDown className="w-3 h-3" />
-                          最高
+                          {t('shelf.highest')}
                         </button>
                         <button
                           onClick={() => {
@@ -852,7 +854,7 @@ export default function MyShelf() {
                           }`}
                         >
                           <ArrowUp className="w-3 h-3" />
-                          最低
+                          {t('shelf.lowest')}
                         </button>
                       </div>
                     </div>
@@ -861,7 +863,7 @@ export default function MyShelf() {
                     <div className="px-3 py-1.5">
                       <div className="text-xs text-gray-500 dark:text-gray-400 mb-1.5 flex items-center gap-1">
                         <Calendar className="w-3 h-3" />
-                        创建时间
+                        {t('shelf.createTime')}
                       </div>
                       <div className="flex gap-1">
                         <button
@@ -877,7 +879,7 @@ export default function MyShelf() {
                           }`}
                         >
                           <ArrowDown className="w-3 h-3" />
-                          最新
+                          {t('shelf.newest')}
                         </button>
                         <button
                           onClick={() => {
@@ -892,7 +894,7 @@ export default function MyShelf() {
                           }`}
                         >
                           <ArrowUp className="w-3 h-3" />
-                          最早
+                          {t('shelf.oldest')}
                         </button>
                       </div>
                     </div>
@@ -910,12 +912,12 @@ export default function MyShelf() {
           <div className="w-24 h-24 mx-auto mb-4 bg-gradient-to-br from-blue-100 to-purple-100 dark:from-blue-900/20 dark:to-purple-900/20 rounded-full flex items-center justify-center">
             <Book className="w-12 h-12 text-blue-600 dark:text-blue-400" />
           </div>
-          <p className="text-gray-600 dark:text-gray-400 mb-4 text-lg">书架是空的</p>
+          <p className="text-gray-600 dark:text-gray-400 mb-4 text-lg">{t('shelf.emptyShelf')}</p>
           <Link 
             to="/books" 
             className="inline-block px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors shadow-md hover:shadow-lg"
           >
-            去图书馆添加书籍
+            {t('shelf.goToLibrary')}
           </Link>
         </div>
       ) : (
@@ -934,7 +936,7 @@ export default function MyShelf() {
                       : 'bg-gray-50/80 dark:bg-gray-800/80 backdrop-blur-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700/80 shadow-sm hover:shadow-md'
                   }`}
                 >
-                  全部
+                  {t('shelf.all')}
                 </button>
                 {bookCategories.map((cat) => (
                   <button
@@ -964,7 +966,7 @@ export default function MyShelf() {
             if (filteredBooks.length === 0) {
               return (
                 <div className="text-center py-12 text-gray-500 dark:text-gray-400">
-                  该分类下暂无书籍
+                  {t('shelf.noBooksInCategory')}
                 </div>
               );
             }

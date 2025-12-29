@@ -6,9 +6,9 @@ import { readFileSync } from 'fs';
 import { resolve } from 'path';
 
 // 生成带随机码的版本号
-// 格式：1.125.12-XXXXXX
+// 格式：1.225.12-XXXXXX
 // 1: 大版本号（固定）
-// 125: 小版本号 = "1" + 年份后两位（2025 -> "25"） = "1" + "25" = "125"
+// 225: 小版本号 = "2" + 年份后两位（2025 -> "25"） = "2" + "25" = "225"
 // 12: 编译月份
 // XXXXXX: 6位随机码
 function generateVersion(): string {
@@ -16,21 +16,21 @@ function generateVersion(): string {
   const year = now.getFullYear();
   const month = now.getMonth() + 1; // 月份从0开始，需要+1
   
-  // 计算小版本号：字符串拼接 "1" + 年份后两位
+  // 计算小版本号：字符串拼接 "2" + 年份后两位
   const yearLastTwo = (year % 100).toString().padStart(2, '0'); // 2025 -> "25"
-  const minorVersion = `1${yearLastTwo}`; // "1" + "25" = "125"
+  const minorVersion = `2${yearLastTwo}`; // "2" + "25" = "225"
   
   // 生成6位随机码
   const randomCode = Math.random().toString(36).substring(2, 8).toUpperCase(); // 6位随机码
   
-  // 格式：1.125.12(XXXXXX)
+  // 格式：1.225.12(XXXXXX)
   return `1.${minorVersion}.${month.toString().padStart(2, '0')}(${randomCode})`;
 }
 
 const BUILD_VERSION = generateVersion();
 const BUILD_TIME = new Date().toISOString();
-console.log(`📦 构建版本号: ${BUILD_VERSION}`);
-console.log(`🕐 构建时间: ${BUILD_TIME}`);
+console.log(`📦 Build Version: ${BUILD_VERSION}`);
+console.log(`🕐 Build Time: ${BUILD_TIME}`);
 
 // SPA fallback插件：确保所有路由都返回index.html
 function spaFallback(): Plugin {
@@ -39,6 +39,11 @@ function spaFallback(): Plugin {
     configureServer(server) {
       server.middlewares.use((req, res, next) => {
         const url = req.url || '';
+        
+        // 优先跳过 OPDS 请求（必须在最前面检查，确保不被 SPA fallback 处理）
+        if (url.startsWith('/opds')) {
+          return next();
+        }
         
         // 跳过静态资源请求（包括 JS、CSS 等文件）
         if (
@@ -361,6 +366,11 @@ export default defineConfig({
       '/api/covers': {
         target: 'http://localhost:1281',
         changeOrigin: true,
+      },
+      '/opds': {
+        target: 'http://localhost:1281',
+        changeOrigin: true,
+        // Vite 代理会自动匹配 /opds 和所有 /opds/* 路径
       },
     },
   },
