@@ -25,6 +25,35 @@ export default function ImageViewer({ imageUrl, isVisible, onClose, alt = '' }: 
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
   const [rotation, setRotation] = useState(0);
   const [imageLoaded, setImageLoaded] = useState(false);
+  
+  // 检测是否为移动设备（必须在早期返回之前调用）
+  const [isMobile, setIsMobile] = useState(false);
+  const [isPWA, setIsPWA] = useState(false);
+
+  // 检测设备类型和PWA模式
+  useEffect(() => {
+    const checkDevice = () => {
+      const userAgent = navigator.userAgent.toLowerCase();
+      const mobileKeywords = ['android', 'iphone', 'ipad', 'ipod', 'blackberry', 'windows phone'];
+      const isMobileDevice = mobileKeywords.some(keyword => userAgent.includes(keyword)) || window.innerWidth <= 768;
+      setIsMobile(isMobileDevice);
+      
+      // 检测PWA模式
+      const isStandalone = window.matchMedia('(display-mode: standalone)').matches;
+      const isFullscreen = (window.navigator as any).standalone === true; // iOS Safari
+      setIsPWA(isStandalone || isFullscreen);
+    };
+    
+    checkDevice();
+    window.addEventListener('resize', checkDevice);
+    const mediaQuery = window.matchMedia('(display-mode: standalone)');
+    mediaQuery.addEventListener('change', checkDevice);
+    
+    return () => {
+      window.removeEventListener('resize', checkDevice);
+      mediaQuery.removeEventListener('change', checkDevice);
+    };
+  }, []);
 
   // 重置状态
   const resetTransform = useCallback(() => {
@@ -230,38 +259,10 @@ export default function ImageViewer({ imageUrl, isVisible, onClose, alt = '' }: 
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isVisible, onClose, handleZoom, resetTransform]);
 
-  if (!isVisible) return null;
-
-  // 检测是否为移动设备
-  const [isMobile, setIsMobile] = useState(false);
-  const [isPWA, setIsPWA] = useState(false);
-
-  useEffect(() => {
-    const checkDevice = () => {
-      const userAgent = navigator.userAgent.toLowerCase();
-      const mobileKeywords = ['android', 'iphone', 'ipad', 'ipod', 'blackberry', 'windows phone'];
-      const isMobileDevice = mobileKeywords.some(keyword => userAgent.includes(keyword)) || window.innerWidth <= 768;
-      setIsMobile(isMobileDevice);
-      
-      // 检测PWA模式
-      const isStandalone = window.matchMedia('(display-mode: standalone)').matches;
-      const isFullscreen = (window.navigator as any).standalone === true; // iOS Safari
-      setIsPWA(isStandalone || isFullscreen);
-    };
-    
-    checkDevice();
-    window.addEventListener('resize', checkDevice);
-    const mediaQuery = window.matchMedia('(display-mode: standalone)');
-    mediaQuery.addEventListener('change', checkDevice);
-    
-    return () => {
-      window.removeEventListener('resize', checkDevice);
-      mediaQuery.removeEventListener('change', checkDevice);
-    };
-  }, []);
-
   // 计算顶部安全区域
   const topSafeArea = isMobile || isPWA ? 'env(safe-area-inset-top, 0px)' : '0px';
+
+  if (!isVisible) return null;
 
   return (
     <div
