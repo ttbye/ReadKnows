@@ -1897,6 +1897,17 @@ export default function ReaderPDFPro({
       return;
     }
 
+    // 检查是否点击了功能条、导航栏等 UI 元素
+    if (target && (
+      target.closest('.text-selection-toolbar') ||
+      target.closest('[data-settings-panel]') ||
+      target.closest('[data-toc-panel]') ||
+      target.closest('[data-notes-panel]') ||
+      target.closest('[data-bookmarks-panel]')
+    )) {
+      return;
+    }
+
     // 检测双击：双击canvas显示图片查看器
     const now = Date.now();
     const timeSinceLastClick = now - lastClickTimeRef.current;
@@ -1930,6 +1941,17 @@ export default function ReaderPDFPro({
     // 如果刚刚双击了，不处理翻页
     if (timeSinceLastClick < 300 && clickCountRef.current === 0) {
       return;
+    }
+
+    // 优先检查并隐藏 UI 元素（功能条、导航栏等）
+    // 如果隐藏了 UI，则不翻页
+    const checkAndHideUI = (window as any).__readerCheckAndHideUI;
+    if (checkAndHideUI && typeof checkAndHideUI === 'function') {
+      const hasHiddenUI = checkAndHideUI();
+      if (hasHiddenUI) {
+        // 如果隐藏了 UI，不执行翻页
+        return;
+      }
     }
 
     const rect = e.currentTarget.getBoundingClientRect();
