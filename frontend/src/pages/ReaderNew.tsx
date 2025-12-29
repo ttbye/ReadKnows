@@ -345,7 +345,6 @@ export default function ReaderNew() {
 
         setLoading(false);
       } catch (error: any) {
-        console.error('获取书籍失败:', error);
         toast.error(t('reader.loadFailed', { error: error.message || t('reader.unknownError') }));
         setLoading(false);
       }
