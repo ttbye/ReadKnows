@@ -5,12 +5,13 @@
  */
 
 import { Headphones } from 'lucide-react';
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, MutableRefObject } from 'react';
 
 interface TTSFloatingButtonProps {
   isVisible: boolean;
   onClick: () => void;
   theme?: 'light' | 'dark' | 'sepia' | 'green';
+  containerRef?: MutableRefObject<HTMLDivElement | null>;
 }
 
 const STORAGE_KEY = 'tts-floating-button-position';

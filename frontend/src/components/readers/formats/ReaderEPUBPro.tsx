@@ -1589,27 +1589,27 @@ export default function ReaderEPUBPro({
       
       // 优先使用 CFI（最精确的位置）
       if (initialPosition?.currentLocation && initialPosition.currentLocation.startsWith('epubcfi(')) {
-        console.log('[ReaderEPUBPro] [初始化] 尝试使用CFI恢复位置:', {
-          cfi: initialPosition.currentLocation.substring(0, 50) + '...',
-          cfiValid: initialPosition.currentLocation.startsWith('epubcfi('),
-          progress: initialPosition.progress,
-          currentPage: initialPosition.currentPage,
-          chapterIndex: initialPosition.chapterIndex,
-        });
+        // console.log('[ReaderEPUBPro] [初始化] 尝试使用CFI恢复位置:', {
+        //   cfi: initialPosition.currentLocation.substring(0, 50) + '...',
+        //   cfiValid: initialPosition.currentLocation.startsWith('epubcfi('),
+        //   progress: initialPosition.progress,
+        //   currentPage: initialPosition.currentPage,
+        //   chapterIndex: initialPosition.chapterIndex,
+        // });
         try {
           displayPromise = rendition.display(initialPosition.currentLocation);
           restoredByCFI = true;
-          console.log('[ReaderEPUBPro] [初始化] ✅ CFI恢复成功');
+          // console.log('[ReaderEPUBPro] [初始化] ✅ CFI恢复成功');
         } catch (error) {
-          console.error('ReaderEPUBPro: ❌ CFI 恢复失败，回退到章节索引', error);
+          // console.error('ReaderEPUBPro: ❌ CFI 恢复失败，回退到章节索引', error);
           // CFI 失败，回退到章节索引
           if (initialPosition.chapterIndex !== undefined) {
             const item = spine.get(initialPosition.chapterIndex);
             displayPromise = item ? rendition.display(item.href) : rendition.display(spine.get(0).href);
-            console.log('[ReaderEPUBPro] [初始化] 回退到章节索引:', initialPosition.chapterIndex);
+            // console.log('[ReaderEPUBPro] [初始化] 回退到章节索引:', initialPosition.chapterIndex);
           } else {
             displayPromise = rendition.display(spine.get(0).href);
-            console.log('[ReaderEPUBPro] [初始化] 回退到第一章');
+            // console.log('[ReaderEPUBPro] [初始化] 回退到第一章');
           }
         }
       } else if (initialPosition?.chapterIndex !== undefined) {
@@ -1671,16 +1671,16 @@ export default function ReaderEPUBPro({
           // 如果章节相同，认为匹配成功（允许同一章节内的CFI差异）
           const cfiMatches = cfiExactMatch || cfiPrefixMatch || sameChapter;
           
-          console.log('[ReaderEPUBPro] [初始化] 验证CFI恢复结果:', {
-            expectedCfi: expectedCfi.substring(0, 50) + '...',
-            actualCfi: actualCfi ? actualCfi.substring(0, 50) + '...' : 'null',
-            expectedChapterPath,
-            actualChapterPath,
-            sameChapter,
-            cfiExactMatch,
-            cfiPrefixMatch,
-            cfiMatch: cfiMatches,
-          });
+          // console.log('[ReaderEPUBPro] [初始化] 验证CFI恢复结果:', {
+          //   expectedCfi: expectedCfi.substring(0, 50) + '...',
+          //   actualCfi: actualCfi ? actualCfi.substring(0, 50) + '...' : 'null',
+          //   expectedChapterPath,
+          //   actualChapterPath,
+          //   sameChapter,
+          //   cfiExactMatch,
+          //   cfiPrefixMatch,
+          //   cfiMatch: cfiMatches,
+          // });
           
           if (!cfiMatches) {
             console.warn('[ReaderEPUBPro] [初始化] ⚠️ CFI恢复后位置不匹配（不在同一章节），尝试重新跳转');
@@ -1702,16 +1702,16 @@ export default function ReaderEPUBPro({
               const retryMatches = retryExactMatch || retryPrefixMatch || retrySameChapter;
               
               if (retryMatches) {
-                console.log('[ReaderEPUBPro] [初始化] ✅ 重新跳转后CFI匹配成功', retrySameChapter ? '(同一章节内)' : '(精确匹配)');
+                // console.log('[ReaderEPUBPro] [初始化] ✅ 重新跳转后CFI匹配成功', retrySameChapter ? '(同一章节内)' : '(精确匹配)');
               } else {
-                console.warn('[ReaderEPUBPro] [初始化] ⚠️ 重新跳转后CFI仍不匹配，使用章节索引回退');
+                // console.warn('[ReaderEPUBPro] [初始化] ⚠️ 重新跳转后CFI仍不匹配，使用章节索引回退');
                 // 如果重新跳转后仍不匹配，回退到章节索引
                 if (initialPosition.chapterIndex !== undefined) {
                   const item = spine.get(initialPosition.chapterIndex);
                   if (item) {
                     await rendition.display(item.href);
                     await new Promise(resolve => setTimeout(resolve, 300));
-                    console.log('[ReaderEPUBPro] [初始化] 回退到章节索引:', initialPosition.chapterIndex);
+                    // console.log('[ReaderEPUBPro] [初始化] 回退到章节索引:', initialPosition.chapterIndex);
                   }
                 }
               }
@@ -1727,7 +1727,7 @@ export default function ReaderEPUBPro({
               }
             }
           } else {
-            console.log('[ReaderEPUBPro] [初始化] ✅ CFI恢复验证成功', sameChapter ? '(同一章节内)' : '(精确匹配)');
+            // console.log('[ReaderEPUBPro] [初始化] ✅ CFI恢复验证成功', sameChapter ? '(同一章节内)' : '(精确匹配)');
           }
         } catch (e) {
           console.warn('[ReaderEPUBPro] [初始化] 验证CFI恢复失败:', e);
@@ -3069,12 +3069,8 @@ export default function ReaderEPUBPro({
         try {
           const rendition = epubjsRenditionRef.current;
           const bookInstance = epubjsBookRef.current;
-          
-          // 清理 iframe 内的 MutationObserver 和事件监听器
-          if ((iframeDoc as any).__rkImageObserver) {
-            (iframeDoc as any).__rkImageObserver.disconnect();
-            delete (iframeDoc as any).__rkImageObserver;
-          }
+          // 循环所有 iframe，清理其中的 MutationObserver 和事件监听器将在下方统一处理
+          // 此处不需要直接操作 iframeDoc，iframeDoc 尚未定义
           try {
             const container = containerRef.current;
             if (container) {
