@@ -21,7 +21,7 @@
 
 ## 📖 Project Introduction
 
-**Friendly Reminder**: In China, individuals are not allowed to publish online. Maintaining a public book website is illegal! This system is for personal learning and book/document management only!
+**Friendly Reminder**: This system is for personal learning and book/document management only!
 
 ReadKnows is a powerful private e-book management platform that supports reading and management of e-books in multiple formats including EPUB, PDF, TXT, MOBI, etc. Built with modern web technologies, it provides a smooth reading experience and powerful management features.
 
@@ -1312,4 +1312,5 @@ If this project helps you, please give it a Star ⭐!
 [⬆ Back to Top](#-readknows-private-digital-library)
 
 </div>
+
 
