@@ -71,6 +71,7 @@ export default function CreateNoteModal({
         pageNumber: currentPage,
         chapterIndex: chapterIndex ?? 0,
         selectedText: selectedText || null,
+        position: selectedCfiRange || null, // 保存 CFI 位置信息用于标记
       });
       toast.success(t('notes.createSuccess'));
       setNoteContent('');

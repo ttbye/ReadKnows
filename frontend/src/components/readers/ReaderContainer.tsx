@@ -5,7 +5,7 @@
  */
 
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { ArrowLeft, Settings, X } from 'lucide-react';
+import { ArrowLeft, Settings, X, BookmarkCheck } from 'lucide-react';
 import { ReaderConfig, ReadingPosition, TOCItem, Highlight } from '../../types/reader';
 
 // 书签接口
@@ -13,6 +13,8 @@ interface Bookmark {
   id: string;
   bookId: string;
   fileType: string;
+  name?: string; // 书签名称
+  note?: string; // 书签备注
   position: {
     progress?: number;
     currentPage?: number;
@@ -37,7 +39,10 @@ import NotesPanel from './NotesPanel';
 import TextSelectionToolbar from './TextSelectionToolbar';
 import CreateNoteModal from './CreateNoteModal';
 import BookmarkPanel from './BookmarkPanel';
+import BookmarkEditModal from './BookmarkEditModal';
 import ImageViewer from './ImageViewer';
+import NoteViewer from './NoteViewer';
+import BackToPreviousPositionButton from './BackToPreviousPositionButton';
 import toast from 'react-hot-toast';
 import { useAuthStore } from '../../store/authStore';
 import { addOrUpdateLocalHighlight, deleteLocalHighlight, generateHighlightId, getLocalHighlights, hasLocalHighlight, refreshHighlightsFromServer, syncHighlightQueue } from '../../utils/highlights';
@@ -65,7 +70,29 @@ export default function ReaderContainer({ config }: { config: ReaderConfig }) {
   const [showSelectionToolbar, setShowSelectionToolbar] = useState(false);
   const [showCreateNoteModal, setShowCreateNoteModal] = useState(false);
   const [imageViewerUrl, setImageViewerUrl] = useState<string | null>(null);
-  const [, setBookNotes] = useState<any[]>([]);
+  
+  // 笔记接口
+  interface BookNote {
+    id: string;
+    content: string;
+    position?: string;
+    page_number?: number;
+    chapter_index?: number;
+    selected_text?: string;
+    created_at: string;
+    updated_at: string;
+  }
+  
+  const [bookNotes, setBookNotes] = useState<BookNote[]>([]);
+  const [selectedNote, setSelectedNote] = useState<BookNote | null>(null);
+  const [showNoteViewer, setShowNoteViewer] = useState(false);
+  
+  // 记录跳转前的阅读位置（用于返回功能）
+  const [previousPosition, setPreviousPosition] = useState<ReadingPosition | null>(null);
+  const [showBackButton, setShowBackButton] = useState(false);
+  // 标记是否处于书签浏览模式（此时不保存阅读进度）
+  const [isBookmarkBrowsingMode, setIsBookmarkBrowsingMode] = useState(false);
+  
   const [currentPosition, setCurrentPosition] = useState<ReadingPosition>({
     currentPage: 1,
     totalPages: 1,
@@ -205,11 +232,13 @@ export default function ReaderContainer({ config }: { config: ReaderConfig }) {
     
     const currentProgress = currentPosition.progress || 0;
     const currentPage = currentPosition.currentPage || 0;
+    const currentChapterIndex = currentPosition.chapterIndex;
     const currentLocation = currentPosition.currentLocation;
     
-    // 优先使用 currentLocation 匹配（EPUB CFI 或其他格式的位置标识）
+    // 优先使用 currentLocation 匹配（EPUB CFI 或其他格式的位置标识）- 精确匹配
     if (currentLocation) {
       const matched = bookmarks.some(b => {
+        // 精确匹配 currentLocation
         if (b.position.currentLocation === currentLocation) return true;
         if (b.position.cfi === currentLocation) return true;
         return false;
@@ -217,21 +246,124 @@ export default function ReaderContainer({ config }: { config: ReaderConfig }) {
       if (matched) return true;
     }
     
-    // 对于有页码的格式（PDF/TXT），使用页码匹配
+    // 对于有页码的格式（PDF/TXT），使用页码匹配 - 精确匹配
     if (currentPage > 0 && (config.book.file_type === 'pdf' || config.book.file_type === 'txt')) {
       const matched = bookmarks.some(b => {
+        // 精确匹配页码
         if (b.position.currentPage === currentPage) return true;
         return false;
       });
       if (matched) return true;
     }
     
-    // 兜底：使用 progress 匹配（允许 0.5% 的误差，因为翻页时 progress 可能有小幅变化）
+    // 对于 EPUB，如果有章节索引，同时匹配章节索引和 progress
+    if (config.book.file_type === 'epub' && currentChapterIndex !== undefined) {
+      const matched = bookmarks.some(b => {
+        // 章节索引必须匹配
+        if (b.position.chapterIndex !== currentChapterIndex) return false;
+        // progress 必须非常接近（允许 0.1% 的误差）
+        const bookmarkProgress = b.position.progress || 0;
+        return Math.abs(bookmarkProgress - currentProgress) < 0.001;
+      });
+      if (matched) return true;
+    }
+    
+    // 兜底：使用 progress 匹配（仅在没有精确位置标识时使用，误差更小：0.1%）
+    // 注意：这个匹配可能不够精确，但作为最后的兜底方案
     return bookmarks.some(b => {
+      // 如果有 currentLocation 或页码，不应该使用 progress 匹配
+      if (b.position.currentLocation || b.position.cfi || b.position.currentPage) {
+        return false;
+      }
       const bookmarkProgress = b.position.progress || 0;
-      return Math.abs(bookmarkProgress - currentProgress) < 0.005;
+      return Math.abs(bookmarkProgress - currentProgress) < 0.001;
     });
   }, [bookmarks, currentPosition, config.book.file_type]);
+
+  // 自动生成书签标题（从页面内容或标题中提取）
+  const generateBookmarkTitle = useCallback((): string => {
+    try {
+      // 1. 优先使用章节标题
+      if (currentPosition.chapterTitle) {
+        return currentPosition.chapterTitle.trim();
+      }
+
+      // 2. 对于 EPUB，尝试从页面内容中提取第一行文本
+      if (config.book.file_type === 'epub') {
+        try {
+          const container = containerRef.current;
+          const iframe = container?.querySelector('iframe');
+          if (iframe) {
+            const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
+            if (iframeDoc) {
+              const body = iframeDoc.body;
+              if (body) {
+                // 查找第一个有文本内容的元素
+                const walker = iframeDoc.createTreeWalker(
+                  body,
+                  NodeFilter.SHOW_TEXT,
+                  null
+                );
+                
+                let node;
+                while (node = walker.nextNode()) {
+                  const text = node.textContent?.trim();
+                  if (text && text.length > 5) {
+                    // 提取前30个字符作为标题
+                    const title = text.substring(0, 30).replace(/\s+/g, ' ').trim();
+                    if (title.length > 0) {
+                      return title;
+                    }
+                  }
+                }
+
+                // 如果找不到文本节点，尝试从 body 的 textContent 中提取
+                const bodyText = body.textContent?.trim();
+                if (bodyText) {
+                  const firstLine = bodyText.split('\n')[0]?.trim();
+                  if (firstLine && firstLine.length > 5) {
+                    return firstLine.substring(0, 30).replace(/\s+/g, ' ').trim();
+                  }
+                }
+              }
+            }
+          }
+        } catch (e) {
+          console.warn('从 EPUB 页面提取标题失败:', e);
+        }
+      }
+
+      // 3. 对于 TXT，从页面内容中提取第一行
+      if (config.book.file_type === 'txt') {
+        const getCurrentPageInfo = (window as any).__getCurrentPageInfo;
+        if (getCurrentPageInfo) {
+          const pageInfo = getCurrentPageInfo();
+          if (pageInfo?.content) {
+            const firstLine = pageInfo.content.split('\n')[0]?.trim();
+            if (firstLine && firstLine.length > 5) {
+              return firstLine.substring(0, 30).replace(/\s+/g, ' ').trim();
+            }
+          }
+        }
+      }
+
+      // 4. 如果有页码，使用页码作为标题
+      if (currentPosition.currentPage && currentPosition.currentPage > 0) {
+        return t('reader.pageNumber', { page: currentPosition.currentPage });
+      }
+
+      // 5. 使用进度作为标题
+      if (currentPosition.progress !== undefined) {
+        return `${(currentPosition.progress * 100).toFixed(1)}%`;
+      }
+
+      // 6. 默认标题
+      return t('reader.bookmark');
+    } catch (e) {
+      console.warn('生成书签标题失败:', e);
+      return t('reader.bookmark');
+    }
+  }, [currentPosition, config.book.file_type, t]);
 
   // 添加或删除书签
   const toggleBookmark = useCallback(() => {
@@ -266,26 +398,42 @@ export default function ReaderContainer({ config }: { config: ReaderConfig }) {
     if (hasCurrentBookmark) {
       // 删除书签：使用相同的匹配逻辑
       const newBookmarks = bookmarks.filter(b => {
-        // 优先匹配 currentLocation
+        // 优先匹配 currentLocation（精确匹配）
         if (currentLocation && (b.position.currentLocation === currentLocation || b.position.cfi === currentLocation)) {
-          return false;
+          return false; // 删除匹配的书签
         }
-        // 匹配页码
+        // 匹配页码（精确匹配）
         if (currentPage > 0 && b.position.currentPage === currentPage) {
-          return false;
+          return false; // 删除匹配的书签
         }
-        // 匹配 progress（允许 0.5% 误差）
-        const bookmarkProgress = b.position.progress || 0;
-        return Math.abs(bookmarkProgress - currentProgress) >= 0.005;
+        // 对于 EPUB，如果有章节索引，同时匹配章节索引和 progress
+        if (config.book.file_type === 'epub' && currentChapterIndex !== undefined && b.position.chapterIndex === currentChapterIndex) {
+          const bookmarkProgress = b.position.progress || 0;
+          if (Math.abs(bookmarkProgress - currentProgress) < 0.001) {
+            return false; // 删除匹配的书签
+          }
+        }
+        // 兜底：如果没有精确位置标识，使用 progress 匹配（误差更小：0.1%）
+        if (!b.position.currentLocation && !b.position.cfi && !b.position.currentPage) {
+          const bookmarkProgress = b.position.progress || 0;
+          if (Math.abs(bookmarkProgress - currentProgress) < 0.001) {
+            return false; // 删除匹配的书签
+          }
+        }
+        return true; // 保留不匹配的书签
       });
       saveBookmarks(newBookmarks);
       toast.success(t('reader.bookmarkDeleted'));
     } else {
+      // 自动生成书签标题
+      const bookmarkTitle = generateBookmarkTitle();
+      
       // 添加书签
       const newBookmark: Bookmark = {
         id: `bookmark-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
         bookId: config.book.id,
         fileType: config.book.file_type || '',
+        name: bookmarkTitle, // 自动生成的标题
         position: {
           progress: currentProgress,
           currentPage: currentPage > 0 ? currentPage : undefined,
@@ -306,7 +454,7 @@ export default function ReaderContainer({ config }: { config: ReaderConfig }) {
       saveBookmarks(newBookmarks);
       toast.success(t('reader.bookmarkAdded'));
     }
-  }, [bookmarks, currentPosition, config.book, hasCurrentBookmark, saveBookmarks]);
+  }, [bookmarks, currentPosition, config.book, hasCurrentBookmark, saveBookmarks, generateBookmarkTitle, t]);
 
   // 初始化时加载书签
   useEffect(() => {
@@ -316,6 +464,23 @@ export default function ReaderContainer({ config }: { config: ReaderConfig }) {
   // 跳转到书签位置
   const goToBookmark = useCallback(async (bookmark: Bookmark) => {
     try {
+      // 保存当前阅读位置（用于返回功能）
+      const currentPos: ReadingPosition = {
+        progress: currentPosition.progress,
+        currentPage: currentPosition.currentPage,
+        chapterIndex: currentPosition.chapterIndex,
+        currentLocation: currentPosition.currentLocation,
+        chapterTitle: currentPosition.chapterTitle,
+      };
+      setPreviousPosition(currentPos);
+      
+      // 设置书签浏览模式标志（此时不保存阅读进度）
+      setIsBookmarkBrowsingMode(true);
+      // 设置全局标志，供阅读器组件使用
+      (window as any).__isBookmarkBrowsingMode = true;
+      // 保存之前的阅读位置到全局变量，供关闭时使用
+      (window as any).__previousPositionForSave = currentPos;
+      
       const pos: any = {
         progress: bookmark.position.progress,
         currentPage: bookmark.position.currentPage,
@@ -328,7 +493,49 @@ export default function ReaderContainer({ config }: { config: ReaderConfig }) {
         const success = await (window as any).__readerGoToPosition(pos);
         if (success) {
           setShowBookmarks(false);
+          setShowBackButton(true); // 显示返回按钮
           toast.success(t('reader.jumpedToBookmark'));
+        } else {
+          setIsBookmarkBrowsingMode(false);
+          (window as any).__isBookmarkBrowsingMode = false;
+          toast.error(t('reader.jumpFailedRetry'));
+        }
+      } else {
+        setIsBookmarkBrowsingMode(false);
+        (window as any).__isBookmarkBrowsingMode = false;
+        toast.error(t('reader.readerNotReady'));
+      }
+    } catch (error) {
+      console.error('跳转到书签失败:', error);
+      setIsBookmarkBrowsingMode(false);
+      (window as any).__isBookmarkBrowsingMode = false;
+      toast.error(t('reader.jumpFailed'));
+    }
+  }, [currentPosition, t]);
+
+  // 返回到上一阅读位置
+  const backToPreviousPosition = useCallback(async () => {
+    if (!previousPosition) return;
+    
+    try {
+      // 清除书签浏览模式标志，恢复正常的进度保存
+      setIsBookmarkBrowsingMode(false);
+      (window as any).__isBookmarkBrowsingMode = false;
+      
+      const pos: any = {
+        progress: previousPosition.progress,
+        currentPage: previousPosition.currentPage,
+        chapterIndex: previousPosition.chapterIndex,
+        currentLocation: previousPosition.currentLocation,
+      };
+
+      // 使用全局跳转函数
+      if ((window as any).__readerGoToPosition) {
+        const success = await (window as any).__readerGoToPosition(pos);
+        if (success) {
+          setShowBackButton(false); // 隐藏返回按钮
+          setPreviousPosition(null); // 清除记录的位置
+          toast.success(t('reader.backedToPreviousPosition'));
         } else {
           toast.error(t('reader.jumpFailedRetry'));
         }
@@ -336,16 +543,49 @@ export default function ReaderContainer({ config }: { config: ReaderConfig }) {
         toast.error(t('reader.readerNotReady'));
       }
     } catch (error) {
-      console.error('跳转到书签失败:', error);
+      console.error('返回上一位置失败:', error);
       toast.error(t('reader.jumpFailed'));
     }
-  }, []);
+  }, [previousPosition, t]);
+
+  // 关闭返回按钮（关闭时保存当前进度）
+  const closeBackButton = useCallback(() => {
+    // 清除书签浏览模式标志，恢复正常的进度保存
+    setIsBookmarkBrowsingMode(false);
+    (window as any).__isBookmarkBrowsingMode = false;
+    
+    // 触发保存当前进度
+    // 通过调用阅读器的进度保存函数来保存当前进度
+    if ((window as any).__saveCurrentProgress) {
+      (window as any).__saveCurrentProgress();
+    }
+    
+    setShowBackButton(false);
+    setPreviousPosition(null);
+    toast.success(t('reader.progressSaved'));
+  }, [t]);
 
   // 删除书签
   const deleteBookmark = useCallback((bookmarkId: string) => {
     const newBookmarks = bookmarks.filter(b => b.id !== bookmarkId);
     saveBookmarks(newBookmarks);
     toast.success(t('reader.bookmarkDeleted'));
+  }, [bookmarks, saveBookmarks, t]);
+
+  // 编辑书签
+  const [editingBookmark, setEditingBookmark] = useState<Bookmark | null>(null);
+  const editBookmark = useCallback((bookmark: Bookmark) => {
+    setEditingBookmark(bookmark);
+  }, []);
+
+  // 保存编辑后的书签
+  const saveEditedBookmark = useCallback((updatedBookmark: Bookmark) => {
+    const newBookmarks = bookmarks.map(b => 
+      b.id === updatedBookmark.id ? updatedBookmark : b
+    );
+    saveBookmarks(newBookmarks);
+    toast.success(t('reader.bookmarkUpdated'));
+    setEditingBookmark(null);
   }, [bookmarks, saveBookmarks, t]);
 
   // 书签按钮点击处理：单击添加/删除
@@ -852,6 +1092,11 @@ export default function ReaderContainer({ config }: { config: ReaderConfig }) {
             onTOCChange={setToc}
             onClose={config.onClose}
             highlights={bookHighlights}
+            notes={bookNotes}
+            onNoteClick={(note) => {
+              setSelectedNote(note);
+              setShowNoteViewer(true);
+            }}
           />
         );
       case 'pdf':
@@ -946,15 +1191,20 @@ export default function ReaderContainer({ config }: { config: ReaderConfig }) {
       try {
         const api = (await import('../../utils/api')).default;
         const response = await api.get(`/notes/book/${config.book.id}`);
-        setBookNotes(response.data.notes || []);
+        const notes = response.data.notes || [];
+        setBookNotes(notes);
+        // 通知阅读器更新笔记标记
+        if ((window as any).__updateBookNotes) {
+          (window as any).__updateBookNotes(notes);
+        }
       } catch (error) {
         console.error('获取书籍笔记失败:', error);
       }
     };
-    if (config.book.id) {
+    if (config.book.id && isAuthenticated) {
       fetchBookNotes();
     }
-  }, [config.book.id]);
+  }, [config.book.id, isAuthenticated]);
 
   // 处理文本选择
   useEffect(() => {
@@ -1226,7 +1476,27 @@ export default function ReaderContainer({ config }: { config: ReaderConfig }) {
       >
         <div className="flex items-center justify-between px-4 h-full" style={{ minHeight: '48px' }}>
           <button
-            onClick={config.onClose}
+            onClick={async () => {
+              // 如果处于书签浏览模式，先保存之前的阅读位置
+              if (isBookmarkBrowsingMode && previousPosition) {
+                // 先清除书签浏览模式标志（避免 flushNow 保存书签位置）
+                setIsBookmarkBrowsingMode(false);
+                (window as any).__isBookmarkBrowsingMode = false;
+                
+                // 触发保存之前的阅读位置
+                if ((window as any).__savePreviousPosition) {
+                  (window as any).__savePreviousPosition(previousPosition);
+                }
+                
+                // 等待一小段时间确保保存完成
+                await new Promise(resolve => setTimeout(resolve, 100));
+                
+                // 清除状态
+                setPreviousPosition(null);
+                (window as any).__previousPositionForSave = null;
+              }
+              config.onClose();
+            }}
             className="p-2 hover:bg-opacity-10 hover:bg-black dark:hover:bg-white dark:hover:bg-opacity-10 rounded-lg transition-colors flex-shrink-0"
             aria-label={t('common.back')}
           >
@@ -1290,6 +1560,23 @@ export default function ReaderContainer({ config }: { config: ReaderConfig }) {
           </div>
 
           <div className="flex items-center gap-2 flex-shrink-0">
+            {/* 书签列表按钮 - 有书签时显示 */}
+            {bookmarks.length > 0 && (
+              <button
+                onClick={() => {
+                  setShowBookmarks(true);
+                  showBottomNavigation();
+                }}
+                className="p-2 hover:bg-opacity-10 hover:bg-black dark:hover:bg-white dark:hover:bg-opacity-10 rounded-lg transition-colors flex-shrink-0 relative"
+                aria-label={t('reader.bookmarks')}
+                title={t('reader.bookmarks')}
+              >
+                <BookmarkCheck className="w-5 h-5" style={{ color: hasCurrentBookmark ? '#ff9800' : undefined }} />
+                <span className="absolute -top-1 -right-1 bg-blue-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center" style={{ fontSize: '10px', lineHeight: '1' }}>
+                  {bookmarks.length > 99 ? '99+' : bookmarks.length}
+                </span>
+              </button>
+            )}
             <button
               onClick={() => {
                 // 点击设置按钮时只显示/隐藏底部导航栏，不显示设置模态框
@@ -1838,11 +2125,20 @@ export default function ReaderContainer({ config }: { config: ReaderConfig }) {
         <BookmarkPanel
           bookmarks={bookmarks}
           currentPosition={currentPosition}
+          fileType={config.book.file_type}
           settings={config.settings}
           isVisible={showBookmarks}
           onClose={() => setShowBookmarks(false)}
           onBookmarkClick={goToBookmark}
           onDeleteBookmark={deleteBookmark}
+          onEditBookmark={editBookmark}
+        />
+        <BookmarkEditModal
+          bookmark={editingBookmark}
+          isVisible={!!editingBookmark}
+          onClose={() => setEditingBookmark(null)}
+          onSave={saveEditedBookmark}
+          theme={config.settings.theme}
         />
       </div>
 
@@ -1860,7 +2156,7 @@ export default function ReaderContainer({ config }: { config: ReaderConfig }) {
           setSelectedText('');
           setSelectedCfiRange(null);
         }}
-        onSuccess={() => {
+        onSuccess={async () => {
           // 高亮选中内容（EPUB）
           if (selectedCfiRange && (window as any).__epubHighlight) {
             try {
@@ -1868,6 +2164,19 @@ export default function ReaderContainer({ config }: { config: ReaderConfig }) {
             } catch (e) {
               // ignore
             }
+          }
+          // 刷新笔记列表以显示新标记
+          try {
+            const api = (await import('../../utils/api')).default;
+            const response = await api.get(`/notes/book/${config.book.id}`);
+            const notes = response.data.notes || [];
+            setBookNotes(notes);
+            // 通知阅读器更新笔记标记
+            if ((window as any).__updateBookNotes) {
+              (window as any).__updateBookNotes(notes);
+            }
+          } catch (error) {
+            console.error('刷新笔记列表失败:', error);
           }
         }}
       />
@@ -1878,6 +2187,26 @@ export default function ReaderContainer({ config }: { config: ReaderConfig }) {
         isVisible={!!imageViewerUrl}
         onClose={() => setImageViewerUrl(null)}
         alt={config.book.title}
+      />
+
+      {/* 笔记查看器 */}
+      <NoteViewer
+        note={selectedNote}
+        isVisible={showNoteViewer}
+        onClose={() => {
+          setShowNoteViewer(false);
+          setSelectedNote(null);
+        }}
+        theme={config.settings.theme}
+      />
+
+      {/* 返回上一阅读位置的悬浮按钮 */}
+      <BackToPreviousPositionButton
+        previousPosition={previousPosition}
+        isVisible={showBackButton}
+        onBack={backToPreviousPosition}
+        onClose={closeBackButton}
+        theme={config.settings.theme}
       />
 
     </div>

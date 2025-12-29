@@ -6,7 +6,7 @@
 
 import { BookOpen, Type, StickyNote, Volume2, Bookmark, BookmarkCheck, Play, Pause, SkipBack, SkipForward, X } from 'lucide-react';
 import { BookData, ReadingPosition, ReadingSettings } from '../../types/reader';
-import { useState, useEffect, forwardRef } from 'react';
+import { useState, useEffect, forwardRef, useRef, useCallback } from 'react';
 import api from '../../utils/api';
 import { useTranslation } from 'react-i18next';
 import i18n from '../../i18n/config';
@@ -72,6 +72,8 @@ const BottomNavigation = forwardRef<HTMLDivElement, BottomNavigationProps>(funct
   isSettingsMode = false,
 }, ref) {
   const { t } = useTranslation();
+  const bookmarkClickTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const bookmarkDoubleClickRef = useRef(false);
   const [currentTime, setCurrentTime] = useState(new Date());
   const [infoBarHeight, setInfoBarHeight] = useState(34); // 默认移动端高度
   const [models, setModels] = useState<Array<{ id: string; name: string; description: string; type: string; available: boolean }>>([]);
@@ -654,13 +656,38 @@ const BottomNavigation = forwardRef<HTMLDivElement, BottomNavigationProps>(funct
 
         {onToggleBookmark && (
           <button
-            onClick={onToggleBookmark}
+            onClick={(e) => {
+              // 如果是双击，不执行单击操作
+              if (bookmarkDoubleClickRef.current) {
+                bookmarkDoubleClickRef.current = false;
+                return;
+              }
+              
+              // 延迟执行，等待是否会有双击
+              bookmarkClickTimerRef.current = setTimeout(() => {
+                if (!bookmarkDoubleClickRef.current) {
+                  onToggleBookmark();
+                }
+                bookmarkClickTimerRef.current = null;
+              }, 200);
+            }}
             onDoubleClick={(e) => {
               e.preventDefault();
+              e.stopPropagation();
+              bookmarkDoubleClickRef.current = true;
+              if (bookmarkClickTimerRef.current) {
+                clearTimeout(bookmarkClickTimerRef.current);
+                bookmarkClickTimerRef.current = null;
+              }
               onToggleBookmarkPanel?.();
             }}
             onContextMenu={(e) => {
               e.preventDefault();
+              e.stopPropagation();
+              if (bookmarkClickTimerRef.current) {
+                clearTimeout(bookmarkClickTimerRef.current);
+                bookmarkClickTimerRef.current = null;
+              }
               onToggleBookmarkPanel?.();
             }}
             className="flex flex-col items-center gap-0.5 p-2 rounded-lg transition-colors"
