@@ -59,53 +59,47 @@ check_docker_service() {
 find_image_files() {
     print_info "查找镜像文件..."
     
-    # 默认在当前目录的 docker-images 目录中查找
-    IMAGE_DIR="./docker-images"
+    # 获取脚本所在目录（install.sh 所在目录）
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+    
+    # 优先在项目根目录下的 docker-images 目录查找
+    IMAGE_DIR="$PROJECT_ROOT/docker-images"
     
     # 如果指定了参数，使用参数作为目录
     if [ -n "$1" ]; then
         IMAGE_DIR="$1"
+    # 如果项目目录不存在，尝试当前目录
+    elif [ ! -d "$IMAGE_DIR" ]; then
+        IMAGE_DIR="./docker-images"
     fi
     
     if [ ! -d "$IMAGE_DIR" ]; then
         print_error "未找到镜像目录: $IMAGE_DIR"
         print_info "请确保镜像文件在以下位置之一:"
-        echo "  1. ./docker-images/"
-        echo "  2. 或使用参数指定: ./import-images.sh <镜像目录路径>"
+        echo "  1. $PROJECT_ROOT/docker-images/ (项目根目录)"
+        echo "  2. ./docker-images/ (当前目录)"
+        echo "  3. 或使用参数指定: ./sh/Dockerimport-images.sh <镜像目录路径>"
         exit 1
     fi
     
-    BACKEND_IMAGE=""
-    FRONTEND_IMAGE=""
+    # 查找所有 ttbye/* 镜像文件
+    IMAGE_FILES=$(find "$IMAGE_DIR" -name "*.tar.gz" -type f 2>/dev/null | sort || true)
     
-    # 查找后端镜像
-    if [ -f "$IMAGE_DIR/readknows-backend-latest.tar.gz" ]; then
-        BACKEND_IMAGE="$IMAGE_DIR/readknows-backend-latest.tar.gz"
-        print_success "找到后端镜像: $BACKEND_IMAGE"
-    elif [ -f "$IMAGE_DIR/knowbooks-backend-latest.tar.gz" ]; then
-        # 兼容旧文件名
-        BACKEND_IMAGE="$IMAGE_DIR/knowbooks-backend-latest.tar.gz"
-        print_success "找到后端镜像（旧文件名）: $BACKEND_IMAGE"
-    else
-        print_warning "未找到后端镜像文件"
-    fi
-    
-    # 查找前端镜像
-    if [ -f "$IMAGE_DIR/readknows-frontend-latest.tar.gz" ]; then
-        FRONTEND_IMAGE="$IMAGE_DIR/readknows-frontend-latest.tar.gz"
-        print_success "找到前端镜像: $FRONTEND_IMAGE"
-    elif [ -f "$IMAGE_DIR/knowbooks-frontend-latest.tar.gz" ]; then
-        # 兼容旧文件名
-        FRONTEND_IMAGE="$IMAGE_DIR/knowbooks-frontend-latest.tar.gz"
-        print_success "找到前端镜像（旧文件名）: $FRONTEND_IMAGE"
-    else
-        print_warning "未找到前端镜像文件"
-    fi
-    
-    if [ -z "$BACKEND_IMAGE" ] && [ -z "$FRONTEND_IMAGE" ]; then
-        print_error "未找到任何镜像文件"
+    if [ -z "$IMAGE_FILES" ]; then
+        print_error "未找到任何镜像文件 (*.tar.gz)"
+        print_info "请确保镜像文件在目录: $IMAGE_DIR"
         exit 1
     fi
+    
+    print_success "找到以下镜像文件:"
+    echo "$IMAGE_FILES" | while read -r file; do
+        if [ -f "$file" ]; then
+            SIZE=$(du -h "$file" | cut -f1)
+            echo "  - $(basename "$file") ($SIZE)"
+        fi
+    done
+    echo ""
 }
 
 # 检查磁盘空间
@@ -130,30 +124,36 @@ check_disk_space() {
 import_images() {
     print_header "导入镜像"
     
-    # 导入后端镜像
-    if [ -n "$BACKEND_IMAGE" ]; then
-        print_info "正在导入后端镜像..."
+    IMPORTED_COUNT=0
+    FAILED_COUNT=0
+    
+    # 导入所有镜像文件（使用 for 循环避免子shell问题）
+    for image_file in $IMAGE_FILES; do
+        if [ -z "$image_file" ] || [ ! -f "$image_file" ]; then
+            continue
+        fi
+        
+        IMAGE_NAME=$(basename "$image_file")
+        print_info "正在导入镜像: $IMAGE_NAME"
         print_info "这可能需要几分钟时间，请耐心等待..."
         
-        if gunzip -c "$BACKEND_IMAGE" | docker load; then
-            print_success "后端镜像导入成功"
+        if gunzip -c "$image_file" | docker load; then
+            print_success "镜像导入成功: $IMAGE_NAME"
+            IMPORTED_COUNT=$((IMPORTED_COUNT + 1))
         else
-            print_error "后端镜像导入失败"
-            exit 1
+            print_error "镜像导入失败: $IMAGE_NAME"
+            FAILED_COUNT=$((FAILED_COUNT + 1))
         fi
+        echo ""
+    done
+    
+    if [ $FAILED_COUNT -gt 0 ]; then
+        print_warning "部分镜像导入失败（$FAILED_COUNT 个）"
     fi
     
-    # 导入前端镜像
-    if [ -n "$FRONTEND_IMAGE" ]; then
-        print_info "正在导入前端镜像..."
-        print_info "这可能需要几分钟时间，请耐心等待..."
-        
-        if gunzip -c "$FRONTEND_IMAGE" | docker load; then
-            print_success "前端镜像导入成功"
-        else
-            print_error "前端镜像导入失败"
-            exit 1
-        fi
+    if [ $IMPORTED_COUNT -eq 0 ]; then
+        print_error "所有镜像导入失败"
+        exit 1
     fi
 }
 
@@ -162,12 +162,13 @@ verify_images() {
     print_header "验证镜像"
     
     echo ""
-    print_info "已导入的镜像:"
-    docker images | grep -E "ttbye/readknows-(backend|frontend)" || print_warning "未找到相关镜像"
-    
-    echo ""
-    print_info "镜像信息:"
-    docker images --format "table {{.Repository}}\t{{.Tag}}\t{{.Size}}\t{{.CreatedAt}}" | grep readknows || true
+    print_info "已导入的 ttbye/* 镜像:"
+    TTBYE_IMAGES=$(docker images --format "{{.Repository}}:{{.Tag}}" | grep "^ttbye/" || true)
+    if [ -n "$TTBYE_IMAGES" ]; then
+        docker images --format "table {{.Repository}}\t{{.Tag}}\t{{.Size}}\t{{.CreatedAt}}" | grep -E "^ttbye/|^REPOSITORY" || true
+    else
+        print_warning "未找到相关镜像"
+    fi
 }
 
 # 主函数
@@ -186,9 +187,13 @@ main() {
     
     # 显示准备导入的镜像
     echo ""
-    print_info "准备导入以下镜像:"
-    [ -n "$BACKEND_IMAGE" ] && echo "  - 后端: $BACKEND_IMAGE"
-    [ -n "$FRONTEND_IMAGE" ] && echo "  - 前端: $FRONTEND_IMAGE"
+    print_info "准备导入以下镜像文件:"
+    echo "$IMAGE_FILES" | while read -r file; do
+        if [ -f "$file" ]; then
+            SIZE=$(du -h "$file" | cut -f1)
+            echo "  - $(basename "$file") ($SIZE)"
+        fi
+    done
     echo ""
     
     # 导入镜像

@@ -130,88 +130,67 @@ function getHostIP(): string | null {
   return null;
 }
 
-// 获取AI配置（按用户）
+// 获取AI配置（统一从 system_settings 读取，所有用户共享）
 function getAIConfig(userId: string) {
   try {
-    console.log('[AI Config] ========== 开始读取用户AI配置 ==========');
+    console.log('[AI Config] ========== 开始读取AI配置 ==========');
     console.log('[AI Config] 用户ID:', userId);
     
-    // 从用户AI设置表读取配置
-    let userSettings: any = null;
+    // 优先从 system_settings 表读取统一配置（所有用户共享）
+    let systemProvider: any = null;
+    let systemApiUrl: any = null;
+    let systemApiKey: any = null;
+    let systemModel: any = null;
+    
     try {
-      userSettings = db.prepare('SELECT * FROM user_ai_settings WHERE user_id = ?').get(userId) as any;
+      systemProvider = db.prepare('SELECT value FROM system_settings WHERE key = ?').get('ai_provider') as any;
+      systemApiUrl = db.prepare('SELECT value FROM system_settings WHERE key = ?').get('ai_api_url') as any;
+      systemApiKey = db.prepare('SELECT value FROM system_settings WHERE key = ?').get('ai_api_key') as any;
+      systemModel = db.prepare('SELECT value FROM system_settings WHERE key = ?').get('ai_model') as any;
+      
+      console.log('[AI Config] 从 system_settings 读取:');
+      console.log('[AI Config]   ai_provider:', systemProvider?.value);
+      console.log('[AI Config]   ai_api_url:', systemApiUrl?.value);
+      console.log('[AI Config]   ai_api_key:', systemApiKey?.value ? '***' : '(空)');
+      console.log('[AI Config]   ai_model:', systemModel?.value);
     } catch (dbError: any) {
-      console.error('[AI Config] 数据库查询失败:', {
-        error: dbError.message,
-        code: dbError.code,
-        name: dbError.name,
-      });
-      // 如果表不存在，尝试初始化数据库表
-      if (dbError.message && dbError.message.includes('no such table')) {
-        console.warn('[AI Config] user_ai_settings 表不存在，尝试初始化...');
-        try {
-          db.exec(`
-            CREATE TABLE IF NOT EXISTS user_ai_settings (
-              id TEXT PRIMARY KEY,
-              user_id TEXT UNIQUE NOT NULL,
-              provider TEXT DEFAULT 'ollama',
-              api_url TEXT DEFAULT 'http://127.0.0.1:11434',
-              api_key TEXT DEFAULT '',
-              model TEXT DEFAULT 'deepseek-v3.1:671b-cloud',
-              created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-              updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-              FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-            )
-          `);
-          console.log('[AI Config] 已创建 user_ai_settings 表');
-        } catch (initError: any) {
-          console.error('[AI Config] 初始化表失败:', initError.message);
-        }
-      }
-      // 继续使用默认配置
+      console.warn('[AI Config] 从 system_settings 读取失败:', dbError.message);
     }
     
-    // 默认配置
-    const defaultConfig = {
-      provider: 'ollama',
-      api_url: 'http://127.0.0.1:11434',
-      api_key: '',
-      model: 'deepseek-v3.1:671b-cloud',
+    // 默认配置（如果数据库中无ollama地址，默认设置为：http://127.0.0.1:11434）
+    const DEFAULT_API_URL = 'http://127.0.0.1:11434';
+    const DEFAULT_PROVIDER = 'ollama';
+    const DEFAULT_MODEL = 'deepseek-v3.1:671b-cloud';
+    
+    // 从 system_settings 读取配置，统一使用 ai_api_url、ai_provider、ai_model、ai_api_key
+    // 如果为空则使用默认值
+    const provider = systemProvider?.value && systemProvider.value.trim() !== '' 
+      ? systemProvider.value.trim() 
+      : DEFAULT_PROVIDER;
+    
+    const apiUrl = systemApiUrl?.value && systemApiUrl.value.trim() !== '' 
+      ? systemApiUrl.value.trim() 
+      : DEFAULT_API_URL;
+    
+    const apiKey = systemApiKey?.value ? systemApiKey.value.trim() : '';
+    
+    const model = systemModel?.value && systemModel.value.trim() !== '' 
+      ? systemModel.value.trim() 
+      : DEFAULT_MODEL;
+    
+    // 统一配置对象，使用 api_url 作为内部字段名（与数据库字段名一致）
+    const config = {
+      provider,
+      api_url: apiUrl,  // 统一使用 api_url 作为字段名
+      api_key: apiKey,
+      model,
     };
-
-    let config: {
-      provider: string;
-      api_url: string;
-      api_key: string;
-      model: string;
-    };
-
-    if (userSettings) {
-      // 使用用户配置
-      config = {
-        provider: userSettings.provider || defaultConfig.provider,
-        api_url: userSettings.api_url || defaultConfig.api_url,
-        api_key: userSettings.api_key || defaultConfig.api_key,
-        model: userSettings.model || defaultConfig.model,
-      };
-      console.log('[AI Config] 找到用户配置:', JSON.stringify(userSettings, null, 2));
-    } else {
-      // 使用默认配置
-      config = defaultConfig;
-      console.log('[AI Config] 未找到用户配置，使用默认配置');
-      
-      // 自动创建默认配置
-      try {
-        const id = uuidv4();
-        db.prepare(`
-          INSERT INTO user_ai_settings (id, user_id, provider, api_url, api_key, model)
-          VALUES (?, ?, ?, ?, ?, ?)
-        `).run(id, userId, config.provider, config.api_url, config.api_key, config.model);
-        console.log('[AI Config] 已创建默认用户配置');
-      } catch (e) {
-        console.warn('[AI Config] 创建默认配置失败:', e);
-      }
-    }
+    
+    console.log('[AI Config] 最终使用的配置:');
+    console.log('[AI Config]   provider:', config.provider);
+    console.log('[AI Config]   api_url:', config.api_url);
+    console.log('[AI Config]   api_key:', config.api_key ? '***' : '(空)');
+    console.log('[AI Config]   model:', config.model);
 
     // 检查配置是否存在
     const hasProvider = !!config.provider;
@@ -282,110 +261,27 @@ function getAIConfig(userId: string) {
       ? config.provider.trim()
       : 'ollama';
     
-    // 获取 API URL：如果存在且不为空，使用配置值；否则使用默认值
-    let apiUrlValue = hasApiUrl && config.api_url && config.api_url.trim() !== '' 
-      ? config.api_url.trim() 
-      : 'http://127.0.0.1:11434';
+    // 获取 API URL：直接使用 config.api_url（已经从 system_settings 读取，如果为空已使用默认值）
+    let apiUrlValue = config.api_url.trim();
     
-    // 处理地址转换：在 Docker 环境中，localhost 需要转换为 host.docker.internal
-    // 局域网IP地址（如 192.168.x.x）直接使用，不需要转换
+    // 注意：不再自动转换地址，直接使用数据库中的地址
+    // 用户应该在系统设置中配置正确的地址（如局域网IP或 host.docker.internal）
+    // 这样所有用户都使用统一的配置，避免地址混乱
     if (providerValue === 'ollama' && apiUrlValue) {
       try {
         const url = new URL(apiUrlValue);
         const hostname = url.hostname;
         
-        // 检查是否是 localhost 或 127.0.0.1
-        const isLocalhost = hostname === 'localhost' || hostname === '127.0.0.1';
+        console.log('[AI Config] ========== 地址检查 ==========');
+        console.log('[AI Config] 数据库中的地址:', apiUrlValue);
+        console.log('[AI Config] 主机名:', hostname);
+        console.log('[AI Config] 直接使用数据库中的地址，不进行自动转换');
+        console.log('[AI Config] 提示：如果地址不正确，请在系统设置中修改');
+        console.log('[AI Config] ==============================');
         
-        // 检查是否是 Docker 网桥网关地址（172.17.0.1 是 Docker 默认网桥的网关）
-        // 注意：172.17.x.x 是 Docker 默认网桥，但在容器内访问 172.17.0.1 可能无法访问宿主机
-        const isDockerBridge = hostname === '172.17.0.1' || hostname.startsWith('172.17.');
-        
-        // 检查是否是局域网IP地址（192.168.x.x, 10.x.x.x, 172.16-31.x.x，但排除 Docker 网桥）
-        const isPrivateIP = /^(192\.168\.|10\.|172\.(1[6-9]|2[0-9]|3[01])\.)/.test(hostname) && !isDockerBridge;
-        
-        // 检测是否在 Docker 容器中
-        const inDocker = isDockerContainer();
-        // 检测是否在群晖环境中
-        const inSynology = isSynologyEnvironment();
-        // 检测是否使用 host 网络模式
-        const inHostMode = isHostNetworkMode();
-        
-        if (isLocalhost || isDockerBridge) {
-          // 如果使用 host 网络模式，localhost 和 127.0.0.1 可以直接访问宿主机，无需转换
-          if (inHostMode) {
-            console.log('[AI Config] ========== Host 网络模式检测 ==========');
-            console.log('[AI Config] ✓ 检测到使用 host 网络模式');
-            console.log('[AI Config] ✓ localhost 和 127.0.0.1 可以直接访问宿主机服务');
-            console.log('[AI Config] 使用原地址:', apiUrlValue);
-            console.log('[AI Config] 提示：host 模式下，容器直接使用宿主机网络，可以直接访问 localhost:11434');
-            console.log('[AI Config] ========================================');
-            // host 模式下，localhost 可以直接使用，不需要转换
-          } else {
-            // 如果是 localhost 或 Docker 网桥地址，在 Docker 环境或生产环境中需要转换
-            // 群晖环境通常不支持 host.docker.internal，需要使用其他方式
-            const shouldConvert = inDocker || process.env.NODE_ENV === 'production';
-            
-            console.log('[AI Config] ========== 地址检测 ==========');
-            console.log('[AI Config] 检测到地址:', apiUrlValue);
-            console.log('[AI Config] 地址类型:', isLocalhost ? 'localhost' : 'Docker网桥');
-            console.log('[AI Config] Docker 检测结果:', inDocker);
-            console.log('[AI Config] 群晖环境检测结果:', inSynology);
-            console.log('[AI Config] Host 网络模式:', inHostMode);
-            console.log('[AI Config] NODE_ENV:', process.env.NODE_ENV);
-            console.log('[AI Config] 是否需要转换:', shouldConvert);
-            
-            if (shouldConvert) {
-              if (inSynology) {
-                // 群晖环境：不支持 host.docker.internal，需要用户手动配置实际 IP
-                console.log('[AI Config] ========== 群晖环境检测 ==========');
-                console.log('[AI Config] ⚠️ 检测到群晖（Synology）环境');
-                console.log('[AI Config] ⚠️ 群晖 Docker 不支持 host.docker.internal');
-                console.log('[AI Config] 原始地址（系统设置）:', apiUrlValue);
-                console.log('[AI Config] 建议配置方式：');
-                console.log('[AI Config] 1. 推荐：使用 host 网络模式（修改 docker-compose.yml，设置 network_mode: host）');
-                console.log('[AI Config]    这样可以直接使用 http://127.0.0.1:11434 或 http://localhost:11434');
-                console.log('[AI Config] 2. 如果 Ollama 在群晖宿主机上（使用 bridge 模式）：');
-                console.log('[AI Config]    - 使用群晖的实际 IP 地址，如：http://192.168.x.x:11434');
-                console.log('[AI Config] 3. 如果 Ollama 在局域网其他机器上：');
-                console.log('[AI Config]    - 使用该机器的实际 IP 地址，如：http://192.168.x.x:11434');
-                console.log('[AI Config] 4. 如果 Ollama 在远程服务器上：');
-                console.log('[AI Config]    - 使用公网 IP 或域名，如：http://example.com:11434');
-                console.log('[AI Config] ========================================');
-                // 在群晖环境中，不自动转换，保留原地址或提示用户
-                // 如果用户配置了 172.17.0.1，这通常无法工作，但让用户看到错误信息更清楚
-              } else {
-                // 标准 Docker 环境：转换为 host.docker.internal
-                const newUrl = new URL(apiUrlValue);
-                newUrl.hostname = 'host.docker.internal';
-                const originalUrl = apiUrlValue;
-                apiUrlValue = newUrl.toString();
-                console.log('[AI Config] ========== 执行地址转换 ==========');
-                console.log('[AI Config] 原始地址（系统设置）:', originalUrl);
-                console.log('[AI Config] 转换为:', apiUrlValue);
-                console.log('[AI Config] 原因：容器内的 localhost 或 Docker 网桥地址（172.17.0.1）无法可靠访问宿主机，需要转换为 host.docker.internal');
-                console.log('[AI Config] ========================================');
-              }
-            } else {
-              console.log('[AI Config] ⚠️ 未执行转换，使用原地址:', apiUrlValue);
-              console.log('[AI Config] 提示：如果在 Docker 环境中，此地址可能无法访问宿主机服务');
-              if (inSynology) {
-                console.log('[AI Config] 特别提示：群晖环境不支持 host.docker.internal，建议使用 host 网络模式或实际 IP 地址');
-              } else {
-                console.log('[AI Config] 建议：在系统设置中直接配置 http://host.docker.internal:11434 或实际 IP 地址');
-              }
-            }
-          }
-        } else if (isPrivateIP) {
-          // 如果是局域网IP地址，直接使用，不需要转换
-          // Docker 容器默认可以访问宿主机的局域网（如果宿主机可以访问）
-          console.log('[AI Config] 使用局域网IP地址:', apiUrlValue);
-          console.log('[AI Config] 提示：确保 Docker 容器可以访问宿主机局域网');
-          console.log('[AI Config] 提示：如果无法访问，请检查 Docker 网络配置或防火墙设置');
-        } else {
-          // 其他地址（域名或公网IP），直接使用
-          console.log('[AI Config] 使用配置的地址:', apiUrlValue);
-        }
+        // 不再进行地址转换，直接使用数据库中的地址
+        // 如果用户需要访问宿主机上的 Ollama，应该在系统设置中直接配置 http://host.docker.internal:11434
+        // 如果用户需要访问局域网其他机器，应该直接配置实际IP地址，如 http://192.168.x.x:11434
       } catch (e) {
         // URL 解析失败，使用原值
         console.warn('[AI Config] URL 解析失败，使用原值:', apiUrlValue);
@@ -393,20 +289,21 @@ function getAIConfig(userId: string) {
       }
     }
 
+    // 统一返回对象，使用 api_url 作为字段名（与数据库字段名一致）
     const result = {
       provider: providerValue,
-      apiUrl: apiUrlValue,
-      apiKey: hasApiKey ? config.api_key : '',
+      api_url: apiUrlValue,  // 统一使用 api_url（下划线）
+      api_key: hasApiKey ? config.api_key : '',  // 统一使用 api_key（下划线）
       model: finalModelValue, // 使用最终确定的模型名称
     };
 
     console.log('[AI Config] ========== 最终配置 ==========');
     console.log('[AI Config] Provider:', result.provider);
-    console.log('[AI Config] API URL:', result.apiUrl);
+    console.log('[AI Config] API URL:', result.api_url);
     console.log('[AI Config] Model:', result.model, '(这是实际使用的模型名称)');
     console.log('[AI Config] Model Value (变量):', modelValue);
     console.log('[AI Config] Final Model Value (变量):', finalModelValue);
-    console.log('[AI Config] Has API Key:', !!result.apiKey);
+    console.log('[AI Config] Has API Key:', !!result.api_key);
     console.log('[AI Config] Raw Config:', JSON.stringify(config, null, 2));
     console.log('[AI Config] ==============================');
 
@@ -415,92 +312,72 @@ function getAIConfig(userId: string) {
     console.error('[AI Config] 获取配置失败:', error);
     console.error('[AI Config] 错误堆栈:', error.stack);
     // 返回默认配置
-    // 在生产环境中，默认使用 host.docker.internal 而不是 127.0.0.1
-    let defaultApiUrl = 'http://127.0.0.1:11434';
-    const inDocker = isDockerContainer();
-    if (process.env.NODE_ENV === 'production' || inDocker) {
-      defaultApiUrl = 'http://host.docker.internal:11434';
-      console.log('[AI Config] 使用 Docker/生产环境默认地址:', defaultApiUrl);
-      console.log('[AI Config] Docker 检测结果:', inDocker);
-    }
+    // 如果数据库中无ollama地址，默认设置为：http://127.0.0.1:11434
+    const defaultApiUrl = 'http://127.0.0.1:11434';
+    console.log('[AI Config] 使用默认地址:', defaultApiUrl);
     return {
       provider: 'ollama',
-      apiUrl: defaultApiUrl,
-      apiKey: '',
+      api_url: defaultApiUrl,  // 统一使用 api_url（下划线）
+      api_key: '',  // 统一使用 api_key（下划线）
       model: 'deepseek-v3.1:671b-cloud',
     };
   }
 }
 
-// 获取用户AI设置
+// 获取AI设置（从 system_settings 读取，所有用户共享）
 router.get('/settings', authenticateToken, async (req: AuthRequest, res) => {
   try {
-    const userId = req.userId!;
-    const settings = db.prepare('SELECT * FROM user_ai_settings WHERE user_id = ?').get(userId) as any;
+    // 从 system_settings 表读取统一配置
+    const providerSetting = db.prepare('SELECT value FROM system_settings WHERE key = ?').get('ai_provider') as any;
+    const apiUrlSetting = db.prepare('SELECT value FROM system_settings WHERE key = ?').get('ai_api_url') as any;
+    const apiKeySetting = db.prepare('SELECT value FROM system_settings WHERE key = ?').get('ai_api_key') as any;
+    const modelSetting = db.prepare('SELECT value FROM system_settings WHERE key = ?').get('ai_model') as any;
     
-    if (settings) {
-      res.json({
-        provider: settings.provider || 'ollama',
-        api_url: settings.api_url || 'http://127.0.0.1:11434',
-        api_key: settings.api_key || '',
-        model: settings.model || 'deepseek-v3.1:671b-cloud',
-      });
-    } else {
-      // 返回默认配置
-      res.json({
-        provider: 'ollama',
-        api_url: 'http://127.0.0.1:11434',
-        api_key: '',
-        model: 'deepseek-v3.1:671b-cloud',
-      });
-    }
+    res.json({
+      provider: providerSetting?.value || 'ollama',
+      api_url: apiUrlSetting?.value || 'http://127.0.0.1:11434',
+      api_key: apiKeySetting?.value || '',
+      model: modelSetting?.value || 'deepseek-v3.1:671b-cloud',
+    });
   } catch (error: any) {
-    console.error('[AI Settings] 获取用户AI设置失败:', error);
+    console.error('[AI Settings] 获取AI设置失败:', error);
     res.status(500).json({ error: '获取设置失败' });
   }
 });
 
-// 更新用户AI设置
+// 更新AI设置（保存到 system_settings，所有用户共享）
+// 注意：此端点已废弃，请使用 /settings/:key 端点更新设置
 router.put('/settings', authenticateToken, async (req: AuthRequest, res) => {
   try {
-    const userId = req.userId!;
     const { provider, api_url, api_key, model } = req.body;
 
-    // 检查是否已有设置
-    const existing = db.prepare('SELECT id FROM user_ai_settings WHERE user_id = ?').get(userId) as any;
+    // 更新到 system_settings 表（所有用户共享）
+    const updateOrInsert = (key: string, value: string) => {
+      const existing = db.prepare('SELECT id FROM system_settings WHERE key = ?').get(key) as any;
+      if (existing) {
+        db.prepare('UPDATE system_settings SET value = ?, updated_at = CURRENT_TIMESTAMP WHERE key = ?').run(value, key);
+      } else {
+        const id = uuidv4();
+        db.prepare('INSERT INTO system_settings (id, key, value) VALUES (?, ?, ?)').run(id, key, value);
+      }
+    };
 
-    if (existing) {
-      // 更新现有设置
-      db.prepare(`
-        UPDATE user_ai_settings 
-        SET provider = ?, api_url = ?, api_key = ?, model = ?, updated_at = CURRENT_TIMESTAMP
-        WHERE user_id = ?
-      `).run(
-        provider || 'ollama',
-        api_url || 'http://127.0.0.1:11434',
-        api_key || '',
-        model || 'deepseek-v3.1:671b-cloud',
-        userId
-      );
-    } else {
-      // 创建新设置
-      const id = uuidv4();
-      db.prepare(`
-        INSERT INTO user_ai_settings (id, user_id, provider, api_url, api_key, model)
-        VALUES (?, ?, ?, ?, ?, ?)
-      `).run(
-        id,
-        userId,
-        provider || 'ollama',
-        api_url || 'http://127.0.0.1:11434',
-        api_key || '',
-        model || 'deepseek-v3.1:671b-cloud'
-      );
+    if (provider !== undefined) {
+      updateOrInsert('ai_provider', provider || 'ollama');
+    }
+    if (api_url !== undefined) {
+      updateOrInsert('ai_api_url', api_url || 'http://127.0.0.1:11434');
+    }
+    if (api_key !== undefined) {
+      updateOrInsert('ai_api_key', api_key || '');
+    }
+    if (model !== undefined) {
+      updateOrInsert('ai_model', model || 'deepseek-v3.1:671b-cloud');
     }
 
-    res.json({ message: 'AI设置已保存' });
+    res.json({ message: 'AI设置已保存（所有用户共享）' });
   } catch (error: any) {
-    console.error('[AI Settings] 更新用户AI设置失败:', error);
+    console.error('[AI Settings] 更新AI设置失败:', error);
     res.status(500).json({ error: '保存设置失败' });
   }
 });
@@ -512,13 +389,56 @@ router.get('/test', authenticateToken, async (req: AuthRequest, res) => {
     console.log('[AI Test] ========== 开始测试AI配置 ==========');
     console.log('[AI Test] 用户ID:', userId);
     
+    // 支持通过查询参数传入测试 URL（不保存到数据库，仅用于测试）
+    let testApiUrl = req.query.api_url as string | undefined;
+    const testProvider = (req.query.provider as string | undefined) || undefined;
+    
+    // 解码 URL（如果被编码了）
+    if (testApiUrl) {
+      try {
+        testApiUrl = decodeURIComponent(testApiUrl);
+        console.log('[AI Test] 解码后的测试 URL:', testApiUrl);
+      } catch (decodeError: any) {
+        console.warn('[AI Test] URL 解码失败，使用原始值:', testApiUrl, decodeError);
+        // 如果解码失败，使用原始值
+      }
+      
+      // 验证 URL 格式
+      try {
+        new URL(testApiUrl);
+      } catch (urlError: any) {
+        console.error('[AI Test] 测试 URL 格式无效:', testApiUrl, urlError);
+        return res.status(400).json({
+          success: false,
+          error: `无效的 API 地址格式: ${testApiUrl}`,
+          details: {
+            message: urlError.message,
+            providedUrl: testApiUrl,
+          },
+        });
+      }
+    }
+    
     let config;
     try {
-      config = getAIConfig(userId);
+      if (testApiUrl) {
+        // 如果提供了测试 URL，使用它而不是从数据库读取
+        console.log('[AI Test] 使用测试 URL（不保存到数据库）:', testApiUrl);
+        config = {
+          provider: testProvider || 'ollama',
+          api_url: testApiUrl,  // 统一使用 api_url（下划线）
+          api_key: '',  // 统一使用 api_key（下划线）
+          model: 'test', // 测试时不需要模型名称
+        };
+      } else {
+        // 否则从数据库读取配置
+        config = getAIConfig(userId);
+      }
       console.log('[AI Test] 配置获取成功:', {
         provider: config.provider,
-        apiUrl: config.apiUrl,
+        api_url: config.api_url,
         model: config.model,
+        isTestUrl: !!testApiUrl,
       });
     } catch (configError: any) {
       console.error('[AI Test] 获取配置失败:', {
@@ -539,14 +459,13 @@ router.get('/test', authenticateToken, async (req: AuthRequest, res) => {
     
     // 测试连接
     if (config.provider === 'ollama') {
+      // 直接使用数据库中的地址，不再使用 nginx 代理
+      const baseUrl = config.api_url.replace(/\/$/, '');
+      const testUrl = `${baseUrl}/api/tags`;
+      
       try {
-        // 确保URL格式正确
-        const baseUrl = config.apiUrl.replace(/\/$/, '');
-        const testUrl = `${baseUrl}/api/tags`;
-        
         console.log('[AI Test] ========== 开始测试Ollama连接 ==========');
-        console.log('[AI Test] 原始配置URL:', config.apiUrl);
-        console.log('[AI Test] 清理后URL:', baseUrl);
+        console.log('[AI Test] 使用数据库中的地址:', baseUrl);
         console.log('[AI Test] 测试URL:', testUrl);
         console.log('[AI Test] 是否在Docker中:', isDockerContainer());
         console.log('[AI Test] NODE_ENV:', process.env.NODE_ENV);
@@ -562,31 +481,141 @@ router.get('/test', authenticateToken, async (req: AuthRequest, res) => {
             
             response = await axios.get(testUrl, {
               timeout: 20000, // 增加到20秒超时（远程部署可能需要更长时间）
-              validateStatus: (status) => status < 500,
+              validateStatus: (status) => status >= 200 && status < 300, // 只接受 200-299 状态码
               headers: {
                 'User-Agent': 'ReadKnow-AI-Client/1.0',
+                'Accept': 'application/json',
               },
               // 对于远程部署，可能需要更宽松的网络设置
               maxRedirects: 5,
             });
 
-            if (response.status >= 400) {
-              throw new Error(`HTTP ${response.status}: ${response.data?.error || response.statusText}`);
+            // 验证响应数据格式
+            // 注意：axios 默认会将 JSON 响应解析为对象，但某些情况下可能返回字符串
+            if (!response.data) {
+              throw new Error('Ollama 服务器返回空响应');
+            }
+
+            // 检查是否是 HTML 错误页面（nginx 可能返回 HTML 错误页面）
+            if (typeof response.data === 'string') {
+              if (response.data.includes('<!DOCTYPE') || response.data.includes('<html')) {
+                throw new Error('收到 HTML 响应，可能是 nginx 错误页面。请检查 Ollama 服务器地址和端口是否正确。');
+              }
+              // 如果是 JSON 字符串，尝试解析
+              try {
+                response.data = JSON.parse(response.data);
+              } catch (parseError) {
+                throw new Error(`无法解析响应数据: ${response.data.substring(0, 200)}`);
+              }
+            }
+
+            // 确保响应数据是对象
+            if (typeof response.data !== 'object') {
+              throw new Error(`无效的响应格式: 期望 JSON 对象，但收到 ${typeof response.data}`);
             }
 
             console.log('[AI Test] ✓ Ollama连接成功');
             console.log('[AI Test] 响应状态:', response.status);
+            console.log('[AI Test] 原始响应数据:', JSON.stringify(response.data, null, 2));
+            console.log('[AI Test] 响应数据类型:', typeof response.data);
+            console.log('[AI Test] response.data.models 类型:', typeof response.data?.models);
+            console.log('[AI Test] response.data.models 是否为数组:', Array.isArray(response.data?.models));
             console.log('[AI Test] 模型数量:', response.data?.models?.length || 0);
             
-            res.json({
+            // 确保返回的模型列表格式正确
+            let models: any[] = [];
+            
+            // 尝试多种可能的数据结构
+            if (response.data?.models && Array.isArray(response.data.models)) {
+              models = response.data.models;
+              console.log('[AI Test] 从 response.data.models 获取模型列表');
+            } else if (response.data?.data?.models && Array.isArray(response.data.data.models)) {
+              models = response.data.data.models;
+              console.log('[AI Test] 从 response.data.data.models 获取模型列表');
+            } else if (Array.isArray(response.data)) {
+              // 如果响应本身就是数组
+              models = response.data;
+              console.log('[AI Test] 响应本身就是模型数组');
+            } else {
+              console.warn('[AI Test] ⚠️ 无法找到模型列表，响应数据结构:', {
+                hasModels: !!response.data?.models,
+                modelsType: typeof response.data?.models,
+                isArray: Array.isArray(response.data?.models),
+                dataKeys: response.data ? Object.keys(response.data) : [],
+                fullData: response.data
+              });
+            }
+            
+            console.log('[AI Test] 处理后的模型列表:', JSON.stringify(models, null, 2));
+            console.log('[AI Test] 模型数量:', models.length);
+            
+            // 如果模型列表为空，但原始响应有数据，尝试其他方式提取
+            if (models.length === 0 && response.data) {
+              console.warn('[AI Test] ⚠️ 模型列表为空，尝试其他方式提取...');
+              console.log('[AI Test] 完整响应对象:', {
+                status: response.status,
+                statusText: response.statusText,
+                headers: response.headers,
+                dataType: typeof response.data,
+                dataKeys: response.data ? Object.keys(response.data) : [],
+                dataString: JSON.stringify(response.data).substring(0, 500)
+              });
+              
+              // 尝试直接使用 response.data（如果它是数组）
+              if (Array.isArray(response.data)) {
+                models = response.data;
+                console.log('[AI Test] ✓ 响应数据本身就是数组，使用它作为模型列表');
+              }
+              // 尝试从其他可能的字段提取
+              else if (response.data && typeof response.data === 'object') {
+                // 检查所有可能的字段
+                const possibleFields = ['models', 'data', 'items', 'list', 'result'];
+                for (const field of possibleFields) {
+                  if (response.data[field] && Array.isArray(response.data[field])) {
+                    models = response.data[field] as any[];
+                    console.log(`[AI Test] ✓ 从字段 ${field} 找到模型列表`);
+                    break;
+                  }
+                }
+              }
+            }
+            
+            console.log('[AI Test] 最终模型列表:', JSON.stringify(models, null, 2));
+            console.log('[AI Test] 最终模型数量:', models.length);
+            
+            // 如果模型列表为空，给出提示
+            if (models.length === 0) {
+              console.warn('[AI Test] ⚠️ 警告：连接成功，但模型列表为空！');
+              console.warn('[AI Test] 可能的原因：');
+              console.warn('[AI Test] 1. Ollama 服务器确实没有安装模型');
+              console.warn('[AI Test] 2. 地址配置错误，连接到了错误的服务器');
+              console.warn('[AI Test] 建议：检查 Ollama 服务器状态和模型列表');
+            }
+            
+            const responseData = {
               success: true,
               config: {
                 ...config,
-                apiUrl: baseUrl, // 返回清理后的URL
+                apiUrl: baseUrl, // 返回实际使用的URL
               },
-              message: 'Ollama连接成功',
-              models: response.data?.models || [],
-            });
+              message: models.length > 0 ? 'Ollama连接成功' : 'Ollama连接成功，但未找到模型',
+              models: models, // 确保这是数组
+              debug: process.env.NODE_ENV === 'development' ? {
+                originalResponseKeys: response.data ? Object.keys(response.data) : [],
+                modelsExtracted: models.length,
+                responseDataType: typeof response.data,
+                modelsType: typeof models,
+                modelsIsArray: Array.isArray(models),
+                originalModelsLength: response.data?.models?.length || 0,
+                fullResponseData: response.data
+              } : undefined
+            };
+            
+            console.log('[AI Test] ========== 准备返回响应 ==========');
+            console.log('[AI Test] 响应数据:', JSON.stringify(responseData, null, 2));
+            console.log('[AI Test] =================================');
+            
+            res.json(responseData);
             return; // 成功，直接返回
           } catch (attemptError: any) {
             lastError = attemptError;
@@ -594,7 +623,35 @@ router.get('/test', authenticateToken, async (req: AuthRequest, res) => {
               error: attemptError.message,
               code: attemptError.code,
               status: attemptError.response?.status,
+              statusText: attemptError.response?.statusText,
+              responseData: attemptError.response?.data,
             });
+            
+            // 如果是连接错误（ECONNREFUSED, ENOTFOUND, ETIMEDOUT），不需要重试
+            if (attemptError.code === 'ECONNREFUSED' || 
+                attemptError.code === 'ENOTFOUND' || 
+                attemptError.code === 'EAI_AGAIN' ||
+                attemptError.code === 'ETIMEDOUT' ||
+                attemptError.code === 'ECONNABORTED') {
+              console.log(`[AI Test] 连接错误，不重试: ${attemptError.code}`);
+              break; // 直接退出循环，不重试
+            }
+            
+            // 如果是 HTTP 4xx 或 5xx 错误，根据情况决定是否重试
+            if (attemptError.response) {
+              const status = attemptError.response.status;
+              // 4xx 错误（客户端错误）不需要重试
+              if (status >= 400 && status < 500) {
+                console.log(`[AI Test] HTTP ${status} 错误，不重试`);
+                break;
+              }
+              // 502 Bad Gateway 可能是临时问题，可以重试一次
+              if (status === 502 && attempt < maxRetries) {
+                console.log(`[AI Test] 502 Bad Gateway，等待后重试...`);
+                await new Promise(resolve => setTimeout(resolve, 2000)); // 等待2秒后重试
+                continue;
+              }
+            }
             
             // 如果不是最后一次尝试，等待后重试
             if (attempt < maxRetries) {
@@ -616,7 +673,7 @@ router.get('/test', authenticateToken, async (req: AuthRequest, res) => {
         console.error('[AI Test] 错误消息:', error?.message || 'Unknown error');
         console.error('[AI Test] 响应状态:', error?.response?.status);
         console.error('[AI Test] 响应数据:', error?.response?.data);
-        console.error('[AI Test] 请求URL:', error?.config?.url || config.apiUrl);
+        console.error('[AI Test] 请求URL:', error?.config?.url || config.api_url);
         console.error('[AI Test] 堆栈:', error?.stack);
         
         // 确保有有效的错误对象
@@ -678,9 +735,32 @@ router.get('/test', authenticateToken, async (req: AuthRequest, res) => {
           errorMessage += '\n3. 证书链不完整';
           errorMessage += '\n解决方案：使用有效的SSL证书，或使用HTTP而不是HTTPS';
         } else if (error.response) {
-          errorMessage += `\n\nHTTP错误 ${error.response.status}:`;
-          if (error.response.data) {
-            errorMessage += ` ${JSON.stringify(error.response.data)}`;
+          const status = error.response.status;
+          errorMessage += `\n\nHTTP错误 ${status}:`;
+          
+          // 处理 502 Bad Gateway
+          if (status === 502) {
+            errorMessage += '\n\n502 Bad Gateway: 无法连接到 Ollama 服务器';
+            errorMessage += '\n可能的原因：';
+            errorMessage += '\n1. Ollama 服务器未运行或地址/端口错误';
+            errorMessage += '\n2. Ollama 服务器无法从 Docker 容器访问';
+            errorMessage += '\n3. 防火墙阻止了连接';
+            errorMessage += '\n4. Ollama 服务器监听在 127.0.0.1 而不是 0.0.0.0';
+            errorMessage += '\n\n解决步骤：';
+            errorMessage += '\n1. 确认 Ollama 服务器正在运行';
+            errorMessage += '\n2. 检查系统设置中的 Ollama 地址是否正确';
+            errorMessage += '\n3. 确保 Ollama 监听在 0.0.0.0:11434（允许外部连接）';
+            errorMessage += '\n4. 检查防火墙规则，确保允许来自 Docker 容器的连接';
+            errorMessage += '\n5. 在 Docker 容器中，如果 Ollama 在宿主机上，使用：http://host.docker.internal:11434';
+            errorMessage += '\n6. 如果 Ollama 在局域网其他机器上，使用实际 IP 地址';
+          } else if (error.response.data) {
+            // 检查是否是 HTML 错误页面
+            const responseData = error.response.data;
+            if (typeof responseData === 'string' && (responseData.includes('<!DOCTYPE') || responseData.includes('<html'))) {
+              errorMessage += '\n\n收到 HTML 错误页面，可能是 nginx 错误页面';
+            } else {
+              errorMessage += ` ${JSON.stringify(responseData)}`;
+            }
           }
         } else if (error.message) {
           errorMessage += `\n\n错误详情: ${error.message}`;
@@ -689,18 +769,20 @@ router.get('/test', authenticateToken, async (req: AuthRequest, res) => {
         // 添加通用建议
         errorMessage += '\n\n建议：';
         errorMessage += '\n1. 确认Ollama服务器正在运行';
-        errorMessage += '\n2. 检查API地址和端口是否正确';
+        errorMessage += '\n2. 检查系统设置中的API地址和端口是否正确';
         if (isDockerContainer()) {
           errorMessage += '\n3. 在Docker环境中，确保使用正确的网络配置';
           errorMessage += '\n4. 检查Docker网络设置和防火墙规则';
+          errorMessage += '\n5. 如果 Ollama 在宿主机上，使用：http://host.docker.internal:11434';
+          errorMessage += '\n6. 如果 Ollama 在局域网其他机器上，使用实际 IP 地址';
         }
-        errorMessage += '\n5. 尝试在浏览器中直接访问: ' + config.apiUrl.replace(/\/$/, '') + '/api/tags';
+        errorMessage += '\n7. 尝试在浏览器中直接访问: ' + baseUrl.replace(/\/$/, '') + '/api/tags';
         
         res.status(500).json({
           success: false,
           config: {
             ...config,
-            apiUrl: config.apiUrl,
+            apiUrl: baseUrl, // 返回实际使用的URL
           },
           error: errorMessage,
           details: {
@@ -709,6 +791,7 @@ router.get('/test', authenticateToken, async (req: AuthRequest, res) => {
             status: error.response?.status,
             responseData: error.response?.data,
             isDocker: isDockerContainer(),
+            actualUrl: baseUrl, // 实际使用的URL
           },
         });
       }
@@ -721,29 +804,41 @@ router.get('/test', authenticateToken, async (req: AuthRequest, res) => {
     }
   } catch (error: any) {
     console.error('[AI Test] ========== 测试失败（外层捕获）==========');
-    console.error('[AI Test] 错误类型:', error.name);
-    console.error('[AI Test] 错误代码:', error.code);
-    console.error('[AI Test] 错误消息:', error.message);
-    console.error('[AI Test] 错误堆栈:', error.stack);
+    console.error('[AI Test] 错误类型:', error?.name || 'Unknown');
+    console.error('[AI Test] 错误代码:', error?.code || 'N/A');
+    console.error('[AI Test] 错误消息:', error?.message || 'Unknown error');
+    console.error('[AI Test] 错误堆栈:', error?.stack || 'No stack trace');
     console.error('[AI Test] 响应头已发送:', res.headersSent);
+    console.error('[AI Test] 请求查询参数:', req.query);
     
     // 确保响应头未发送
     if (!res.headersSent) {
+      // 构建错误消息
+      let errorMessage = '测试失败';
+      if (error?.message) {
+        errorMessage = error.message;
+      } else if (typeof error === 'string') {
+        errorMessage = error;
+      } else if (error && typeof error === 'object') {
+        errorMessage = JSON.stringify(error);
+      }
+      
       res.status(500).json({
         success: false,
-        error: error.message || '测试失败',
+        error: errorMessage,
         details: {
-          name: error.name,
-          code: error.code,
-          message: error.message,
+          name: error?.name || 'Error',
+          code: error?.code || 'UNKNOWN',
+          message: error?.message || errorMessage,
           ...(process.env.NODE_ENV === 'development' ? {
-            stack: error.stack,
+            stack: error?.stack,
+            query: req.query,
           } : {}),
           isDocker: isDockerContainer(),
         },
       });
     } else {
-      console.error('[AI Test] 响应头已发送，无法返回错误信息');
+      // console.error('[AI Test] 响应头已发送，无法返回错误信息');
     }
   }
 });
@@ -751,12 +846,12 @@ router.get('/test', authenticateToken, async (req: AuthRequest, res) => {
 // 调用AI API
 async function callAI(userId: string, prompt: string, systemPrompt?: string, conversationHistory?: any[]): Promise<string> {
   const config = getAIConfig(userId);
-  console.log('[AI Call] ========== 开始AI调用 ==========');
-  console.log('[AI Call] Provider:', config.provider);
-  console.log('[AI Call] API URL:', config.apiUrl);
-  console.log('[AI Call] Model:', config.model, '(这是实际使用的模型名称)');
-  console.log('[AI Call] Has API Key:', !!config.apiKey);
-  console.log('[AI Call] =================================');
+  // console.log('[AI Call] ========== 开始AI调用 ==========');
+  // console.log('[AI Call] Provider:', config.provider);
+  // console.log('[AI Call] API URL:', config.api_url);
+  // console.log('[AI Call] Model:', config.model, '(这是实际使用的模型名称)');
+  // console.log('[AI Call] Has API Key:', !!config.api_key);
+  // console.log('[AI Call] =================================');
 
   const messages: any[] = [];
 
@@ -772,6 +867,12 @@ async function callAI(userId: string, prompt: string, systemPrompt?: string, con
   // 添加当前用户消息
   messages.push({ role: 'user', content: prompt });
 
+  // 将这些变量定义在 try 块外部，以便在 catch 块中也能访问
+  let url = '';
+  let baseUrl = '';
+  let useProxy = false;
+  const originalApiUrl = config.api_url;
+
   try {
     if (config.provider === 'ollama') {
       // 检查模型名称是否设置
@@ -779,56 +880,56 @@ async function callAI(userId: string, prompt: string, systemPrompt?: string, con
         throw new Error('模型名称未设置，请在系统设置中选择或输入模型名称');
       }
 
-      // Ollama API
-      // 确保URL格式正确（移除末尾的斜杠，避免双斜杠）
-      const baseUrl = config.apiUrl.replace(/\/$/, '');
-      const url = `${baseUrl}/api/chat`;
-      console.log('[AI] 调用Ollama API:', { 
-        baseUrl: config.apiUrl,
-        cleanedBaseUrl: baseUrl,
-        url, 
-        model: config.model, 
-        messagesCount: messages.length,
-        messages: messages.map(m => ({ role: m.role, contentLength: m.content?.length }))
-      });
+      // Ollama API - 直接使用数据库中的地址，不再使用 nginx 代理
+      baseUrl = config.api_url.replace(/\/$/, '');
+      useProxy = false; // 不再使用代理，直接访问
+      
+      url = `${baseUrl}/api/chat`;
+      // console.log('[AI] 调用Ollama API:', { 
+      //   apiUrl: baseUrl,
+      //   url, 
+      //   model: config.model, 
+      //   messagesCount: messages.length,
+      //   messages: messages.map(m => ({ role: m.role, contentLength: m.content?.length }))
+      // });
 
       // 确保使用正确的模型名称 - 直接使用config.model
       let modelToUse = config.model;
       
-      console.log('[AI Call] 初始modelToUse:', modelToUse);
-      console.log('[AI Call] config.model:', config.model);
-      console.log('[AI Call] config.model类型:', typeof config.model);
+      // console.log('[AI Call] 初始modelToUse:', modelToUse);
+      // console.log('[AI Call] config.model:', config.model);
+      // console.log('[AI Call] config.model类型:', typeof config.model);
       
       // 如果config.model不存在或为空，尝试重新获取配置
       // 注意：不再检查是否为默认值，因为默认值也是有效的模型名称
       if (!modelToUse || modelToUse.trim() === '' || modelToUse === 'null' || modelToUse === 'undefined') {
-        console.warn('[AI Call] ⚠️ 警告：config.model为空或无效！');
-        console.warn('[AI Call] config.model:', config.model);
-        console.warn('[AI Call] config.model type:', typeof config.model);
-        console.warn('[AI Call] config.model length:', config.model?.length);
+        // console.warn('[AI Call] ⚠️ 警告：config.model为空或无效！');
+        // console.warn('[AI Call] config.model:', config.model);
+        // console.warn('[AI Call] config.model type:', typeof config.model);
+        // console.warn('[AI Call] config.model length:', config.model?.length);
         
         // 尝试重新获取配置
         const freshConfig = getAIConfig(userId);
-        console.log('[AI Call] 重新获取的配置:', JSON.stringify(freshConfig, null, 2));
+        // console.log('[AI Call] 重新获取的配置:', JSON.stringify(freshConfig, null, 2));
         if (freshConfig.model && freshConfig.model.trim() !== '' && freshConfig.model !== 'null' && freshConfig.model !== 'undefined') {
           modelToUse = freshConfig.model.trim();
-          console.log('[AI Call] ✓ 使用重新获取的模型名称:', modelToUse);
+          // console.log('[AI Call] ✓ 使用重新获取的模型名称:', modelToUse);
         } else {
-          console.warn('[AI Call] ✗ 重新获取的配置也无效');
-          console.warn('[AI Call] freshConfig.model:', freshConfig.model);
+          // console.warn('[AI Call] ✗ 重新获取的配置也无效');
+          // console.warn('[AI Call] freshConfig.model:', freshConfig.model);
           
-          // 最后尝试：直接从用户AI设置表读取
+          // 最后尝试：直接从 system_settings 表读取
           try {
-            const userSettings = db.prepare('SELECT model FROM user_ai_settings WHERE user_id = ?').get(userId) as any;
-            if (userSettings && userSettings.model) {
-              const dbModelValue = String(userSettings.model).trim();
+            const modelSetting = db.prepare('SELECT value FROM system_settings WHERE key = ?').get('ai_model') as any;
+            if (modelSetting && modelSetting.value) {
+              const dbModelValue = String(modelSetting.value).trim();
               if (dbModelValue !== '' && dbModelValue !== 'null' && dbModelValue !== 'undefined') {
                 modelToUse = dbModelValue;
-                console.log('[AI Call] ✓✓✓ 直接从用户AI设置表读取模型名称:', modelToUse);
+                // console.log('[AI Call] ✓✓✓ 直接从 system_settings 读取模型名称:', modelToUse);
               }
             }
           } catch (dbError: any) {
-            console.error('[AI Call] 从用户AI设置表读取失败:', dbError);
+            // console.error('[AI Call] 从 system_settings 读取失败:', dbError);
           }
         }
       }
@@ -836,23 +937,23 @@ async function callAI(userId: string, prompt: string, systemPrompt?: string, con
       // 最终trim
       modelToUse = modelToUse ? modelToUse.trim() : '';
       
-      console.log('[AI Call] 准备发送请求到Ollama:', {
-        url,
-        modelToUse,
-        modelFromConfig: config.model,
-        modelFromConfigType: typeof config.model,
-        modelFromConfigLength: config.model?.length,
-        messagesCount: messages.length,
-      });
+      // console.log('[AI Call] 准备发送请求到Ollama:', {
+      //   url,
+      //   modelToUse,
+      //   modelFromConfig: config.model,
+      //   modelFromConfigType: typeof config.model,
+      //   modelFromConfigLength: config.model?.length,
+      //   messagesCount: messages.length,
+      // });
 
       // 最终验证模型名称
       // 注意：如果用户确实想使用默认模型 'deepseek-v3.1:671b-cloud'，这是允许的
       // 只有当模型名称为空或无效时才报错
       if (!modelToUse || modelToUse.trim() === '' || modelToUse === 'null' || modelToUse === 'undefined') {
-        console.error('[AI Call] ⚠️⚠️⚠️ 最终警告：使用的模型是空值或无效！');
-        console.error('[AI Call] modelToUse:', modelToUse);
-        console.error('[AI Call] config.model:', config.model);
-        console.error('[AI Call] config对象:', JSON.stringify(config, null, 2));
+        // console.error('[AI Call] ⚠️⚠️⚠️ 最终警告：使用的模型是空值或无效！');
+        // console.error('[AI Call] modelToUse:', modelToUse);
+        // console.error('[AI Call] config.model:', config.model);
+        // console.error('[AI Call] config对象:', JSON.stringify(config, null, 2));
         throw new Error('模型名称未正确配置，请在系统设置中选择或输入模型名称');
       }
       
@@ -924,7 +1025,7 @@ async function callAI(userId: string, prompt: string, systemPrompt?: string, con
 
       console.log('[AI] 调用OpenAI/DeepSeek API:', { apiUrl, model: config.model });
 
-      if (!config.apiKey) {
+      if (!config.api_key) {
         throw new Error('API密钥未配置，请在系统设置中配置API密钥');
       }
 
@@ -936,7 +1037,7 @@ async function callAI(userId: string, prompt: string, systemPrompt?: string, con
         },
         {
           headers: {
-            'Authorization': `Bearer ${config.apiKey}`,
+            'Authorization': `Bearer ${config.api_key}`,
             'Content-Type': 'application/json',
           },
           timeout: 120000,
@@ -956,7 +1057,7 @@ async function callAI(userId: string, prompt: string, systemPrompt?: string, con
   } catch (error: any) {
     console.error('[AI Call] ========== API调用失败 ==========');
     console.error('[AI Call] Provider:', config.provider);
-    console.error('[AI Call] API URL:', config.apiUrl);
+    console.error('[AI Call] API URL:', config.api_url);
     console.error('[AI Call] Model:', config.model);
     console.error('[AI Call] 错误类型:', error.name);
     console.error('[AI Call] 错误代码:', error.code);
@@ -973,7 +1074,7 @@ async function callAI(userId: string, prompt: string, systemPrompt?: string, con
       const data = error.response.data;
       
       if (status === 404) {
-        throw new Error(`无法连接到AI服务，请检查API地址是否正确: ${config.apiUrl}`);
+        throw new Error(`无法连接到AI服务，请检查API地址是否正确: ${config.api_url}`);
       } else if (status === 401 || status === 403) {
         throw new Error('API密钥无效，请在系统设置中检查API密钥配置');
       } else if (status >= 500) {
@@ -985,7 +1086,12 @@ async function callAI(userId: string, prompt: string, systemPrompt?: string, con
       }
     } else if (error.request) {
       // 请求已发出但没有收到响应
-      let errorMessage = `无法连接到AI服务 (${config.apiUrl})`;
+      // 注意：这里使用实际使用的 URL（可能是代理 URL），而不是原始配置的 URL
+      const actualUrl = error.config?.url || (url ? url : config.api_url);
+      let errorMessage = `无法连接到AI服务 (${config.api_url})`;
+      if (actualUrl !== config.api_url) {
+        errorMessage += `\n实际尝试连接: ${actualUrl}`;
+      }
       
       // 根据错误代码提供更详细的建议
       if (error.code === 'ECONNREFUSED') {
@@ -993,9 +1099,11 @@ async function callAI(userId: string, prompt: string, systemPrompt?: string, con
         errorMessage += '\n1. Ollama 服务器未运行';
         errorMessage += '\n2. 地址或端口不正确';
         if (isDockerContainer()) {
-          errorMessage += '\n3. 在Docker容器中，请使用：';
-          errorMessage += '\n   - 宿主机上的Ollama: http://host.docker.internal:11434';
-          errorMessage += '\n   - 局域网其他机器: http://192.168.x.x:11434 (使用实际IP)';
+          errorMessage += '\n3. 在Docker容器中，确保 Ollama 地址可访问';
+          errorMessage += '\n   - 如果 Ollama 在宿主机上，使用：http://host.docker.internal:11434';
+          errorMessage += '\n   - 如果 Ollama 在局域网其他机器上，使用实际IP地址';
+          errorMessage += '\n   - 确保 Ollama 监听在 0.0.0.0 而不是 127.0.0.1';
+          errorMessage += '\n   - 确保防火墙允许来自 Docker 容器的连接';
         }
       } else if (error.code === 'ENOTFOUND' || error.code === 'EAI_AGAIN') {
         errorMessage += '\n\nDNS解析失败，可能的原因：';
@@ -1012,10 +1120,10 @@ async function callAI(userId: string, prompt: string, systemPrompt?: string, con
       } else {
         errorMessage += '\n\n可能的原因：';
         errorMessage += '\n1. Ollama 服务器未运行或地址不正确';
+        errorMessage += '\n2. 检查网络连接和防火墙设置';
         if (isDockerContainer()) {
-          errorMessage += '\n2. 在Docker容器中，请使用：http://host.docker.internal:11434';
+          errorMessage += '\n3. 在Docker容器中，确保 Ollama 地址可访问';
         }
-        errorMessage += '\n3. 检查网络连接和防火墙设置';
       }
       
       throw new Error(errorMessage);
@@ -1344,7 +1452,7 @@ router.post('/tts', authenticateToken, async (req: AuthRequest, res) => {
       if (config.provider === 'ollama') {
         // Ollama TTS (如果支持)
         const response = await axios.post(
-          `${config.apiUrl}/api/generate`,
+          `${config.api_url}/api/generate`,
           {
             model: 'tts', // 需要安装TTS模型
             prompt: textToConvert,

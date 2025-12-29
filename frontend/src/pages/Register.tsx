@@ -10,6 +10,7 @@ import { useAuthStore } from '../store/authStore';
 import api from '../utils/api';
 import toast from 'react-hot-toast';
 import { Key, UserPlus, AlertCircle, RefreshCw } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 
 interface SystemConfig {
   registrationEnabled: boolean;
@@ -19,6 +20,7 @@ interface SystemConfig {
 }
 
 export default function Register() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const { login } = useAuthStore();
   const [systemConfig, setSystemConfig] = useState<SystemConfig | null>(null);
@@ -52,7 +54,7 @@ export default function Register() {
         }
       } catch (error: any) {
         console.error('获取系统配置失败:', error);
-        toast.error('获取系统配置失败');
+        toast.error(t('auth.getSystemConfigFailed'));
       }
     };
     
@@ -64,7 +66,7 @@ export default function Register() {
     e.preventDefault();
     
     if (!formData.privateKey) {
-      toast.error('请输入私有访问密钥');
+      toast.error(t('auth.enterPrivateKey'));
       return;
     }
     
@@ -76,9 +78,9 @@ export default function Register() {
       });
       
       setPrivateKeyVerified(true);
-      toast.success('密钥验证成功，请继续注册');
+      toast.success(t('auth.verifySuccess'));
     } catch (error: any) {
-      const errorMessage = error.response?.data?.error || '密钥验证失败';
+      const errorMessage = error.response?.data?.error || t('auth.verifyFailed');
       toast.error(errorMessage);
     } finally {
       setVerifyingPrivateKey(false);
@@ -90,12 +92,12 @@ export default function Register() {
     e.preventDefault();
 
     if (formData.password !== formData.confirmPassword) {
-      toast.error('两次输入的密码不一致');
+      toast.error(t('auth.passwordsNotMatch') || '两次输入的密码不一致');
       return;
     }
 
     if (formData.password.length < 6) {
-      toast.error('密码长度至少为6位');
+      toast.error(t('auth.passwordMinLength') || '密码长度至少为6位');
       return;
     }
 
@@ -137,7 +139,7 @@ export default function Register() {
       <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-gray-900">
         <div className="text-center">
           <RefreshCw className="w-8 h-8 animate-spin mx-auto text-blue-600" />
-          <p className="mt-2 text-gray-600 dark:text-gray-400">加载中...</p>
+          <p className="mt-2 text-gray-600 dark:text-gray-400">{t('common.loading')}</p>
         </div>
       </div>
     );

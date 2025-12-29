@@ -10,6 +10,7 @@ import { Sparkles, Send, BookOpen, FileText, Volume2, VolumeX, Loader2, Book, X,
 import api from '../utils/api';
 import toast from 'react-hot-toast';
 import MessageContent from '../components/MessageContent';
+import { useTranslation } from 'react-i18next';
 
 interface Message {
   id: string;
@@ -27,6 +28,7 @@ interface Book {
 
 export default function AIReading() {
   const { isAuthenticated, user } = useAuthStore();
+  const { t } = useTranslation();
   const [books, setBooks] = useState<Book[]>([]);
   const [selectedBook, setSelectedBook] = useState<Book | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -68,14 +70,14 @@ export default function AIReading() {
       setBooks(books);
     } catch (error: any) {
       console.error('获取书架书籍列表失败:', error);
-      toast.error(error.response?.data?.error || '获取书架书籍列表失败');
+      toast.error(error.response?.data?.error || t('ai.fetchBooksFailed'));
     }
   };
 
   const handleSendMessage = async () => {
     if (!input.trim() || loading) return;
     if (!selectedBook) {
-      toast.error('请先选择一本书');
+      toast.error(t('ai.selectBookFirst'));
       return;
     }
 
@@ -110,7 +112,7 @@ export default function AIReading() {
       setMessages((prev) => [...prev, assistantMessage]);
     } catch (error: any) {
       console.error('发送消息失败:', error);
-      const errorMsg = error.response?.data?.error || error.message || '发送消息失败';
+      const errorMsg = error.response?.data?.error || error.message || t('ai.sendMessageFailed');
       const errorDetails = error.response?.data?.details;
       
       console.error('错误详情:', {
@@ -132,7 +134,7 @@ export default function AIReading() {
       
       // 如果响应数据为空，可能是服务器错误
       if (!error.response?.data || error.response.data === '') {
-        displayMsg = '服务器错误，请检查后端服务是否正常运行';
+        displayMsg = t('ai.serverError');
         console.error('服务器返回空响应，可能是未处理的错误');
       }
       
@@ -140,7 +142,7 @@ export default function AIReading() {
       const errorMessage: Message = {
         id: (Date.now() + 1).toString(),
         role: 'assistant',
-        content: `抱歉，发生了错误：${errorMsg}${errorDetails ? '\n\n' + errorDetails : ''}\n\n请检查：\n1. AI服务是否正常运行\n2. 系统设置中的AI配置是否正确\n3. 网络连接是否正常`,
+        content: `${t('common.error')}: ${errorMsg}${errorDetails ? '\n\n' + errorDetails : ''}\n\n${t('ai.errorCheck')}`,
         timestamp: new Date(),
       };
       setMessages((prev) => [...prev, errorMessage]);
@@ -151,7 +153,7 @@ export default function AIReading() {
 
   const handleAnalyzeBook = async () => {
     if (!selectedBook) {
-      toast.error('请先选择一本书');
+      toast.error(t('ai.selectBookFirst'));
       return;
     }
 
@@ -169,10 +171,10 @@ export default function AIReading() {
       };
 
       setMessages((prev) => [...prev, analysisMessage]);
-      toast.success('书籍分析完成');
+      toast.success(t('ai.analysisComplete'));
     } catch (error: any) {
       console.error('分析书籍失败:', error);
-      const errorMsg = error.response?.data?.error || error.message || '分析书籍失败';
+      const errorMsg = error.response?.data?.error || error.message || t('ai.analyzeFailed');
       const errorDetails = error.response?.data?.details;
       
       console.error('错误详情:', {
@@ -190,13 +192,35 @@ export default function AIReading() {
         if (errorDetails.stack) {
           console.error('错误堆栈:', errorDetails.stack);
         }
+        // 如果 errorDetails 有 message，使用它作为补充信息
+        if (errorDetails.message && errorDetails.message !== errorMsg) {
+          displayMsg = `${errorMsg}\n${errorDetails.message}`;
+        }
       }
       
-      toast.error(displayMsg);
+      // 确保错误消息完整显示
+      if (typeof displayMsg !== 'string' || displayMsg.trim().length === 0) {
+        displayMsg = t('ai.analyzeFailed');
+      }
+      
+      toast.error(displayMsg, { duration: 5000 });
+      
+      // 构建详细的错误消息用于显示在对话中
+      let errorContent = `${t('ai.analyzeFailed')}: ${errorMsg}`;
+      if (errorDetails && typeof errorDetails === 'object') {
+        if (errorDetails.message && errorDetails.message !== errorMsg) {
+          errorContent += `\n\n${errorDetails.message}`;
+        }
+        if (errorDetails.code) {
+          errorContent += `\n${t('common.error')}: ${errorDetails.code}`;
+        }
+      }
+      errorContent += `\n\n${t('ai.errorCheck')}`;
+      
       const errorMessage: Message = {
         id: Date.now().toString(),
         role: 'assistant',
-        content: `分析失败：${errorMsg}${errorDetails ? '\n\n' + errorDetails : ''}\n\n请检查：\n1. 书籍文件是否存在且可读\n2. AI服务是否正常运行\n3. 系统设置中的AI配置是否正确`,
+        content: errorContent,
         timestamp: new Date(),
       };
       setMessages((prev) => [...prev, errorMessage]);
@@ -243,7 +267,7 @@ export default function AIReading() {
 
       audio.onerror = () => {
         setIsPlaying(false);
-        toast.error('语音播放失败');
+        toast.error(t('ai.voicePlaybackFailed'));
         URL.revokeObjectURL(url);
         setAudioUrl(null);
         audioRef.current = null;
@@ -253,7 +277,7 @@ export default function AIReading() {
       setIsPlaying(true);
     } catch (error: any) {
       console.error('语音合成失败:', error);
-      toast.error(error.response?.data?.error || '语音合成失败');
+      toast.error(error.response?.data?.error || t('ai.ttsFailed'));
     }
   };
 
@@ -267,7 +291,7 @@ export default function AIReading() {
   if (!isAuthenticated) {
     return (
       <div className="text-center py-12">
-        <p className="text-gray-500">请先登录</p>
+        <p className="text-gray-500">{t('ai.pleaseLogin')}</p>
       </div>
     );
   }
@@ -308,7 +332,7 @@ export default function AIReading() {
             />
             <div className="lg:hidden fixed inset-y-0 left-0 w-80 bg-white dark:bg-gray-800 shadow-xl z-50 flex flex-col">
               <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-700">
-                <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">选择书籍</h2>
+                <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">{t('ai.selectBook')}</h2>
                 <button
                   onClick={() => setShowBookSelector(false)}
                   className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg"
@@ -353,12 +377,12 @@ export default function AIReading() {
                     {analyzing ? (
                       <>
                         <Loader2 className="w-4 h-4 animate-spin" />
-                        分析中...
+                        {t('ai.analyzing')}
                       </>
                     ) : (
                       <>
                         <FileText className="w-4 h-4" />
-                        快速分析书籍
+                        {t('ai.analyzeBook')}
                       </>
                     )}
                   </button>
@@ -371,7 +395,7 @@ export default function AIReading() {
         {/* 桌面端：左侧书籍选择 */}
         <div className="hidden lg:flex w-64 bg-white dark:bg-gray-800 rounded-lg shadow-md p-4 flex-col">
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">选择书籍</h2>
+            <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">{t('ai.selectBook')}</h2>
             {selectedBook && (
               <button
                 onClick={() => {
@@ -416,12 +440,12 @@ export default function AIReading() {
               {analyzing ? (
                 <>
                   <Loader2 className="w-4 h-4 animate-spin" />
-                  分析中...
+                  {t('ai.analyzing')}
                 </>
               ) : (
                 <>
                   <FileText className="w-4 h-4" />
-                  快速分析书籍
+                  {t('ai.analyzeBook')}
                 </>
               )}
             </button>
@@ -435,8 +459,8 @@ export default function AIReading() {
               <div className="text-center">
                 <BookOpen className="w-12 h-12 lg:w-16 lg:h-16 text-gray-400 mx-auto mb-4" />
                 <p className="text-gray-500 dark:text-gray-400 text-sm lg:text-base">
-                  <span className="lg:hidden">点击右上角菜单选择一本书开始AI阅读</span>
-                  <span className="hidden lg:inline">请从左侧选择一本书开始AI阅读</span>
+                  <span className="lg:hidden">{t('ai.selectBookToStartMobile')}</span>
+                  <span className="hidden lg:inline">{t('ai.selectBookToStart')}</span>
                 </p>
               </div>
             </div>
@@ -462,12 +486,12 @@ export default function AIReading() {
                       {analyzing ? (
                         <>
                           <Loader2 className="w-3 h-3 animate-spin" />
-                          分析中
+                          {t('ai.analyzing')}
                         </>
                       ) : (
                         <>
                           <FileText className="w-3 h-3" />
-                          分析
+                          {t('ai.analyzeBook')}
                         </>
                       )}
                     </button>
@@ -481,7 +505,7 @@ export default function AIReading() {
                   <div className="text-center py-6 lg:py-8">
                     <Sparkles className="w-10 h-10 lg:w-12 lg:h-12 text-gray-400 mx-auto mb-3 lg:mb-4" />
                     <p className="text-gray-500 dark:text-gray-400 text-sm lg:text-base px-4">
-                      开始与AI助手对话，询问关于《{selectedBook.title}》的任何问题
+                      {t('ai.startConversation', { title: selectedBook.title })}
                     </p>
                   </div>
                 )}
@@ -522,12 +546,12 @@ export default function AIReading() {
                           {isPlaying && audioUrl ? (
                             <>
                               <VolumeX className="w-3 h-3" />
-                              停止播放
+                              {t('ai.stopPlayback')}
                             </>
                           ) : (
                             <>
                               <Volume2 className="w-3 h-3" />
-                              语音朗读
+                              {t('ai.voiceRead')}
                             </>
                           )}
                         </button>
@@ -562,7 +586,7 @@ export default function AIReading() {
                     value={input}
                     onChange={(e) => setInput(e.target.value)}
                     onKeyPress={handleKeyPress}
-                    placeholder="输入您的问题..."
+                    placeholder={t('ai.enterQuestion')}
                     className="flex-1 px-3 lg:px-4 py-2 text-sm lg:text-base border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white resize-none"
                     rows={2}
                     disabled={loading}
@@ -577,7 +601,7 @@ export default function AIReading() {
                     ) : (
                       <Send className="w-4 h-4" />
                     )}
-                    <span className="hidden sm:inline">发送</span>
+                    <span className="hidden sm:inline">{t('ai.send')}</span>
                   </button>
                 </div>
               </div>

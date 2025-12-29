@@ -11,6 +11,7 @@ import toast from 'react-hot-toast';
 import { useAuthStore } from '../store/authStore';
 import { useNavigate } from 'react-router-dom';
 import { getCoverUrl } from '../utils/coverHelper';
+import { useTranslation } from 'react-i18next';
 
 interface Book {
   id: string;
@@ -31,6 +32,7 @@ interface User {
 }
 
 export default function BookManagement() {
+  const { t } = useTranslation();
   const { user } = useAuthStore();
   const navigate = useNavigate();
   const [books, setBooks] = useState<Book[]>([]);
@@ -55,7 +57,7 @@ export default function BookManagement() {
   // 检查管理员权限
   useEffect(() => {
     if (!user || user.role !== 'admin') {
-      toast.error('需要管理员权限');
+      toast.error(t('bookManagement.needAdminPermission'));
       navigate('/');
     }
   }, [user, navigate]);
@@ -74,7 +76,7 @@ export default function BookManagement() {
       
       if (!response.data || !response.data.categories) {
         console.warn('API返回数据格式不正确:', response.data);
-        setCategories(['未分类']);
+        setCategories([t('book.uncategorized')]);
         return;
       }
       
@@ -89,14 +91,14 @@ export default function BookManagement() {
         setCategories(cats);
       } else {
         console.warn('书籍类型列表为空');
-        setCategories(['未分类']);
+        setCategories([t('book.uncategorized')]);
       }
     } catch (error: any) {
       console.error('获取分类列表失败:', error);
       console.error('错误状态码:', error.response?.status);
       console.error('错误详情:', error.response?.data || error.message);
       // 使用默认分类列表
-      setCategories(['未分类', '小说', '文学', '历史', '哲学', '武侠', '传记', '科技', '计算机', '编程', '经济', '管理', '心理学', '社会科学', '自然科学', '艺术', '教育', '儿童读物', '漫画']);
+      setCategories([t('book.uncategorized')]);
     }
   };
 
@@ -112,7 +114,7 @@ export default function BookManagement() {
       setBooks(response.data.books || []);
     } catch (error: any) {
       console.error('获取书籍列表失败:', error);
-      toast.error(error.response?.data?.error || '获取书籍列表失败');
+      toast.error(error.response?.data?.error || t('bookManagement.fetchBooksFailed'));
     } finally {
       setLoading(false);
     }
@@ -136,11 +138,11 @@ export default function BookManagement() {
     try {
       setUpdating(true);
       await api.patch(`/books/${bookId}/visibility`, { isPublic });
-      toast.success(`书籍已${isPublic ? '公开' : '私有化'}`);
+      toast.success(isPublic ? t('bookManagement.bookMadePublic') : t('bookManagement.bookMadePrivate'));
       await fetchBooks();
     } catch (error: any) {
       console.error('更新书籍可见性失败:', error);
-      toast.error(error.response?.data?.error || '更新失败');
+      toast.error(error.response?.data?.error || t('bookManagement.updateFailed'));
     } finally {
       setUpdating(false);
     }
@@ -165,7 +167,7 @@ export default function BookManagement() {
     }
 
     if (Object.keys(updates).length === 0) {
-      toast.error('请至少填写一个要修改的字段');
+      toast.error(t('bookManagement.pleaseFillFields'));
       return;
     }
 
@@ -191,7 +193,7 @@ export default function BookManagement() {
   // 批量更新书籍可见性
   const batchUpdateVisibility = async (isPublic: boolean) => {
     if (selectedBooks.size === 0) {
-      toast.error('请先选择要操作的书籍');
+      toast.error(t('bookManagement.pleaseSelectToUpdate'));
       return;
     }
 
@@ -215,7 +217,7 @@ export default function BookManagement() {
   // 批量删除书籍
   const batchDeleteBooks = async () => {
     if (selectedBooks.size === 0) {
-      toast.error('请先选择要删除的书籍');
+      toast.error(t('bookManagement.pleaseSelectToDelete'));
       return;
     }
 
@@ -227,10 +229,10 @@ export default function BookManagement() {
       
       const { results } = response.data;
       if (results.success.length > 0) {
-        toast.success(`成功删除 ${results.success.length} 本书籍`);
+        toast.success(t('bookManagement.deleteSuccess', { count: results.success.length }));
       }
       if (results.failed.length > 0) {
-        toast.error(`删除失败 ${results.failed.length} 本`);
+        toast.error(t('bookManagement.deleteFailed', { count: results.failed.length }));
       }
       
       setSelectedBooks(new Set());
@@ -238,7 +240,7 @@ export default function BookManagement() {
       await fetchBooks();
     } catch (error: any) {
       console.error('批量删除失败:', error);
-      toast.error(error.response?.data?.error || '批量删除失败');
+      toast.error(error.response?.data?.error || t('bookManagement.batchDeleteFailed'));
     } finally {
       setUpdating(false);
     }
@@ -247,7 +249,7 @@ export default function BookManagement() {
   // 批量更新豆瓣信息
   const batchUpdateDouban = async () => {
     if (selectedBooks.size === 0) {
-      toast.error('请先选择要更新的书籍');
+      toast.error(t('bookManagement.pleaseSelectToUpdate'));
       return;
     }
 
@@ -286,13 +288,13 @@ export default function BookManagement() {
 
       // 显示汇总结果
       if (successCount > 0) {
-        toast.success(`成功更新 ${successCount} 本书籍信息`);
+        toast.success(t('bookManagement.updateSuccess', { count: successCount }));
       }
       if (skippedCount > 0) {
-        toast(`跳过 ${skippedCount} 本（未找到匹配结果）`, { icon: 'ℹ️' });
+        toast(t('bookManagement.skipped', { count: skippedCount }), { icon: 'ℹ️' });
       }
       if (failedCount > 0) {
-        toast.error(`更新失败 ${failedCount} 本`);
+        toast.error(t('bookManagement.updateFailedCount', { count: failedCount }));
       }
 
       setSelectedBooks(new Set());
@@ -351,7 +353,7 @@ export default function BookManagement() {
       <div className="min-h-screen flex items-center justify-center">
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
-          <p className="mt-4 text-gray-600">加载中...</p>
+          <p className="mt-4 text-gray-600">{t('bookManagement.loading')}</p>
         </div>
       </div>
     );
@@ -369,7 +371,7 @@ export default function BookManagement() {
                 <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
                 <input
                   type="text"
-                  placeholder="搜索书名或作者..."
+                  placeholder={t('bookManagement.searchPlaceholder')}
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
                   className="w-full pl-10 pr-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
@@ -385,9 +387,9 @@ export default function BookManagement() {
                 onChange={(e) => setFilterType(e.target.value as any)}
                 className="px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
               >
-                <option value="all">全部书籍</option>
-                <option value="public">公开书籍</option>
-                <option value="private">私有书籍</option>
+                <option value="all">{t('bookManagement.allBooks')}</option>
+                <option value="public">{t('bookManagement.publicBooks')}</option>
+                <option value="private">{t('bookManagement.privateBooks')}</option>
               </select>
             </div>
           </div>
@@ -397,14 +399,14 @@ export default function BookManagement() {
             <div className="mt-4 p-4 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800">
               <div className="flex items-center justify-between mb-3">
                 <span className="text-sm font-semibold text-blue-900 dark:text-blue-100">
-                  已选择 {selectedBooks.size} 本书籍
+                  {t('bookManagement.selectedCount', { count: selectedBooks.size })}
                 </span>
                 <button
                   onClick={() => setSelectedBooks(new Set())}
                   className="text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200 flex items-center gap-1"
                 >
                   <X className="w-4 h-4" />
-                  取消选择
+                  {t('bookManagement.deselectAll')}
                 </button>
               </div>
               <div className="flex flex-wrap gap-2">
@@ -414,7 +416,7 @@ export default function BookManagement() {
                   className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 transition-all"
                 >
                   <Globe className="w-4 h-4" />
-                  批量公开
+                  {t('bookManagement.makePublic')}
                 </button>
                 <button
                   onClick={() => batchUpdateVisibility(false)}
@@ -422,7 +424,7 @@ export default function BookManagement() {
                   className="px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 transition-all"
                 >
                   <Lock className="w-4 h-4" />
-                  批量私有
+                  {t('bookManagement.makePrivate')}
                 </button>
                 <button
                   onClick={() => setShowBatchEditModal(true)}
@@ -430,7 +432,7 @@ export default function BookManagement() {
                   className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 transition-all"
                 >
                   <Filter className="w-4 h-4" />
-                  批量修改
+                  {t('bookManagement.batchEdit')}
                 </button>
                 <button
                   onClick={batchUpdateDouban}
@@ -440,12 +442,12 @@ export default function BookManagement() {
                   {updatingDouban ? (
                     <>
                       <RefreshCw className="w-4 h-4 animate-spin" />
-                      更新中 ({doubanProgress.current}/{doubanProgress.total})
+                      {t('bookManagement.progress', { current: doubanProgress.current, total: doubanProgress.total })}
                     </>
                   ) : (
                     <>
                       <RefreshCw className="w-4 h-4" />
-                      批量更新豆瓣信息
+                      {t('bookManagement.updateDouban')}
                     </>
                   )}
                 </button>
@@ -455,7 +457,7 @@ export default function BookManagement() {
                   className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 transition-all"
                 >
                   <Trash2 className="w-4 h-4" />
-                  批量删除
+                  {t('bookManagement.batchDelete')}
                 </button>
               </div>
             </div>
@@ -465,15 +467,15 @@ export default function BookManagement() {
         {/* 统计信息 */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
           <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-4">
-            <div className="text-sm text-gray-600 dark:text-gray-400">总书籍数</div>
+            <div className="text-sm text-gray-600 dark:text-gray-400">{t('bookManagement.totalBooks') || '总书籍数'}</div>
             <div className="text-2xl font-bold text-gray-900 dark:text-white">{books.length}</div>
           </div>
           <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-4">
-            <div className="text-sm text-gray-600 dark:text-gray-400">公开书籍</div>
+            <div className="text-sm text-gray-600 dark:text-gray-400">{t('bookManagement.publicBooks')}</div>
             <div className="text-2xl font-bold text-green-600">{books.filter(b => b.is_public === 1).length}</div>
           </div>
           <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-4">
-            <div className="text-sm text-gray-600 dark:text-gray-400">私有书籍</div>
+            <div className="text-sm text-gray-600 dark:text-gray-400">{t('bookManagement.privateBooks')}</div>
             <div className="text-2xl font-bold text-orange-600">{books.filter(b => b.is_public === 0).length}</div>
           </div>
         </div>
@@ -493,16 +495,16 @@ export default function BookManagement() {
                     />
                   </th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
-                    书籍信息
+                    {t('bookManagement.bookInfo') || '书籍信息'}
                   </th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
-                    上传者
+                    {t('bookManagement.uploader')}
                   </th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
-                    状态
+                    {t('bookManagement.status') || '状态'}
                   </th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
-                    操作
+                    {t('bookManagement.actions')}
                   </th>
                 </tr>
               </thead>
@@ -562,7 +564,7 @@ export default function BookManagement() {
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="text-sm text-gray-900 dark:text-white">
-                        {book.uploader_username || users.get(book.uploader_id)?.username || '未知'}
+                        {book.uploader_username || users.get(book.uploader_id)?.username || t('bookManagement.unknown') || '未知'}
                       </div>
                       {book.created_at && (
                         <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
@@ -580,12 +582,12 @@ export default function BookManagement() {
                       {book.is_public === 1 ? (
                         <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
                           <Globe className="w-3 h-3" />
-                          公开
+                          {t('bookManagement.public')}
                         </span>
                       ) : (
                         <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200">
                           <Lock className="w-3 h-3" />
-                          私有
+                          {t('bookManagement.private')}
                         </span>
                       )}
                     </td>
@@ -596,7 +598,7 @@ export default function BookManagement() {
                           disabled={updating}
                           className="text-orange-600 hover:text-orange-900 dark:text-orange-400 dark:hover:text-orange-300 disabled:opacity-50"
                         >
-                          改为私有
+                          {t('bookManagement.makePrivate')}
                         </button>
                       ) : (
                         <button
@@ -604,7 +606,7 @@ export default function BookManagement() {
                           disabled={updating}
                           className="text-green-600 hover:text-green-900 dark:text-green-400 dark:hover:text-green-300 disabled:opacity-50"
                         >
-                          改为公开
+                          {t('bookManagement.makePublic')}
                         </button>
                       )}
                     </td>
@@ -616,7 +618,7 @@ export default function BookManagement() {
 
           {filteredBooks.length === 0 && (
             <div className="text-center py-12">
-              <p className="text-gray-500 dark:text-gray-400">没有找到符合条件的书籍</p>
+              <p className="text-gray-500 dark:text-gray-400">{t('bookManagement.noBooks')}</p>
             </div>
           )}
         </div>
@@ -626,7 +628,7 @@ export default function BookManagement() {
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 p-4">
             <div className="card-gradient rounded-lg shadow-xl max-w-md w-full p-6">
               <div className="flex items-center justify-between mb-4">
-                <h2 className="text-xl font-bold text-gray-900 dark:text-gray-100">批量修改书籍</h2>
+                <h2 className="text-xl font-bold text-gray-900 dark:text-gray-100">{t('bookManagement.batchEdit')}</h2>
                 <button
                   onClick={() => {
                     setShowBatchEditModal(false);
@@ -641,14 +643,14 @@ export default function BookManagement() {
               <div className="space-y-4">
                 <div>
                   <label className="block text-sm font-medium mb-2 text-gray-900 dark:text-gray-100">
-                    分类（留空不修改）
+                    {t('bookManagement.category')}（{t('bookManagement.leaveEmptyToSkip') || '留空不修改'}）
                   </label>
                   <select
                     value={batchEditForm.category}
                     onChange={(e) => setBatchEditForm({ ...batchEditForm, category: e.target.value })}
                     className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
                   >
-                    <option value="">不修改</option>
+                    <option value="">{t('bookManagement.noChange') || '不修改'}</option>
                     {categories.map((cat) => (
                       <option key={cat} value={cat}>
                         {cat}
@@ -659,42 +661,42 @@ export default function BookManagement() {
 
                 <div>
                   <label className="block text-sm font-medium mb-2 text-gray-900 dark:text-gray-100">
-                    语言（留空不修改）
+                    {t('book.language')}（{t('bookManagement.leaveEmptyToSkip') || '留空不修改'}）
                   </label>
                   <select
                     value={batchEditForm.language}
                     onChange={(e) => setBatchEditForm({ ...batchEditForm, language: e.target.value })}
                     className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
                   >
-                    <option value="">不修改</option>
-                    <option value="zh">中文</option>
-                    <option value="en">英文</option>
-                    <option value="ja">日文</option>
-                    <option value="ko">韩文</option>
-                    <option value="fr">法文</option>
-                    <option value="de">德文</option>
-                    <option value="es">西班牙文</option>
-                    <option value="ru">俄文</option>
-                    <option value="other">其他</option>
+                    <option value="">{t('bookManagement.noChange') || '不修改'}</option>
+                    <option value="zh">{t('book.chinese')}</option>
+                    <option value="en">{t('book.english')}</option>
+                    <option value="ja">{t('book.japanese')}</option>
+                    <option value="ko">{t('book.korean')}</option>
+                    <option value="fr">{t('book.french')}</option>
+                    <option value="de">{t('book.german')}</option>
+                    <option value="es">{t('book.spanish')}</option>
+                    <option value="ru">{t('book.russian')}</option>
+                    <option value="other">{t('bookManagement.other') || '其他'}</option>
                   </select>
                 </div>
 
                 <div>
                   <label className="block text-sm font-medium mb-2 text-gray-900 dark:text-gray-100">
-                    标签（留空不修改，多个标签用逗号分隔）
+                    {t('book.tags')}（{t('bookManagement.leaveEmptyToSkip') || '留空不修改'}，{t('book.tagsPlaceholder')}）
                   </label>
                   <input
                     type="text"
                     value={batchEditForm.tags}
                     onChange={(e) => setBatchEditForm({ ...batchEditForm, tags: e.target.value })}
-                    placeholder="例如: 小说,历史,文学"
+                    placeholder={t('bookManagement.categoryPlaceholder')}
                     className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
                   />
                 </div>
 
                 <div>
                   <label className="block text-sm font-medium mb-2 text-gray-900 dark:text-gray-100">
-                    评分（留空不修改，0-10）
+                    {t('book.rating')}（{t('bookManagement.leaveEmptyToSkip') || '留空不修改'}，0-10）
                   </label>
                   <input
                     type="number"
@@ -703,7 +705,7 @@ export default function BookManagement() {
                     step="0.1"
                     value={batchEditForm.rating}
                     onChange={(e) => setBatchEditForm({ ...batchEditForm, rating: e.target.value })}
-                    placeholder="例如: 8.5"
+                    placeholder={t('bookManagement.ratingPlaceholder')}
                     className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
                   />
                 </div>
@@ -717,7 +719,7 @@ export default function BookManagement() {
                     disabled={updating}
                     className="flex-1 px-4 py-2 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50 transition-colors"
                   >
-                    取消
+                    {t('bookManagement.cancel')}
                   </button>
                   <button
                     onClick={batchUpdateBooks}
@@ -727,10 +729,10 @@ export default function BookManagement() {
                     {updating ? (
                       <>
                         <RefreshCw className="w-4 h-4 animate-spin" />
-                        更新中...
+                        {t('bookManagement.updating')}
                       </>
                     ) : (
-                      '确认修改'
+                      t('bookManagement.confirmUpdate') || '确认修改'
                     )}
                   </button>
                 </div>
@@ -749,19 +751,19 @@ export default function BookManagement() {
                 </div>
                 <div>
                   <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
-                    确认删除
+                    {t('bookManagement.confirmDelete')}
                   </h3>
                   <p className="text-sm text-gray-600 dark:text-gray-400">
-                    此操作不可恢复
+                    {t('bookDetail.deleteConfirmDesc')}
                   </p>
                 </div>
               </div>
               
               <p className="text-gray-700 dark:text-gray-300 mb-6">
-                确定要删除选中的 <span className="font-bold text-red-600">{selectedBooks.size}</span> 本书籍吗？
+                {t('bookManagement.confirmDeleteMessage', { count: selectedBooks.size })}
                 <br />
                 <span className="text-sm text-gray-500 dark:text-gray-400">
-                  这将永久删除书籍文件和所有相关数据。
+                  {t('bookDetail.deleteWarning')}
                 </span>
               </p>
 
@@ -771,7 +773,7 @@ export default function BookManagement() {
                   disabled={updating}
                   className="flex-1 px-4 py-2 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50 transition-colors"
                 >
-                  取消
+                  {t('bookManagement.cancel')}
                 </button>
                 <button
                   onClick={batchDeleteBooks}
@@ -781,12 +783,12 @@ export default function BookManagement() {
                   {updating ? (
                     <>
                       <RefreshCw className="w-4 h-4 animate-spin" />
-                      删除中...
+                      {t('bookManagement.deleting') || '删除中...'}
                     </>
                   ) : (
                     <>
                       <Trash2 className="w-4 h-4" />
-                      确认删除
+                      {t('bookManagement.confirmDelete')}
                     </>
                   )}
                 </button>

@@ -205,6 +205,13 @@ router.post('/upload', authenticateToken, upload.single('file'), async (req: Aut
     const isPublic = req.body.isPublic === 'true' || req.body.isPublic === true;
     const autoConvertTxt = req.body.autoConvertTxt !== 'false' && req.body.autoConvertTxt !== false;
     const autoConvertMobi = req.body.autoConvertMobi !== 'false' && req.body.autoConvertMobi !== false;
+    const autoFetchDouban = req.body.autoFetchDouban !== undefined 
+      ? (req.body.autoFetchDouban === 'true' || req.body.autoFetchDouban === true)
+      : (() => {
+          // 如果未传递参数，则从系统设置读取（向后兼容）
+          const autoFetchDoubanSetting = db.prepare('SELECT value FROM system_settings WHERE key = ?').get('auto_fetch_douban') as any;
+          return autoFetchDoubanSetting?.value === 'true';
+        })();
     const selectedCategory = req.body.category || '未分类';
     
     // 获取用户信息
@@ -363,11 +370,7 @@ router.post('/upload', authenticateToken, upload.single('file'), async (req: Aut
       }
     }
 
-    // 获取自动获取豆瓣信息的设置
-    const autoFetchDoubanSetting = db.prepare('SELECT value FROM system_settings WHERE key = ?').get('auto_fetch_douban') as any;
-    const autoFetchDouban = autoFetchDoubanSetting?.value === 'true';
-
-    // 尝试从豆瓣获取更详细的书籍信息
+    // 尝试从豆瓣获取更详细的书籍信息（使用上传时传递的参数）
     if (autoFetchDouban && metadata.title) {
       try {
         const searchResults = await searchBookByName(metadata.title);
@@ -1337,11 +1340,12 @@ router.get('/', async (req, res) => {
       // 忽略token验证错误，未登录用户也可以查看公开书籍
     }
 
-    // 使用 LEFT JOIN 获取上传者用户名
+    // 使用 LEFT JOIN 获取上传者用户名和昵称
     let query = `
       SELECT 
         b.*,
-        u.username as uploader_username
+        u.username as uploader_username,
+        u.nickname as uploader_nickname
       FROM books b
       LEFT JOIN users u ON b.uploader_id = u.id
     `;
@@ -2211,7 +2215,16 @@ router.post('/:id/convert', authenticateToken, async (req: AuthRequest, res) => 
 router.get('/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const book = db.prepare('SELECT * FROM books WHERE id = ?').get(id) as any;
+    // 使用 LEFT JOIN 获取上传者用户名和昵称
+    const book = db.prepare(`
+      SELECT 
+        b.*,
+        u.username as uploader_username,
+        u.nickname as uploader_nickname
+      FROM books b
+      LEFT JOIN users u ON b.uploader_id = u.id
+      WHERE b.id = ?
+    `).get(id) as any;
 
     if (!book) {
       return res.status(404).json({ error: '书籍不存在' });

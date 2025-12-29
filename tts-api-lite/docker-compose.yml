@@ -1,0 +1,33 @@
+version: '3.8'
+
+services:
+  tts-api-lite:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ttbye/tts-api-lite:latest
+    container_name: tts-api-lite
+    ports:
+      - "5050:5050"
+    environment:
+      - PORT=5050
+      - NODE_ENV=production
+      - API_KEY=${API_KEY:-}
+      - QWEN_API_KEY=${QWEN_API_KEY:-}
+      - TEMP_DIR=/app/temp
+      - FFMPEG_BIN=ffmpeg
+    volumes:
+      - ./temp:/app/temp
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5050/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - tts-network
+
+networks:
+  tts-network:
+    driver: bridge
+

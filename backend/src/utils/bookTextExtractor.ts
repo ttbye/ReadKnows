@@ -105,15 +105,57 @@ export async function extractEpubText(filePath: string, maxLength: number = 5000
           parseString(htmlContent, (err: any, result: any) => {
             if (err) return reject(err);
             try {
-              const extractText = (node: any): string => {
-                if (typeof node === 'string') return node;
+              const extractText = (node: any, tagName?: string): string => {
+                // 跳过 script、style、svg、img 等标签
+                if (tagName && ['script', 'style', 'svg', 'img', 'link', 'meta', 'head'].includes(tagName.toLowerCase())) {
+                  return '';
+                }
+                
+                if (typeof node === 'string') {
+                  // 过滤掉纯 URL、HTML 实体、calibre 元数据等
+                  const str = node.trim();
+                  if (!str) return '';
+                  // 跳过纯 URL
+                  if (/^https?:\/\//i.test(str)) return '';
+                  // 跳过纯 HTML 实体
+                  if (/^&[#\w]+;$/i.test(str)) return '';
+                  // 跳过纯数字或符号
+                  if (/^[\d\s\-_\.]+$/.test(str)) return '';
+                  return str;
+                }
+                
                 if (Array.isArray(node)) {
-                  return node.map(extractText).join('');
+                  return node.map((item) => extractText(item, tagName)).join('');
                 }
+                
                 if (node && typeof node === 'object') {
-                  if (node._) return node._;
-                  return Object.values(node).map(extractText).join('');
+                  // 获取标签名（如果有）
+                  const currentTag = node['#name'] || tagName;
+                  
+                  // 跳过特定标签
+                  if (currentTag && ['script', 'style', 'svg', 'img', 'link', 'meta', 'head'].includes(currentTag.toLowerCase())) {
+                    return '';
+                  }
+                  
+                  // 优先提取文本内容
+                  if (node._) {
+                    const text = String(node._).trim();
+                    // 过滤掉纯 URL、HTML 实体等
+                    if (text && !/^https?:\/\//i.test(text) && !/^&[#\w]+;$/i.test(text)) {
+                      return text;
+                    }
+                  }
+                  
+                  // 递归提取子节点
+                  let result = '';
+                  for (const [key, value] of Object.entries(node)) {
+                    // 跳过属性键（以 $ 开头）
+                    if (key === '$' || key === '#name' || key === '_') continue;
+                    result += extractText(value, currentTag);
+                  }
+                  return result;
                 }
+                
                 return '';
               };
 

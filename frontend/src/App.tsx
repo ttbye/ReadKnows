@@ -10,6 +10,7 @@ import { Toaster } from 'react-hot-toast';
 import { useAuthStore } from './store/authStore';
 import Layout from './components/Layout';
 import InstallPWA from './components/InstallPWA';
+import LanguageSelect from './pages/LanguageSelect';
 import Login from './pages/Login';
 import Register from './pages/Register';
 import BookList from './pages/BookList';
@@ -38,8 +39,15 @@ function App() {
   return (
     <>
       <Routes>
-        <Route path="/login" element={<Login />} />
-        <Route path="/register" element={<Register />} />
+        <Route path="/language-select" element={<LanguageSelect />} />
+        <Route 
+          path="/login" 
+          element={<Login />} 
+        />
+        <Route 
+          path="/register" 
+          element={<Register />} 
+        />
         <Route
           path="/"
           element={

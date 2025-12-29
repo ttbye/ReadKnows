@@ -7,11 +7,25 @@
 import axios from 'axios';
 import { offlineDataCache } from './offlineDataCache';
 
+// 获取 API base URL
+// 在开发环境中，使用相对路径（Vite 代理会处理）
+// 在生产环境中，也使用相对路径（nginx 会代理到后端）
+// 如果设置了 VITE_API_URL 环境变量，使用它
+const getBaseURL = (): string => {
+  // 优先使用环境变量
+  if (import.meta.env.VITE_API_URL) {
+    return import.meta.env.VITE_API_URL;
+  }
+  // 默认使用相对路径，让 nginx 或 Vite 代理处理
+  return '/api';
+};
+
 const api = axios.create({
-  baseURL: '/api',
+  baseURL: getBaseURL(),
   headers: {
     'Content-Type': 'application/json',
   },
+  timeout: 30000, // 30秒超时
 });
 
 // 从localStorage获取token的函数

@@ -6,6 +6,7 @@
 
 import { useState, useEffect } from 'react';
 import { X, Type, Palette, Minus, Plus, RotateCcw } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import api from '../utils/api';
 
 interface ReadingSettingsProps {
@@ -52,9 +53,35 @@ export default function ReadingSettings({
   settings,
   onSettingsChange,
 }: ReadingSettingsProps) {
+  const { t } = useTranslation();
   const [localSettings, setLocalSettings] = useState(settings);
   const [fontFamilies, setFontFamilies] = useState(defaultFontFamilies);
   const [loadingFonts, setLoadingFonts] = useState(false);
+  
+  // 使用翻译的字体选项
+  const getFontLabel = (value: string) => {
+    const labels: { [key: string]: string } = {
+      'default': t('reader.defaultFont'),
+      'serif': t('reader.serifFont'),
+      'sans-serif': t('reader.sansSerifFont'),
+      'monospace': t('reader.monospaceFont'),
+      'song': t('reader.songFont'),
+      'hei': t('reader.heiFont'),
+      'kai': t('reader.kaiFont'),
+    };
+    return labels[value] || value;
+  };
+  
+  // 使用翻译的主题选项
+  const getThemeLabel = (value: string) => {
+    const labels: { [key: string]: string } = {
+      'light': t('reader.whiteTheme'),
+      'sepia': t('reader.sepiaTheme'),
+      'green': t('reader.greenTheme'),
+      'dark': t('reader.darkTheme'),
+    };
+    return labels[value] || value;
+  };
 
   useEffect(() => {
     setLocalSettings(settings);
@@ -117,7 +144,7 @@ export default function ReadingSettings({
       <div className="bg-white dark:bg-gray-900 w-full md:w-[500px] md:rounded-2xl shadow-2xl max-h-[90vh] overflow-y-auto">
         {/* 头部 */}
         <div className="sticky top-0 bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800 px-6 py-4 flex items-center justify-between z-10">
-          <h2 className="text-xl font-bold">阅读设置</h2>
+          <h2 className="text-xl font-bold">{t('reader.readingSettings')}</h2>
           <button
             onClick={onClose}
             className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full transition-colors"
@@ -133,7 +160,7 @@ export default function ReadingSettings({
             <div className="flex items-center justify-between mb-3">
               <div className="flex items-center gap-2">
                 <Type className="w-5 h-5 text-gray-600 dark:text-gray-400" />
-                <span className="font-medium">字体大小</span>
+                <span className="font-medium">{t('reader.fontSize')}</span>
               </div>
               <span className="text-sm text-gray-600 dark:text-gray-400">
                 {localSettings.fontSize}px
@@ -169,8 +196,8 @@ export default function ReadingSettings({
           <div>
             <div className="flex items-center gap-2 mb-3">
               <Type className="w-5 h-5 text-gray-600 dark:text-gray-400" />
-              <span className="font-medium">字体</span>
-              {loadingFonts && <span className="text-xs text-gray-500">加载中...</span>}
+              <span className="font-medium">{t('reader.font')}</span>
+              {loadingFonts && <span className="text-xs text-gray-500">{t('reader.loading')}</span>}
             </div>
             <div className="grid grid-cols-2 gap-2 max-h-64 overflow-y-auto">
               {fontFamilies.map((font) => {
@@ -210,9 +237,9 @@ export default function ReadingSettings({
                     }`}
                     style={fontStyle}
                   >
-                    <div className="font-medium text-sm">{font.label}</div>
+                    <div className="font-medium text-sm">{getFontLabel(font.value)}</div>
                     <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                      示例文字 Aa
+                      {t('reader.sampleText')}
                     </div>
                   </button>
                 );
@@ -225,7 +252,7 @@ export default function ReadingSettings({
             <div className="flex items-center justify-between mb-3">
               <div className="flex items-center gap-2">
                 <Type className="w-5 h-5 text-gray-600 dark:text-gray-400" />
-                <span className="font-medium">行距</span>
+                <span className="font-medium">{t('reader.lineHeight')}</span>
               </div>
               <span className="text-sm text-gray-600 dark:text-gray-400">
                 {localSettings.lineHeight.toFixed(1)}
@@ -261,7 +288,7 @@ export default function ReadingSettings({
           <div>
             <div className="flex items-center gap-2 mb-3">
               <Palette className="w-5 h-5 text-gray-600 dark:text-gray-400" />
-              <span className="font-medium">背景主题</span>
+              <span className="font-medium">{t('reader.backgroundTheme')}</span>
             </div>
             <div className="grid grid-cols-4 gap-3">
               {themes.map((theme) => (
@@ -280,7 +307,7 @@ export default function ReadingSettings({
                     style={{ backgroundColor: theme.bg }}
                   />
                   <div className="text-xs font-medium text-center" style={{ color: theme.text }}>
-                    {theme.label}
+                    {getThemeLabel(theme.value)}
                   </div>
                   {localSettings.theme === theme.value && (
                     <div className="absolute top-1 right-1 w-5 h-5 bg-blue-600 rounded-full flex items-center justify-center">
@@ -301,7 +328,7 @@ export default function ReadingSettings({
           {/* 页边距 */}
           <div>
             <div className="flex items-center justify-between mb-3">
-              <span className="font-medium">页边距</span>
+              <span className="font-medium">{t('reader.margin')}</span>
               <span className="text-sm text-gray-600 dark:text-gray-400">
                 {localSettings.margin}px
               </span>
@@ -335,7 +362,7 @@ export default function ReadingSettings({
           {/* 翻页模式 */}
           <div>
             <div className="flex items-center gap-2 mb-3">
-              <span className="font-medium">翻页模式</span>
+              <span className="font-medium">{t('reader.pageTurnMode')}</span>
             </div>
             <div className="grid grid-cols-2 gap-3">
               <button
@@ -348,8 +375,8 @@ export default function ReadingSettings({
               >
                 <div className="text-center">
                   <div className="text-2xl mb-2">⬆️ ⬇️</div>
-                  <div className="text-sm font-medium">上下翻页</div>
-                  <div className="text-xs text-gray-500 mt-1">点击上方翻到上页<br/>点击下方翻到下页</div>
+                  <div className="text-sm font-medium">{t('reader.verticalPageTurn')}</div>
+                  <div className="text-xs text-gray-500 mt-1 whitespace-pre-line">{t('reader.verticalPageTurnDesc')}</div>
                 </div>
               </button>
               <button
@@ -362,8 +389,8 @@ export default function ReadingSettings({
               >
                 <div className="text-center">
                   <div className="text-2xl mb-2">⬅️ ➡️</div>
-                  <div className="text-sm font-medium">左右翻页</div>
-                  <div className="text-xs text-gray-500 mt-1">点击左侧翻到上页<br/>点击右侧翻到下页</div>
+                  <div className="text-sm font-medium">{t('reader.horizontalPageTurn')}</div>
+                  <div className="text-xs text-gray-500 mt-1 whitespace-pre-line">{t('reader.horizontalPageTurnDesc')}</div>
                 </div>
               </button>
             </div>
@@ -372,7 +399,7 @@ export default function ReadingSettings({
           {/* 点击翻页 */}
           <div>
             <div className="flex items-center justify-between mb-3">
-              <span className="font-medium">点击翻页</span>
+              <span className="font-medium">{t('reader.clickToTurn') || '点击翻页'}</span>
               <label className="relative inline-flex items-center cursor-pointer">
                 <input
                   type="checkbox"
@@ -385,20 +412,20 @@ export default function ReadingSettings({
             </div>
             <p className="text-xs text-gray-500 dark:text-gray-400">
               {localSettings.pageTurnMode === 'vertical' 
-                ? '点击上半部分上一页，点击下半部分下一页'
-                : '点击左半部分上一页，点击右半部分下一页'}
+                ? t('reader.clickToTurnVerticalDesc') || '点击上半部分上一页，点击下半部分下一页'
+                : t('reader.clickToTurnHorizontalDesc') || '点击左半部分上一页，点击右半部分下一页'}
             </p>
           </div>
 
           {/* 键盘快捷键 */}
           <div>
             <div className="flex items-center gap-2 mb-3">
-              <span className="font-medium">键盘快捷键</span>
+              <span className="font-medium">{t('reader.keyboardShortcuts') || '键盘快捷键'}</span>
             </div>
             <div className="space-y-3">
               <div>
                 <label className="block text-sm text-gray-600 dark:text-gray-400 mb-1">
-                  上一页
+                  {t('reader.previousPage') || '上一页'}
                 </label>
                 <input
                   type="text"
@@ -412,12 +439,12 @@ export default function ReadingSettings({
                   readOnly
                 />
                 <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                  默认: ← 左箭头键
+                  {t('reader.default') || '默认'}: ← {t('reader.leftArrowKey') || '左箭头键'}
                 </p>
               </div>
               <div>
                 <label className="block text-sm text-gray-600 dark:text-gray-400 mb-1">
-                  下一页
+                  {t('reader.nextPage') || '下一页'}
                 </label>
                 <input
                   type="text"
@@ -431,7 +458,7 @@ export default function ReadingSettings({
                   readOnly
                 />
                 <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                  默认: → 右箭头键
+                  {t('reader.default')}: → {t('reader.rightArrowKey')}
                 </p>
               </div>
             </div>
@@ -443,7 +470,7 @@ export default function ReadingSettings({
             className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-lg transition-colors"
           >
             <RotateCcw className="w-4 h-4" />
-            <span>恢复默认</span>
+            <span>{t('reader.resetToDefault') || '恢复默认'}</span>
           </button>
         </div>
       </div>

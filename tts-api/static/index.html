@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TTS API 测试页面</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            padding: 30px;
+        }
+        
+        h1 {
+            color: #333;
+            margin-bottom: 30px;
+            text-align: center;
+        }
+        
+        .form-group {
+            margin-bottom: 20px;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: 8px;
+            color: #555;
+            font-weight: 500;
+        }
+        
+        input, select, textarea {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 14px;
+            transition: border-color 0.3s;
+        }
+        
+        input:focus, select:focus, textarea:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        
+        textarea {
+            min-height: 100px;
+            resize: vertical;
+        }
+        
+        .row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+        
+        @media (max-width: 768px) {
+            .row {
+                grid-template-columns: 1fr;
+            }
+        }
+        
+        button {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 14px 28px;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+            width: 100%;
+        }
+        
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.4);
+        }
+        
+        button:active {
+            transform: translateY(0);
+        }
+        
+        button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        .audio-player {
+            margin-top: 30px;
+            padding: 20px;
+            background: #f5f5f5;
+            border-radius: 8px;
+        }
+        
+        audio {
+            width: 100%;
+            margin-top: 10px;
+        }
+        
+        .status {
+            margin-top: 20px;
+            padding: 12px;
+            border-radius: 8px;
+            display: none;
+        }
+        
+        .status.success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        
+        .status.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        
+        .api-key-group {
+            background: #fff3cd;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            border: 1px solid #ffc107;
+        }
+        
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-right: 10px;
+            vertical-align: middle;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎤 TTS API 测试页面</h1>
+        
+        <div class="api-key-group">
+            <div class="form-group">
+                <label for="apiKey">🔑 API Key <span style="color: #dc3545;">*</span> (如果服务启用了 API Key 验证)</label>
+                <input type="text" id="apiKey" placeholder="输入 API Key" autocomplete="off">
+                <button type="button" onclick="loadModels()" style="margin-top: 10px; width: auto; padding: 8px 16px; font-size: 14px;">重新加载模型列表</button>
+            </div>
+        </div>
+        
+        <div class="form-group">
+            <label for="model">选择 TTS 模型</label>
+            <select id="model">
+                <option value="">加载中...</option>
+            </select>
+        </div>
+        
+        <div class="form-group">
+            <label for="voice">选择语音</label>
+            <select id="voice" disabled>
+                <option value="">请先选择模型</option>
+            </select>
+        </div>
+        
+        <div class="row">
+            <div class="form-group">
+                <label for="speed">语速 (0.5 - 2.0)</label>
+                <input type="number" id="speed" value="1.0" min="0.5" max="2.0" step="0.1">
+            </div>
+            <div class="form-group">
+                <label for="emotion">情感 (仅 CosyVoice)</label>
+                <select id="emotion">
+                    <option value="">默认</option>
+                    <option value="happy">开心</option>
+                    <option value="sad">悲伤</option>
+                    <option value="angry">愤怒</option>
+                    <option value="neutral">中性</option>
+                </select>
+            </div>
+        </div>
+        
+        <div class="form-group">
+            <label for="text">输入文本</label>
+            <textarea id="text" placeholder="输入要转换为语音的文本...">你好，这是一个 TTS 测试。</textarea>
+        </div>
+        
+        <button id="synthesizeBtn" onclick="synthesize()">
+            🎵 生成语音
+        </button>
+        
+        <div id="status" class="status"></div>
+        
+        <div class="audio-player" id="audioPlayer" style="display: none;">
+            <h3>生成的音频：</h3>
+            <audio id="audio" controls></audio>
+        </div>
+    </div>
+    
+    <script>
+        const API_BASE = window.location.origin;
+        let currentModel = '';
+        let currentVoices = [];
+        
+        // 加载模型列表
+        async function loadModels() {
+            try {
+                const response = await fetch(`${API_BASE}/api/tts/models`, {
+                    headers: getHeaders()
+                });
+                
+                if (!response.ok) {
+                    const errorData = await response.json().catch(() => ({ detail: `HTTP ${response.status}` }));
+                    throw new Error(errorData.detail || `HTTP ${response.status}`);
+                }
+                
+                const data = await response.json();
+                
+                // 验证数据格式
+                if (!data || !Array.isArray(data.models)) {
+                    throw new Error('API 返回的数据格式不正确');
+                }
+                
+                const modelSelect = document.getElementById('model');
+                modelSelect.innerHTML = '<option value="">请选择模型</option>';
+                
+                data.models.forEach(model => {
+                    const option = document.createElement('option');
+                    option.value = model.id;
+                    option.textContent = `${model.name} (${model.type}) ${model.available ? '✅' : '❌'}`;
+                    option.disabled = !model.available;
+                    modelSelect.appendChild(option);
+                });
+                
+                modelSelect.addEventListener('change', async (e) => {
+                    currentModel = e.target.value;
+                    if (currentModel) {
+                        await loadVoices(currentModel);
+                    } else {
+                        const voiceSelect = document.getElementById('voice');
+                        voiceSelect.innerHTML = '<option value="">请先选择模型</option>';
+                        voiceSelect.disabled = true;
+                    }
+                });
+            } catch (error) {
+                const errorMessage = error.message;
+                showStatus('加载模型列表失败: ' + errorMessage, 'error');
+                const modelSelect = document.getElementById('model');
+                modelSelect.innerHTML = '<option value="">加载失败</option>';
+                
+                // 如果是 API Key 错误，聚焦到输入框并高亮提示
+                if (errorMessage.includes('API Key') || errorMessage.includes('401')) {
+                    hasApiKeyError = true;
+                    const apiKeyInput = document.getElementById('apiKey');
+                    apiKeyInput.focus();
+                    apiKeyInput.style.borderColor = '#dc3545';
+                    apiKeyInput.style.boxShadow = '0 0 0 0.2rem rgba(220, 53, 69, 0.25)';
+                    
+                    // 移除高亮样式
+                    setTimeout(() => {
+                        apiKeyInput.addEventListener('input', function() {
+                            this.style.borderColor = '';
+                            this.style.boxShadow = '';
+                        }, { once: true });
+                    }, 100);
+                }
+            }
+        }
+        
+        // 加载语音列表
+        async function loadVoices(model) {
+            try {
+                const response = await fetch(`${API_BASE}/api/tts/voices?model=${model}`, {
+                    headers: getHeaders()
+                });
+                
+                if (!response.ok) {
+                    const errorData = await response.json().catch(() => ({ detail: `HTTP ${response.status}` }));
+                    throw new Error(errorData.detail || `HTTP ${response.status}`);
+                }
+                
+                const data = await response.json();
+                
+                // 验证数据格式
+                if (!data || !Array.isArray(data.voices)) {
+                    throw new Error('API 返回的数据格式不正确');
+                }
+                
+                const voiceSelect = document.getElementById('voice');
+                voiceSelect.innerHTML = '<option value="">请选择语音</option>';
+                voiceSelect.disabled = false;
+                
+                currentVoices = data.voices;
+                data.voices.forEach(voice => {
+                    const option = document.createElement('option');
+                    option.value = voice.id;
+                    option.textContent = `${voice.name} ${voice.referenceAudio ? '(声音克隆)' : ''}`;
+                    voiceSelect.appendChild(option);
+                });
+            } catch (error) {
+                showStatus('加载语音列表失败: ' + error.message, 'error');
+                const voiceSelect = document.getElementById('voice');
+                voiceSelect.innerHTML = '<option value="">加载失败</option>';
+                voiceSelect.disabled = true;
+            }
+        }
+        
+        // 生成语音
+        async function synthesize() {
+            const model = document.getElementById('model').value;
+            const voice = document.getElementById('voice').value;
+            const text = document.getElementById('text').value;
+            const speed = parseFloat(document.getElementById('speed').value);
+            const emotion = document.getElementById('emotion').value;
+            
+            if (!model || !voice || !text) {
+                showStatus('请填写所有必填字段', 'error');
+                return;
+            }
+            
+            const btn = document.getElementById('synthesizeBtn');
+            btn.disabled = true;
+            btn.innerHTML = '<span class="loading"></span>生成中...';
+            
+            try {
+                const selectedVoice = currentVoices.find(v => v.id === voice);
+                const body = {
+                    text,
+                    model,
+                    voice,
+                    speed,
+                };
+                
+                if (selectedVoice?.referenceAudio) {
+                    body.referenceAudio = selectedVoice.referenceAudio;
+                }
+                
+                if (emotion && model === 'cosyvoice') {
+                    body.emotion = emotion;
+                }
+                
+                const response = await fetch(`${API_BASE}/api/tts/synthesize`, {
+                    method: 'POST',
+                    headers: {
+                        ...getHeaders(),
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(body),
+                });
+                
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.detail || `HTTP ${response.status}`);
+                }
+                
+                const blob = await response.blob();
+                const url = URL.createObjectURL(blob);
+                
+                const audio = document.getElementById('audio');
+                audio.src = url;
+                document.getElementById('audioPlayer').style.display = 'block';
+                
+                showStatus('语音生成成功！', 'success');
+            } catch (error) {
+                showStatus('生成失败: ' + error.message, 'error');
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = '🎵 生成语音';
+            }
+        }
+        
+        // 获取请求头
+        function getHeaders() {
+            const apiKey = document.getElementById('apiKey').value.trim();
+            const headers = {};
+            if (apiKey) {
+                headers['X-API-Key'] = apiKey;
+            }
+            return headers;
+        }
+        
+        // API Key 输入框变化时，如果之前有错误，自动重新加载
+        let hasApiKeyError = false;
+        
+        // 显示状态消息
+        function showStatus(message, type) {
+            const status = document.getElementById('status');
+            status.textContent = message;
+            status.className = `status ${type}`;
+            status.style.display = 'block';
+            
+            if (type === 'success') {
+                setTimeout(() => {
+                    status.style.display = 'none';
+                }, 3000);
+            }
+        }
+        
+        // 页面加载时初始化
+        window.addEventListener('load', () => {
+            // 设置 API Key 输入框的自动重试功能
+            const apiKeyInput = document.getElementById('apiKey');
+            apiKeyInput.addEventListener('blur', function() {
+                if (hasApiKeyError && this.value.trim()) {
+                    hasApiKeyError = false;
+                    loadModels();
+                }
+            });
+            
+            // 检查是否需要 API Key（通过尝试访问健康检查端点）
+            loadModels();
+        });
+    </script>
+</body>
+</html>
+

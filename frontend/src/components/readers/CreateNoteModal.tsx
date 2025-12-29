@@ -8,6 +8,8 @@ import { useState, useEffect } from 'react';
 import { X, Save } from 'lucide-react';
 import api from '../../utils/api';
 import { toast } from 'react-hot-toast';
+import { useTranslation } from 'react-i18next';
+import i18n from '../../i18n/config';
 
 interface CreateNoteModalProps {
   isVisible: boolean;
@@ -30,6 +32,7 @@ export default function CreateNoteModal({
   onClose,
   onSuccess,
 }: CreateNoteModalProps) {
+  const { t } = useTranslation();
   const [noteContent, setNoteContent] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -56,7 +59,7 @@ export default function CreateNoteModal({
 
   const handleSubmit = async () => {
     if (!noteContent.trim()) {
-      toast.error('请输入笔记内容');
+      toast.error(t('notes.pleaseEnterContent'));
       return;
     }
 
@@ -69,12 +72,12 @@ export default function CreateNoteModal({
         chapterIndex: chapterIndex ?? 0,
         selectedText: selectedText || null,
       });
-      toast.success('笔记创建成功');
+      toast.success(t('notes.createSuccess'));
       setNoteContent('');
       // 触发高亮（EPUB），仅本次会话内
       if (selectedCfiRange && (window as any).__epubHighlight) {
         try {
-          (window as any).__epubHighlight(selectedCfiRange);
+          (window as any).__epubHighlight(selectedCfiRange, 'rgba(33, 150, 243, 0.55)'); // 笔记默认使用蓝色高亮
         } catch (e) {
           // ignore
         }
@@ -83,7 +86,7 @@ export default function CreateNoteModal({
       onClose();
     } catch (error: any) {
       console.error('创建笔记失败:', error);
-      toast.error(error.response?.data?.error || '创建笔记失败');
+      toast.error(error.response?.data?.error || t('notes.createFailed'));
     } finally {
       setIsSubmitting(false);
     }
@@ -133,11 +136,11 @@ export default function CreateNoteModal({
       >
         {/* 头部 */}
         <div className="flex items-center justify-between p-3 sm:p-4 border-b border-gray-200 dark:border-gray-700 flex-shrink-0">
-          <h3 className="text-base sm:text-lg font-bold text-gray-900 dark:text-gray-100">新建笔记</h3>
+          <h3 className="text-base sm:text-lg font-bold text-gray-900 dark:text-gray-100">{t('notes.createNote')}</h3>
           <button
             onClick={onClose}
             className="text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 transition-colors p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700"
-            aria-label="关闭"
+            aria-label={t('common.close')}
           >
             <X className="w-5 h-5" />
           </button>
@@ -148,7 +151,7 @@ export default function CreateNoteModal({
           {/* 选中的文本引用 */}
           {selectedText && (
             <div className="p-2 sm:p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg text-xs sm:text-sm text-gray-700 dark:text-gray-300 italic border-l-4 border-blue-500">
-              <div className="font-medium text-blue-600 dark:text-blue-400 mb-1 text-xs">引用内容：</div>
+              <div className="font-medium text-blue-600 dark:text-blue-400 mb-1 text-xs">{t('notes.quote')}</div>
               <div className="whitespace-pre-wrap break-words max-h-32 overflow-y-auto">"{selectedText}"</div>
             </div>
           )}
@@ -156,18 +159,18 @@ export default function CreateNoteModal({
           {/* 笔记内容输入 */}
           <div>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-              笔记内容 <span className="text-red-500">*</span>
+              {t('notes.content')} <span className="text-red-500">*</span>
             </label>
             <textarea
               className="note-content-textarea w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 resize-none focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm sm:text-base"
-              placeholder="输入你的笔记内容..."
+              placeholder={t('notes.contentPlaceholder')}
               value={noteContent}
               onChange={(e) => setNoteContent(e.target.value)}
               rows={6}
               autoFocus
             />
             <div className="mt-1 text-xs text-gray-500 dark:text-gray-400 hidden sm:block">
-              提示：按 Ctrl/Cmd + Enter 快速保存，按 ESC 关闭
+              {t('notes.keyboardHint')}
             </div>
           </div>
         </div>
@@ -179,7 +182,7 @@ export default function CreateNoteModal({
             disabled={isSubmitting}
             className="px-3 sm:px-4 py-2 text-sm sm:text-base border border-gray-300 dark:border-gray-700 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors text-gray-700 dark:text-gray-300 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            取消
+            {t('common.cancel')}
           </button>
           <button
             onClick={handleSubmit}
@@ -187,7 +190,7 @@ export default function CreateNoteModal({
             className="px-3 sm:px-4 py-2 text-sm sm:text-base bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <Save className="w-4 h-4" />
-            {isSubmitting ? '保存中...' : '保存'}
+            {isSubmitting ? t('common.saving') : t('common.save')}
           </button>
         </div>
       </div>

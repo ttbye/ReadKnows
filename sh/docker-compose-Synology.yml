@@ -65,14 +65,8 @@ services:
     restart: unless-stopped
     ports:
       - "1280:1280"
-    environment:
-      # Ollama服务器完整URL（包含协议、主机和端口）
-      # 例如：http://192.168.6.20:11434 或 http://ollama-server:8080
-      # 如果ollama在宿主机上，可以使用：http://host.docker.internal:11434
-      # 如果ollama在局域网其他机器上，使用实际的IP地址，如：http://192.168.6.20:11434
-      # 注意：前端容器中的nginx会通过此地址代理到实际的Ollama服务器
-      # 端口号应该与系统设置中配置的ollama端口一致
-      - OLLAMA_URL=${OLLAMA_URL:-http://host.docker.internal:11434}
+    # 注意：Ollama 地址现在只在系统后台管理中配置，不再使用环境变量
+    # 所有用户都使用系统设置中配置的统一 Ollama 地址
     # 在Linux上支持host.docker.internal（Docker Desktop自动支持，但Linux需要手动配置）
     extra_hosts:
       - "host.docker.internal:host-gateway"

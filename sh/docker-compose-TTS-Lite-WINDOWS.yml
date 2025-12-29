@@ -1,0 +1,38 @@
+version: '3.8'
+
+services:
+  tts-api-lite:
+    image: ttbye/tts-api-lite:latest
+    platform: linux/amd64  
+    build:
+      context: ../TTS-API-Lite
+      dockerfile: Dockerfile
+    container_name: readknow-tts-api-lite
+    ports:
+      - "5051:5050"
+    environment:
+      - PORT=5050
+      - NODE_ENV=production
+      - API_KEY=${API_KEY:-}
+      - QWEN_API_KEY=${QWEN_API_KEY:-}
+      - TEMP_DIR=/app/temp
+      - FFMPEG_BIN=ffmpeg
+    volumes:
+      - D:\Docker\ReadKnows\tts-lite-temp:/app/temp
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5050/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - tts-lite-network
+      - readknows-network
+
+networks:
+  tts-lite-network:
+    driver: bridge
+  readknows-network:
+    external: true
+    name: sh_readknows-network
+

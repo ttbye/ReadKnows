@@ -315,7 +315,8 @@ router.post('/login', checkIPBlocked, async (req, res) => {
         id: user.id, 
         username: user.username, 
         email: user.email, 
-        role: user.role || 'user' 
+        role: user.role || 'user',
+        nickname: user.nickname || null
       },
     });
   } catch (error: any) {
@@ -345,7 +346,7 @@ router.get('/me', async (req, res) => {
     const decoded = jwt.verify(token, secret) as any;
 
     const user = db
-      .prepare('SELECT id, username, email, role, created_at FROM users WHERE id = ?')
+      .prepare('SELECT id, username, email, role, nickname, created_at FROM users WHERE id = ?')
       .get(decoded.userId) as any;
 
     if (!user) {

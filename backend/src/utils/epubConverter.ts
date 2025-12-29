@@ -15,6 +15,125 @@ import EPub from 'epub-gen';
 const execAsync = promisify(exec);
 const booksDir = process.env.BOOKS_DIR || './books';
 
+function escapeHtml(input: string): string {
+  return input
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function trimUnicodeEdges(s: string): string {
+  // 删除字符串首尾空白（包含全角空格）
+  return s.replace(/^[\s\u3000]+/, '').replace(/[\s\u3000]+$/, '');
+}
+
+function txtToHtmlParagraphs(txt: string): string {
+  // 目标：
+  // - 保留原 TXT 的“段内格式”（换行/缩进/连续空格）
+  // - 删除“多余空白行”（多个空白行压缩为 1 个段分隔）
+  // - 增加段间距
+  // 先逐行清洗：把“仅包含空白字符的行”（含全角空格　）视为真正空行
+  const raw = txt.replace(/\r\n/g, '\n');
+  const cleanedLines = raw.split('\n').map((line) => {
+    // 注意：\s 不包含全角空格，因此额外加入 \u3000（　）
+    const isBlank = line.replace(/[\s\u3000]/g, '').length === 0;
+    return isBlank ? '' : line.replace(/[ \t\u3000]+$/g, ''); // 去掉行尾空白，保留行首缩进
+  });
+
+  // 压缩多余空白行：多个空行 -> 1 个空行（段分隔）
+  const normalized = cleanedLines.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+
+  // 按“空白行”分段；段内使用 pre-wrap 保留原本的硬换行与缩进
+  const parts = normalized
+    .split(/\n\n+/)
+    // 删除每一段头尾空格（含全角空格）
+    .map((p) => trimUnicodeEdges(p))
+    .filter((p) => p.replace(/[\s\u3000]/g, '').length > 0);
+
+  return parts
+    .map(
+      (p) =>
+        `<p style="margin: 0 0 1.1em 0; line-height: 1.6; white-space: pre-wrap;">${escapeHtml(p)}</p>`
+    )
+    .join('\n');
+}
+
+type Chapter = { title: string; data: string };
+
+function splitTxtIntoChapters(raw: string): Chapter[] {
+  const content = raw.replace(/\r\n/g, '\n');
+  const lines = content.split('\n');
+
+  // 常见章节标题：第X章/节/卷/回；或 Chapter N
+  const headingRe =
+    /^\s*(第\s*[〇零一二三四五六七八九十百千万0-9]{1,9}\s*(?:章|节|卷|回)\s*.*|Chapter\s+\d+\b.*)\s*$/i;
+
+  const headings: Array<{ lineIndex: number; title: string }> = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line) continue;
+    if (headingRe.test(line)) headings.push({ lineIndex: i, title: line });
+  }
+
+  // 1) 优先按“章节标题行”切分
+  if (headings.length >= 2) {
+    const out: Chapter[] = [];
+    for (let i = 0; i < headings.length; i++) {
+      const start = headings[i].lineIndex;
+      const end = i + 1 < headings.length ? headings[i + 1].lineIndex : lines.length;
+      const title = headings[i].title.trim() || `第${i + 1}章`;
+      const body = lines.slice(start + 1, end).join('\n').trim();
+      // 章节标题只用于 TOC；正文不重复显示标题，但保留锚点便于跳转
+      const html = `<div id="ch-${i + 1}"></div>\n${txtToHtmlParagraphs(body)}`;
+      out.push({ title, data: html });
+    }
+    return out.filter((c) => c.data.trim().length > 0);
+  }
+
+  // 2) 否则按“段落块”切分（空行分段），但避免切得过碎：再按字数合并
+  const blocks = content
+    .split(/\n\s*\n/)
+    .map((b) => b.trim())
+    .filter(Boolean);
+
+  // 单块也要能产出 1 个章节
+  if (blocks.length <= 1) {
+    const title = '第1章';
+    const html = `<div id="ch-1"></div>\n${txtToHtmlParagraphs(content)}`;
+    return [{ title, data: html }];
+  }
+
+  // 目标：尽量控制章节数在 20~50 之间（阅读器目录更友好）
+  const totalChars = blocks.reduce((s, b) => s + b.length, 0);
+  const targetChapters = Math.max(20, Math.min(50, Math.ceil(totalChars / 12000))); // ~12k 字/章
+  const targetCharsPerChapter = Math.max(4000, Math.floor(totalChars / targetChapters));
+
+  const merged: Array<{ title: string; body: string }> = [];
+  let buf = '';
+  let idx = 0;
+  for (const block of blocks) {
+    const next = buf ? `${buf}\n\n${block}` : block;
+    if (next.length >= targetCharsPerChapter && buf) {
+      idx++;
+      merged.push({ title: `第${idx}章`, body: buf });
+      buf = block;
+    } else {
+      buf = next;
+    }
+  }
+  if (buf.trim()) {
+    idx++;
+    merged.push({ title: `第${idx}章`, body: buf });
+  }
+
+  return merged.map((m, i) => ({
+    title: m.title,
+    data: `<div id="ch-${i + 1}"></div>\n${txtToHtmlParagraphs(m.body)}`,
+  }));
+}
+
 export async function convertTxtToEpub(
   txtFilePath: string,
   title: string,
@@ -23,30 +142,9 @@ export async function convertTxtToEpub(
   try {
     // 读取txt文件内容
     const content = fs.readFileSync(txtFilePath, 'utf-8');
-    
-    // 简单的章节分割（按空行分割，可以改进）
-    let chapters: Array<{ title: string; data: string }> = content
-      .split(/\n\s*\n/)
-      .filter((chunk: string) => chunk.trim().length > 0)
-      .map((chunk: string, index: number) => ({
-        title: `第${index + 1}章`,
-        data: chunk.trim(),
-      }));
 
-    // 如果章节太多，合并成更少的章节
-    const maxChapters = 50;
-    if (chapters.length > maxChapters) {
-      const chunkSize = Math.ceil(chapters.length / maxChapters);
-      const mergedChapters: Array<{ title: string; data: string }> = [];
-      for (let i = 0; i < chapters.length; i += chunkSize) {
-        const chunk = chapters.slice(i, i + chunkSize);
-        mergedChapters.push({
-          title: `第${Math.floor(i / chunkSize) + 1}章`,
-          data: chunk.map((c) => c.data).join('\n\n'),
-        });
-      }
-      chapters = mergedChapters;
-    }
+    // 章节切分 + 生成带 <h1> 的 HTML（更利于阅读器识别目录/章节）
+    const chapters: Chapter[] = splitTxtIntoChapters(content);
 
     // 生成epub文件
     const epubId = uuidv4();
@@ -58,6 +156,8 @@ export async function convertTxtToEpub(
       author,
       output: epubPath,
       content: chapters,
+      // 一些阅读器会显示 tocTitle（不影响条目生成）
+      tocTitle: '目录',
     };
 
     await new EPub(option).promise;
