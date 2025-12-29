@@ -12,6 +12,17 @@ import { GestureHandler, GestureCallbacks } from '../utils/GestureHandler';
 import { useTranslation } from 'react-i18next';
 import { selectSentenceAtPoint } from '../common/text-selection/textSelection';
 
+interface BookNote {
+  id: string;
+  content: string;
+  position?: string;
+  page_number?: number;
+  chapter_index?: number;
+  selected_text?: string;
+  created_at: string;
+  updated_at: string;
+}
+
 interface ReaderEPUBProProps {
   book: BookData;
   settings: ReadingSettings;
@@ -21,6 +32,8 @@ interface ReaderEPUBProProps {
   onTOCChange: (toc: TOCItem[]) => void;
   onClose: () => void;
   highlights?: Highlight[];
+  notes?: BookNote[];
+  onNoteClick?: (note: BookNote) => void;
 }
 
 // 阅读器引擎类型
@@ -41,6 +54,8 @@ export default function ReaderEPUBPro({
   onTOCChange,
   onClose,
   highlights = [],
+  notes = [],
+  onNoteClick,
 }: ReaderEPUBProProps) {
   const { t } = useTranslation();
   // 核心状态
@@ -1495,6 +1510,18 @@ export default function ReaderEPUBPro({
               const s = settingsRef.current;
               if (s.pageTurnMethod !== 'click' || !s.clickToTurn) return;
               if (!epubjsRenditionRef.current) return;
+              
+              // 检查是否点击了笔记标记或脚注，如果是则不触发翻页
+              const target = e.target as HTMLElement;
+              if (target && (
+                target.classList.contains('rk-note-mark') ||
+                target.classList.contains('rk-note-footnote') ||
+                target.closest('.rk-note-mark') ||
+                target.closest('.rk-note-footnote')
+              )) {
+                return;
+              }
+              
               const rect = getRect();
               const x = e.clientX - rect.left;
               const y = e.clientY - rect.top;
@@ -2219,11 +2246,18 @@ export default function ReaderEPUBPro({
           }
         }
         
+        // 如果处于书签浏览模式，不更新 lastPositionRef 和 lastProgressRef（保持原阅读位置）
+        // 这样 flushNow 时就不会保存书签位置
+        const isBookmarkBrowsing = (window as any).__isBookmarkBrowsingMode === true;
+        
         // 触发进度保存（使用最终进度）
-        lastProgressRef.current = finalProgress;
-        lastPositionRef.current = position;
-        if (cfi && typeof cfi === 'string' && cfi.startsWith('epubcfi(')) {
-          lastCfiRef.current = cfi;
+        // 只有在非书签浏览模式时才更新 lastPositionRef
+        if (!isBookmarkBrowsing) {
+          lastProgressRef.current = finalProgress;
+          lastPositionRef.current = position;
+          if (cfi && typeof cfi === 'string' && cfi.startsWith('epubcfi(')) {
+            lastCfiRef.current = cfi;
+          }
         }
         
         // 只有在非恢复布局状态时才保存阅读进度
@@ -2440,11 +2474,15 @@ export default function ReaderEPUBPro({
                 chapterTitle: chapterTitle || undefined,
               };
               
-              // 保存进度
-              lastProgressRef.current = finalProgress;
-              lastPositionRef.current = position;
-              if (cfi && typeof cfi === 'string' && cfi.startsWith('epubcfi(')) {
-                lastCfiRef.current = cfi;
+              // 如果处于书签浏览模式，不更新 lastPositionRef（保持原阅读位置）
+              const isBookmarkBrowsing = (window as any).__isBookmarkBrowsingMode === true;
+              if (!isBookmarkBrowsing) {
+                // 保存进度
+                lastProgressRef.current = finalProgress;
+                lastPositionRef.current = position;
+                if (cfi && typeof cfi === 'string' && cfi.startsWith('epubcfi(')) {
+                  lastCfiRef.current = cfi;
+                }
               }
               
               // 手动翻页只保存阅读进度（不影响TTS进度）
@@ -2482,6 +2520,35 @@ export default function ReaderEPUBPro({
           // ignore
         }
         return false;
+      };
+
+      // 暴露"保存当前进度"给外部（供关闭书签浏览模式时使用）
+      (window as any).__saveCurrentProgress = () => {
+        try {
+          const currentLocation = rendition.currentLocation?.();
+          if (currentLocation) {
+            // 强制保存当前进度（忽略书签浏览模式标志）
+            const wasBrowsingMode = (window as any).__isBookmarkBrowsingMode;
+            (window as any).__isBookmarkBrowsingMode = false;
+            // 直接调用 saveReadingProgress，此时标志已清除，会正常保存
+            saveReadingProgress(currentLocation, 'bookmark_close');
+            // 不再恢复标志，因为已经关闭了书签浏览模式
+          }
+        } catch (e) {
+          console.warn('[ReaderEPUBPro] 保存当前进度失败:', e);
+        }
+      };
+
+      // 暴露"保存之前的阅读位置"给外部（供关闭书籍时使用）
+      (window as any).__savePreviousPosition = (previousPos: ReadingPosition) => {
+        try {
+          if (previousPos) {
+            // 直接保存之前的阅读位置
+            onProgressChange(previousPos.progress || 0, previousPos);
+          }
+        } catch (e) {
+          console.warn('[ReaderEPUBPro] 保存之前的阅读位置失败:', e);
+        }
       };
 
       // 窗口大小变化时调整
@@ -2932,11 +2999,586 @@ export default function ReaderEPUBPro({
     };
   }, [highlights, loading]);
 
-  // 在切后台/关闭页面时，强制 flush 一次最新位置，避免“最后一次 relocated 未落库”导致回退到上一页
+  // 使用 ref 存储笔记列表，确保在闭包中能访问到最新值
+  const notesRef = useRef<BookNote[]>(notes);
+  useEffect(() => {
+    notesRef.current = notes;
+  }, [notes]);
+
+  // 确保tooltip样式已添加到外层窗口（组件初始化时执行一次）
+  useEffect(() => {
+    const styleId = 'rk-note-tooltip-global-style';
+    if (!document.getElementById(styleId)) {
+      const styleEl = document.createElement('style');
+      styleEl.id = styleId;
+      styleEl.textContent = `
+        .rk-note-tooltip {
+          position: fixed;
+          z-index: 10000;
+          max-width: 320px;
+          padding: 10px 14px;
+          background-color: rgba(0, 0, 0, 0.9);
+          color: #fff;
+          border-radius: 8px;
+          font-size: 13px;
+          line-height: 1.5;
+          box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+          pointer-events: none;
+          opacity: 0;
+          transition: opacity 0.2s ease;
+          word-wrap: break-word;
+        }
+        .rk-note-tooltip.show {
+          opacity: 1;
+        }
+        .rk-note-tooltip-quote {
+          font-style: italic;
+          color: rgba(255, 255, 255, 0.85);
+          margin-bottom: 8px;
+          padding-bottom: 8px;
+          border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+          font-size: 12px;
+        }
+        .rk-note-tooltip-content {
+          color: rgba(255, 255, 255, 0.95);
+          white-space: pre-wrap;
+          word-break: break-word;
+          font-size: 13px;
+        }
+      `;
+      document.head.appendChild(styleEl);
+    }
+  }, []);
+
+  // 监听笔记列表变化并自动渲染笔记标记（下虚线+脚注）
+  useEffect(() => {
+    
+    if (loading || !epubjsRenditionRef.current) {
+      return;
+    }
+    
+    if (!notes || notes.length === 0) {
+      // 如果没有笔记，清除所有标记
+      const iframe = containerRef.current?.querySelector('iframe');
+      if (iframe) {
+        const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
+        if (iframeDoc) {
+          iframeDoc.querySelectorAll('.rk-note-mark').forEach((el) => {
+            const parent = el.parentNode;
+            if (parent && el.textContent) {
+              parent.replaceChild(iframeDoc.createTextNode(el.textContent), el);
+            }
+          });
+        }
+      }
+      return;
+    }
+
+    const rendition = epubjsRenditionRef.current;
+    
+    // 渲染笔记标记
+    const applyNoteMarks = () => {
+      if (!rendition?.annotations) return;
+      
+      const iframe = containerRef.current?.querySelector('iframe');
+      if (!iframe) return;
+      const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
+      if (!iframeDoc) return;
+
+      // 辅助函数：为笔记标记添加tooltip（PC端）
+      const addNoteTooltip = (
+        markEl: HTMLElement,
+        footnoteEl: HTMLElement | null,
+        note: BookNote,
+        iframe: HTMLIFrameElement,
+        iframeDoc: Document
+      ) => {
+        // 检测是否为移动设备
+        const isMobileDevice = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) || window.innerWidth <= 768;
+        if (isMobileDevice) return; // 移动端不显示tooltip
+        
+        // 创建tooltip元素（添加到外层窗口的body，而不是iframe的body）
+        const tooltip = document.createElement('div');
+        tooltip.className = 'rk-note-tooltip';
+        tooltip.style.display = 'none';
+        
+        // 构建tooltip内容
+        let tooltipHtml = '';
+        if (note.selected_text) {
+          const quoteText = note.selected_text.length > 50 
+            ? note.selected_text.substring(0, 50) + '...' 
+            : note.selected_text;
+          tooltipHtml += `<div class="rk-note-tooltip-quote">"${quoteText.replace(/"/g, '&quot;')}"</div>`;
+        }
+        const contentText = note.content.length > 150 
+          ? note.content.substring(0, 150) + '...' 
+          : note.content;
+        tooltipHtml += `<div class="rk-note-tooltip-content">${contentText.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</div>`;
+        tooltip.innerHTML = tooltipHtml;
+        
+        // 添加到外层窗口的body
+        document.body.appendChild(tooltip);
+        
+        let tooltipTimer: NodeJS.Timeout | null = null;
+        
+        // 显示tooltip
+        const showTooltip = (e: MouseEvent) => {
+          console.log('[Tooltip] mouseenter 事件触发', e.target, markEl);
+          if (tooltipTimer) {
+            clearTimeout(tooltipTimer);
+          }
+          
+          tooltipTimer = setTimeout(() => {
+            // 使用 markEl 而不是 e.target，因为 e.target 可能是子元素
+            const rect = markEl.getBoundingClientRect();
+            const iframeRect = iframe.getBoundingClientRect();
+            
+            // iframe 内元素的坐标需要加上 iframe 的偏移
+            // getBoundingClientRect() 在 iframe 中返回的是相对于 iframe 视口的坐标
+            // 需要加上 iframe 相对于外层窗口的位置
+            const x = rect.left + rect.width / 2 + iframeRect.left;
+            const y = rect.top + iframeRect.top;
+            
+            console.log('[Tooltip] 显示位置', { 
+              x, 
+              y, 
+              markRect: { left: rect.left, top: rect.top, width: rect.width, height: rect.height },
+              iframeRect: { left: iframeRect.left, top: iframeRect.top, width: iframeRect.width, height: iframeRect.height }
+            });
+            
+            tooltip.style.left = `${x}px`;
+            tooltip.style.top = `${y - 10}px`;
+            tooltip.style.transform = 'translate(-50%, -100%)';
+            tooltip.style.display = 'block';
+            tooltip.style.zIndex = '10000';
+            
+            // 延迟显示动画
+            setTimeout(() => {
+              tooltip.classList.add('show');
+              console.log('[Tooltip] 已显示，tooltip元素:', tooltip);
+            }, 10);
+          }, 200); // 延迟200ms显示
+        };
+        
+        // 隐藏tooltip
+        const hideTooltip = () => {
+          if (tooltipTimer) {
+            clearTimeout(tooltipTimer);
+            tooltipTimer = null;
+          }
+          tooltip.classList.remove('show');
+          setTimeout(() => {
+            tooltip.style.display = 'none';
+          }, 200);
+        };
+        
+        // 绑定事件（使用捕获阶段确保事件能触发）
+        const handleMouseEnter = (e: MouseEvent) => {
+          console.log('[Tooltip] handleMouseEnter 被调用', markEl, e.target);
+          e.stopPropagation();
+          e.preventDefault();
+          showTooltip(e);
+        };
+        const handleMouseLeave = (e: MouseEvent) => {
+          console.log('[Tooltip] handleMouseLeave 被调用');
+          e.stopPropagation();
+          hideTooltip();
+        };
+        
+        // 使用 mouseover/mouseout 替代 mouseenter/mouseleave，因为它们在 iframe 中更可靠
+        markEl.addEventListener('mouseover', handleMouseEnter, true);
+        markEl.addEventListener('mouseout', handleMouseLeave, true);
+        markEl.addEventListener('mouseenter', handleMouseEnter, true);
+        markEl.addEventListener('mouseleave', handleMouseLeave, true);
+        
+        if (footnoteEl) {
+          footnoteEl.addEventListener('mouseover', handleMouseEnter, true);
+          footnoteEl.addEventListener('mouseout', handleMouseLeave, true);
+          footnoteEl.addEventListener('mouseenter', handleMouseEnter, true);
+          footnoteEl.addEventListener('mouseleave', handleMouseLeave, true);
+        }
+        
+      };
+
+      // 添加笔记标记样式
+      const styleId = 'rk-note-mark-style';
+      let styleEl = iframeDoc.getElementById(styleId) as HTMLStyleElement;
+      if (!styleEl) {
+        styleEl = iframeDoc.createElement('style');
+        styleEl.id = styleId;
+        iframeDoc.head.appendChild(styleEl);
+      }
+      // 检测是否为移动设备
+      const isMobileDevice = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) || window.innerWidth <= 768;
+      
+      styleEl.textContent = `
+        .rk-note-mark {
+          border-bottom: 2px dashed rgba(33, 150, 243, 0.6);
+          cursor: pointer;
+          position: relative;
+          text-decoration: none !important;
+          display: inline;
+        }
+        .rk-note-mark:hover {
+          border-bottom-color: rgba(33, 150, 243, 0.9);
+          background-color: rgba(33, 150, 243, 0.1);
+        }
+        .rk-note-footnote {
+          display: inline;
+          font-size: 0.7em;
+          vertical-align: super;
+          color: rgba(33, 150, 243, 0.9);
+          margin-left: 0;
+          margin-right: 0;
+          padding-left: 0;
+          padding-right: 0;
+          cursor: pointer;
+          line-height: 0;
+          font-weight: normal;
+          position: relative;
+          top: -0.3em;
+        }
+        .rk-note-footnote::before {
+          content: "●";
+          display: inline;
+          font-size: 0.6em;
+        }
+        .rk-note-tooltip {
+          position: fixed;
+          z-index: 10000;
+          max-width: 320px;
+          padding: 8px 12px;
+          background-color: rgba(0, 0, 0, 0.85);
+          color: #fff;
+          border-radius: 6px;
+          font-size: 13px;
+          line-height: 1.5;
+          box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+          pointer-events: none;
+          opacity: 0;
+          transition: opacity 0.2s;
+        }
+        .rk-note-tooltip.show {
+          opacity: 1;
+        }
+        .rk-note-tooltip-quote {
+          font-style: italic;
+          color: rgba(255, 255, 255, 0.9);
+          margin-bottom: 6px;
+          padding-bottom: 6px;
+          border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        .rk-note-tooltip-content {
+          color: rgba(255, 255, 255, 0.95);
+          white-space: pre-wrap;
+          word-break: break-word;
+        }
+      `;
+
+      // 清除旧的笔记标记
+      iframeDoc.querySelectorAll('.rk-note-mark').forEach((el) => {
+        const parent = el.parentNode;
+        if (parent) {
+          const textContent = el.textContent || '';
+          // 移除脚注标记
+          const textWithoutFootnote = textContent.replace(/\[\d+\]$/, '');
+          parent.replaceChild(iframeDoc.createTextNode(textWithoutFootnote), el);
+        }
+      });
+
+      // 为每个有 selected_text 的笔记添加标记
+      notesRef.current.forEach((note, index) => {
+        if (!note.selected_text) {
+          return;
+        }
+        
+        const selectedText = note.selected_text.trim();
+        if (!selectedText) {
+          return;
+        }
+        
+        try {
+          let range: Range | null = null;
+          
+          // 优先使用 CFI 定位（如果存在且有效）
+          if (note.position && typeof note.position === 'string' && note.position.startsWith('epubcfi(')) {
+            try {
+              range = (rendition as any).getRange?.(note.position);
+              if (!range) {
+                console.log('[笔记标记] CFI 定位失败，尝试文本匹配:', note.position);
+              }
+            } catch (e) {
+              console.warn('[笔记标记] CFI 定位异常:', e, note.position);
+            }
+          }
+          
+          // 如果没有 range，通过文本匹配查找
+          if (!range) {
+            
+            // 简化匹配：直接在整个文档中查找文本
+            const bodyText = iframeDoc.body.textContent || '';
+            const bodyHtml = iframeDoc.body.innerHTML;
+            
+            // 检查文本是否存在
+            if (bodyText.includes(selectedText)) {
+              
+              // 使用更简单的方法：直接替换 HTML 中的文本
+              // 但需要确保不会破坏 HTML 结构
+              try {
+                // 转义特殊字符用于正则表达式
+                const escapedText = selectedText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                // 创建标记 HTML
+                const markHtml = `<span class="rk-note-mark" data-note-id="${note.id}">${selectedText.replace(/[&<>"']/g, (m) => {
+                  const map: Record<string, string> = {
+                    '&': '&amp;',
+                    '<': '&lt;',
+                    '>': '&gt;',
+                    '"': '&quot;',
+                    "'": '&#39;',
+                  };
+                  return map[m];
+                })}<sup class="rk-note-footnote" data-note-id="${note.id}" title="笔记 ${index + 1}"></sup></span>`;
+                
+                // 在 body 中查找并替换（只替换第一次出现）
+                const newHtml = bodyHtml.replace(new RegExp(`(${escapedText})`, 'g'), (match, p1) => {
+                  // 检查是否已经在标记内
+                  const beforeMatch = bodyHtml.substring(0, bodyHtml.indexOf(match));
+                  const lastOpenTag = beforeMatch.lastIndexOf('<span class="rk-note-mark"');
+                  const lastCloseTag = beforeMatch.lastIndexOf('</span>');
+                  if (lastOpenTag > lastCloseTag) {
+                    // 已经在标记内，不替换
+                    return match;
+                  }
+                  return markHtml;
+                });
+                
+                if (newHtml !== bodyHtml) {
+                  iframeDoc.body.innerHTML = newHtml;
+                  
+                  // 重新绑定事件
+                  const markEl = iframeDoc.querySelector(`.rk-note-mark[data-note-id="${note.id}"]`);
+                  const footnoteEl = iframeDoc.querySelector(`.rk-note-footnote[data-note-id="${note.id}"]`);
+                  
+                  const handleClick = (e: Event) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    e.stopImmediatePropagation();
+                    if (onNoteClick) {
+                      onNoteClick(note);
+                    }
+                    return false;
+                  };
+                  
+                  if (markEl) {
+                    markEl.addEventListener('click', handleClick, true);
+                    markEl.addEventListener('mousedown', (e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      e.stopImmediatePropagation();
+                    }, true);
+                    
+                    // 添加tooltip（PC端）
+                    addNoteTooltip(markEl as HTMLElement, footnoteEl as HTMLElement | null, note, iframe, iframeDoc);
+                  }
+                  if (footnoteEl) {
+                    footnoteEl.addEventListener('click', handleClick, true);
+                    footnoteEl.addEventListener('mousedown', (e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      e.stopImmediatePropagation();
+                    }, true);
+                  }
+                  
+                  return; // 已处理，跳过后续 range 处理
+                }
+              } catch (e) {
+                // console.warn('[笔记标记] HTML 替换失败:', e);
+              }
+            } else {
+              // console.log('[笔记标记] 文本未找到:', selectedText.substring(0, 30));
+            }
+          }
+          
+          // 如果找到了 range，添加标记
+          if (range) {
+            try {
+              const element = range.commonAncestorContainer;
+              
+              if (element.nodeType === Node.TEXT_NODE) {
+                const textNode = element as Text;
+                const parent = textNode.parentElement;
+                if (!parent || parent.classList.contains('rk-note-mark')) return;
+                
+                // 创建标记元素
+                const mark = iframeDoc.createElement('span');
+                mark.className = 'rk-note-mark';
+                mark.setAttribute('data-note-id', note.id);
+                
+                // 创建脚注标记（使用图标，不显示数字）
+                const footnote = iframeDoc.createElement('sup');
+                footnote.className = 'rk-note-footnote';
+                footnote.setAttribute('data-note-id', note.id);
+                footnote.setAttribute('title', `笔记 ${index + 1}`); // 鼠标悬停时显示编号
+                
+                // 提取文本内容
+                const textContent = textNode.textContent || '';
+                const textBefore = textContent.substring(0, range.startOffset);
+                const textSelected = textContent.substring(range.startOffset, range.endOffset);
+                const textAfter = textContent.substring(range.endOffset);
+                
+                // 替换文本节点
+                if (textBefore) {
+                  parent.insertBefore(iframeDoc.createTextNode(textBefore), textNode);
+                }
+                
+                mark.textContent = textSelected;
+                mark.appendChild(footnote);
+                parent.insertBefore(mark, textNode);
+                
+                if (textAfter) {
+                  parent.insertBefore(iframeDoc.createTextNode(textAfter), textNode);
+                }
+                
+                parent.removeChild(textNode);
+                
+                // 添加tooltip（PC端）
+                addNoteTooltip(mark, footnote, note, iframe, iframeDoc);
+                
+                // 添加点击事件（使用捕获阶段，确保优先处理）
+                const handleClick = (e: Event) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  e.stopImmediatePropagation(); // 阻止同一元素上的其他监听器
+                  if (onNoteClick) {
+                    onNoteClick(note);
+                  }
+                  return false; // 额外的保护
+                };
+                
+                mark.addEventListener('click', handleClick, true); // 使用捕获阶段
+                footnote.addEventListener('click', handleClick, true);
+                
+                // 同时阻止鼠标按下事件，防止触发其他交互
+                mark.addEventListener('mousedown', (e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  e.stopImmediatePropagation();
+                }, true);
+                footnote.addEventListener('mousedown', (e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  e.stopImmediatePropagation();
+                }, true);
+                
+              } else if (element.nodeType === Node.ELEMENT_NODE) {
+                // 如果是元素节点，尝试在元素内查找并替换
+                const el = element as HTMLElement;
+                const textContent = el.textContent || '';
+                
+                if (textContent.includes(selectedText)) {
+                  // 使用更安全的方式替换
+                  const markHtml = `<span class="rk-note-mark" data-note-id="${note.id}">${selectedText.replace(/[&<>"']/g, (m) => {
+                    const map: Record<string, string> = {
+                      '&': '&amp;',
+                      '<': '&lt;',
+                      '>': '&gt;',
+                      '"': '&quot;',
+                      "'": '&#39;',
+                    };
+                    return map[m];
+                  })}<sup class="rk-note-footnote" data-note-id="${note.id}" title="笔记 ${index + 1}"></sup></span>`;
+                  
+                  // 使用 textContent 查找并替换（更安全）
+                  const newHtml = el.innerHTML.replace(
+                    new RegExp(selectedText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'),
+                    markHtml
+                  );
+                  el.innerHTML = newHtml;
+                  
+                  // 重新绑定事件
+                  const markEl = el.querySelector(`.rk-note-mark[data-note-id="${note.id}"]`);
+                  const footnoteEl = el.querySelector(`.rk-note-footnote[data-note-id="${note.id}"]`);
+                  
+                  const handleClick = (e: Event) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    e.stopImmediatePropagation();
+                    if (onNoteClick) {
+                      onNoteClick(note);
+                    }
+                    return false;
+                  };
+                  
+                  if (markEl) {
+                    markEl.addEventListener('click', handleClick, true);
+                    markEl.addEventListener('mousedown', (e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      e.stopImmediatePropagation();
+                    }, true);
+                  }
+                  if (footnoteEl) {
+                    footnoteEl.addEventListener('click', handleClick, true);
+                    footnoteEl.addEventListener('mousedown', (e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      e.stopImmediatePropagation();
+                    }, true);
+                  }
+                  
+                }
+              }
+            } catch (e) {
+              // console.warn('[笔记标记] 处理 range 失败:', e, note);
+            }
+          } else {
+            // console.warn('[笔记标记] 无法定位文本:', note.id, selectedText.substring(0, 30));
+          }
+        } catch (e) {
+          // console.error('[笔记标记] 标记笔记异常:', e, note);
+        }
+      });
+    };
+
+    // 延迟确保内容加载完成
+    const timer = setTimeout(applyNoteMarks, 1000);
+    
+    // 监听 relocated 事件
+    const handleRelocated = () => {
+      setTimeout(applyNoteMarks, 200);
+    };
+    
+    rendition.on('relocated', handleRelocated);
+
+    return () => {
+      clearTimeout(timer);
+      if (rendition) {
+        rendition.off('relocated', handleRelocated);
+      }
+    };
+  }, [notes, loading, onNoteClick]);
+
+  // 在切后台/关闭页面时，强制 flush 一次最新位置，避免"最后一次 relocated 未落库"导致回退到上一页
   useEffect(() => {
     const flushNow = () => {
       try {
         if (isRestoringLayoutRef.current) return;
+        
+        // 如果处于书签浏览模式，不保存当前进度（保持原阅读进度不变）
+        // 如果存在 previousPosition，会在 ReaderContainer 的 onClose 中处理
+        if ((window as any).__isBookmarkBrowsingMode === true) {
+          // 检查是否有 previousPosition 需要保存
+          const previousPos = (window as any).__previousPositionForSave;
+          if (previousPos) {
+            // 保存之前的阅读位置
+            onProgressChange(previousPos.progress || 0, previousPos);
+            // 清除标志和临时数据
+            (window as any).__isBookmarkBrowsingMode = false;
+            (window as any).__previousPositionForSave = null;
+          }
+          return;
+        }
+        
         const rendition = epubjsRenditionRef.current;
         const bookInstance = epubjsBookRef.current;
         const cfi =
@@ -2945,7 +3587,8 @@ export default function ReaderEPUBPro({
           null;
 
         // 优先使用我们已经算好的 lastPositionRef
-        if (lastPositionRef.current && lastPositionRef.current.currentLocation) {
+        // 但如果处于书签浏览模式，不应该使用 lastPositionRef（因为它可能被书签位置更新了）
+        if (!(window as any).__isBookmarkBrowsingMode && lastPositionRef.current && lastPositionRef.current.currentLocation) {
           onProgressChange(lastProgressRef.current || lastPositionRef.current.progress || 0, lastPositionRef.current);
           return;
         }
@@ -3465,6 +4108,11 @@ export default function ReaderEPUBPro({
   
   // 保存阅读进度（独立于TTS进度）
   const saveReadingProgress = useCallback((location: any, source: string = 'unknown') => {
+    // 如果处于书签浏览模式，不保存阅读进度（保持原阅读进度不变）
+    if ((window as any).__isBookmarkBrowsingMode === true) {
+      return;
+    }
+    
     // 如果正在播放TTS，不更新阅读进度（TTS播放时的翻页会单独调用）
     // 但手动翻页时应该更新阅读进度
     if (ttsIsPlayingRef.current && source !== 'manual_page_turn' && source !== 'tts_page_turn' && source !== 'relocated_event') {
@@ -3556,11 +4204,15 @@ export default function ReaderEPUBPro({
         chapterTitle: chapterTitle || undefined,
       };
       
-      // 更新本地引用
-      lastProgressRef.current = finalProgress;
-      lastPositionRef.current = position;
-      if (cfi && typeof cfi === 'string' && cfi.startsWith('epubcfi(')) {
-        lastCfiRef.current = cfi;
+      // 如果处于书签浏览模式，不更新 lastPositionRef（保持原阅读位置）
+      const isBookmarkBrowsing = (window as any).__isBookmarkBrowsingMode === true;
+      if (!isBookmarkBrowsing) {
+        // 更新本地引用
+        lastProgressRef.current = finalProgress;
+        lastPositionRef.current = position;
+        if (cfi && typeof cfi === 'string' && cfi.startsWith('epubcfi(')) {
+          lastCfiRef.current = cfi;
+        }
       }
       
       // 更新最后保存的进度信息（用于防抖，但saveReadingProgress不直接使用，因为relocated事件有自己的防抖逻辑）

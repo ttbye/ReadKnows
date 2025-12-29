@@ -148,7 +148,6 @@ export default function BookDetail() {
       const response = await api.get('/settings');
       const settings = response.data.settings || {};
       const enabled = settings.email_push_enabled?.value === 'true';
-      console.log('[推送功能] 邮件推送功能状态:', enabled);
       setEmailPushEnabled(enabled);
       setSmtpUserEmail(settings.smtp_user?.value || '');
       
