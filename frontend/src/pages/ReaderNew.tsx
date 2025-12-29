@@ -94,14 +94,14 @@ export default function ReaderNew() {
             localStorage.setItem('reading-settings-version', '2');
           }
 
-          console.log('[ReaderNew] 从 localStorage 恢复设置:', {
-            fontSize: restoredSettings.fontSize,
-            fontFamily: restoredSettings.fontFamily,
-            lineHeight: restoredSettings.lineHeight,
-            theme: restoredSettings.theme,
-            margin: restoredSettings.margin,
-            textIndent: restoredSettings.textIndent,
-          });
+          // console.log('[ReaderNew] 从 localStorage 恢复设置:', {
+          //   fontSize: restoredSettings.fontSize,
+          //   fontFamily: restoredSettings.fontFamily,
+          //   lineHeight: restoredSettings.lineHeight,
+          //   theme: restoredSettings.theme,
+          //   margin: restoredSettings.margin,
+          //   textIndent: restoredSettings.textIndent,
+          // });
           setSettings(restoredSettings);
         } catch (e) {
           console.error('ReaderNew: 解析本地设置失败', e);
@@ -113,11 +113,11 @@ export default function ReaderNew() {
           ...defaultSettings,
           fontSize: Math.max(defaultSettings.fontSize, getRecommendedFontSize()),
         };
-        console.log('[ReaderNew] 首次使用，创建默认设置:', {
-          fontSize: firstSettings.fontSize,
-          fontFamily: firstSettings.fontFamily,
-          lineHeight: firstSettings.lineHeight,
-        });
+        // console.log('[ReaderNew] 首次使用，创建默认设置:', {
+        //   fontSize: firstSettings.fontSize,
+        //   fontFamily: firstSettings.fontFamily,
+        //   lineHeight: firstSettings.lineHeight,
+        // });
         setSettings(firstSettings);
         try {
           localStorage.setItem('reading-settings', JSON.stringify(firstSettings));
@@ -178,17 +178,17 @@ export default function ReaderNew() {
         }
       }
       
-      console.log('[ReaderNew] 设置已保存到 localStorage:', {
-        fontSize: completeSettings.fontSize,
-        fontFamily: completeSettings.fontFamily,
-        lineHeight: completeSettings.lineHeight,
-        theme: completeSettings.theme,
-        margin: completeSettings.margin,
-        textIndent: completeSettings.textIndent,
-        ttsSpeed: settingsAny.tts_default_speed?.value,
-        ttsModel: settingsAny.tts_default_model?.value,
-        ttsVoice: settingsAny.tts_default_voice?.value,
-      });
+      // console.log('[ReaderNew] 设置已保存到 localStorage:', {
+      //   fontSize: completeSettings.fontSize,
+      //   fontFamily: completeSettings.fontFamily,
+      //   lineHeight: completeSettings.lineHeight,
+      //   theme: completeSettings.theme,
+      //   margin: completeSettings.margin,
+      //   textIndent: completeSettings.textIndent,
+      //   ttsSpeed: settingsAny.tts_default_speed?.value,
+      //   ttsModel: settingsAny.tts_default_model?.value,
+      //   ttsVoice: settingsAny.tts_default_voice?.value,
+      // });
     } catch (error) {
       console.error('ReaderNew: 保存阅读设置失败', error);
     }
