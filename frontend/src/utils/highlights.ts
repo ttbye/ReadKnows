@@ -162,7 +162,7 @@ export async function syncHighlightQueue(): Promise<void> {
           updatedAt: item.updatedAt,
         });
       } else if (job.op === 'delete') {
-        await api.delete(`/highlights/${job.id}`);
+        await api.post(`/highlights/${job.id}`, { _method: 'DELETE' });
       }
     } catch {
       // 同步失败：保留该任务，后续再试

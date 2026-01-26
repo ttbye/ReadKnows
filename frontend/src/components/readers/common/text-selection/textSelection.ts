@@ -183,8 +183,186 @@ export function createSelectionListeners(
 
 /**
  * 选择句子（长按功能）
+ * 支持跨多个 DOM 节点选择完整句子或段落
  */
 const SENTENCE_BREAK = /[。！？；;.!?\n\r]/;
+const PARAGRAPH_BREAK = /[\n\r]/;
+
+/**
+ * 向前查找句子或段落起始位置
+ */
+function findSentenceStart(
+  doc: Document,
+  startNode: Node,
+  startOffset: number
+): { node: Node; offset: number } | null {
+  try {
+    let currentNode: Node | null = startNode;
+    let currentOffset = startOffset;
+    let text = '';
+    let offsetInText = 0;
+
+    // 如果起始节点不是文本节点，找到包含它的文本节点
+    if (currentNode.nodeType !== Node.TEXT_NODE) {
+      const walker = doc.createTreeWalker(currentNode, NodeFilter.SHOW_TEXT);
+      const textNode = walker.nextNode();
+      if (!textNode) return null;
+      currentNode = textNode;
+      currentOffset = 0;
+    }
+
+    // 收集当前节点及之前的所有文本
+    const textNodes: Array<{ node: Node; text: string }> = [];
+    let node: Node | null = currentNode;
+    
+    // 向前遍历收集文本节点
+    while (node) {
+      if (node.nodeType === Node.TEXT_NODE) {
+        const nodeText = node.textContent || '';
+        textNodes.unshift({ node, text: nodeText });
+        if (node === currentNode) {
+          offsetInText = currentOffset;
+        } else {
+          offsetInText += nodeText.length;
+        }
+      }
+      
+      // 向前查找兄弟节点
+      if (node.previousSibling) {
+        node = node.previousSibling;
+        // 如果找到段落分隔符，停止
+        if (node.nodeType === Node.TEXT_NODE && PARAGRAPH_BREAK.test(node.textContent || '')) {
+          break;
+        }
+        // 继续查找最后一个文本节点
+        while (node.lastChild) {
+          node = node.lastChild;
+        }
+      } else {
+        node = node.parentElement;
+        if (!node || node.tagName === 'BODY' || node.tagName === 'HTML') break;
+        // 如果遇到段落标签，停止
+        if (['P', 'DIV', 'BR'].includes(node.tagName)) {
+          break;
+        }
+      }
+    }
+
+    // 合并所有文本
+    text = textNodes.map(n => n.text).join('');
+    
+    // 在合并的文本中查找句子起始位置
+    let start = offsetInText;
+    while (start > 0 && !SENTENCE_BREAK.test(text[start - 1])) {
+      start--;
+    }
+
+    // 找到对应的节点和偏移量
+    let accumulatedLength = 0;
+    for (const item of textNodes) {
+      const nodeLength = item.text.length;
+      if (start <= accumulatedLength + nodeLength) {
+        return { node: item.node, offset: start - accumulatedLength };
+      }
+      accumulatedLength += nodeLength;
+    }
+
+    // 如果没找到，返回第一个节点
+    if (textNodes.length > 0) {
+      return { node: textNodes[0].node, offset: 0 };
+    }
+
+    return null;
+  } catch (e) {
+    return null;
+  }
+}
+
+/**
+ * 向后查找句子或段落结束位置
+ */
+function findSentenceEnd(
+  doc: Document,
+  startNode: Node,
+  startOffset: number
+): { node: Node; offset: number } | null {
+  try {
+    let currentNode: Node | null = startNode;
+    let currentOffset = startOffset;
+    let text = '';
+    let offsetInText = 0;
+
+    // 如果起始节点不是文本节点，找到包含它的文本节点
+    if (currentNode.nodeType !== Node.TEXT_NODE) {
+      const walker = doc.createTreeWalker(currentNode, NodeFilter.SHOW_TEXT);
+      const textNode = walker.nextNode();
+      if (!textNode) return null;
+      currentNode = textNode;
+      currentOffset = 0;
+    }
+
+    // 收集当前节点及之后的所有文本
+    const textNodes: Array<{ node: Node; text: string }> = [];
+    let node: Node | null = currentNode;
+    
+    // 向后遍历收集文本节点
+    while (node) {
+      if (node.nodeType === Node.TEXT_NODE) {
+        const nodeText = node.textContent || '';
+        textNodes.push({ node, text: nodeText });
+        if (node === currentNode) {
+          offsetInText = currentOffset;
+        }
+      }
+      
+      // 向后查找兄弟节点
+      if (node.nextSibling) {
+        node = node.nextSibling;
+        // 继续查找第一个文本节点
+        while (node.firstChild) {
+          node = node.firstChild;
+        }
+      } else {
+        node = node.parentElement;
+        if (!node || node.tagName === 'BODY' || node.tagName === 'HTML') break;
+        // 如果遇到段落标签，停止
+        if (['P', 'DIV', 'BR'].includes(node.tagName)) {
+          break;
+        }
+      }
+    }
+
+    // 合并所有文本
+    text = textNodes.map(n => n.text).join('');
+    
+    // 在合并的文本中查找句子结束位置
+    let end = offsetInText;
+    while (end < text.length && !SENTENCE_BREAK.test(text[end])) {
+      end++;
+    }
+    if (end < text.length) end++; // 包含句号本身
+
+    // 找到对应的节点和偏移量
+    let accumulatedLength = 0;
+    for (const item of textNodes) {
+      const nodeLength = item.text.length;
+      if (end <= accumulatedLength + nodeLength) {
+        return { node: item.node, offset: end - accumulatedLength };
+      }
+      accumulatedLength += nodeLength;
+    }
+
+    // 如果没找到，返回最后一个节点
+    if (textNodes.length > 0) {
+      const lastNode = textNodes[textNodes.length - 1];
+      return { node: lastNode.node, offset: lastNode.text.length };
+    }
+
+    return null;
+  } catch (e) {
+    return null;
+  }
+}
 
 export function selectSentenceAtPoint(
   doc: Document,
@@ -207,30 +385,41 @@ export function selectSentenceAtPoint(
     }
     if (!range) return false;
 
-    let node = range.startContainer as any;
-    let offset = range.startOffset;
-    if (node && node.nodeType !== Node.TEXT_NODE) {
-      const walker = doc.createTreeWalker(node, NodeFilter.SHOW_TEXT);
+    let startNode = range.startContainer;
+    let startOffset = range.startOffset;
+    
+    // 如果起始节点不是文本节点，找到包含它的文本节点
+    if (startNode.nodeType !== Node.TEXT_NODE) {
+      const walker = doc.createTreeWalker(startNode, NodeFilter.SHOW_TEXT);
       const textNode = walker.nextNode();
       if (!textNode) return false;
-      node = textNode;
-      offset = 0;
+      startNode = textNode;
+      startOffset = 0;
     }
-    const text = (node?.textContent || '') as string;
-    if (!text) return false;
 
-    let start = Math.min(offset, text.length);
-    let end = Math.min(offset, text.length);
-    while (start > 0 && !SENTENCE_BREAK.test(text[start - 1])) start--;
-    while (end < text.length && !SENTENCE_BREAK.test(text[end])) end++;
-    if (end < text.length) end++;
-    if (end - start < 2) return false;
+    // 查找句子起始和结束位置（支持跨节点）
+    const startPos = findSentenceStart(doc, startNode, startOffset);
+    const endPos = findSentenceEnd(doc, startNode, startOffset);
+
+    if (!startPos || !endPos) return false;
+
+    // 验证选择范围是否有效
+    const startText = startPos.node.textContent || '';
+    const endText = endPos.node.textContent || '';
+    if (startPos.offset < 0 || startPos.offset > startText.length) return false;
+    if (endPos.offset < 0 || endPos.offset > endText.length) return false;
 
     const sel = win?.getSelection?.() || doc.getSelection?.();
     if (!sel) return false;
+
     const sentenceRange = doc.createRange();
-    sentenceRange.setStart(node, start);
-    sentenceRange.setEnd(node, end);
+    sentenceRange.setStart(startPos.node, startPos.offset);
+    sentenceRange.setEnd(endPos.node, endPos.offset);
+    
+    // 验证选择的内容长度
+    const selectedText = sentenceRange.toString().trim();
+    if (selectedText.length < 2) return false;
+
     sel.removeAllRanges();
     sel.addRange(sentenceRange);
     return true;

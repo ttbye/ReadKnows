@@ -8,8 +8,7 @@
 
 import fs from 'fs';
 import path from 'path';
-
-const booksDir = process.env.BOOKS_DIR || './books';
+import { booksDir } from '../config/paths';
 
 // 文档类型配置
 const documentTypes: Record<string, { icon: string; color: string; bgColor: string }> = {

@@ -157,7 +157,7 @@ export const InstallPWA: React.FC = () => {
         <polyline points="7 10 12 15 17 10" />
         <line x1="12" y1="15" x2="12" y2="3" />
       </svg>
-      <span>安装读士私人书库应用</span>
+      <span>安装 ReadKnows 应用</span>
     </div>
   );
 };

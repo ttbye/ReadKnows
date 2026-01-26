@@ -5,7 +5,7 @@ services:
     image: ttbye/tts-api-lite:latest
     platform: linux/amd64  
     build:
-      context: ../TTS-API-Lite
+      context: ../tts-api-lite
       dockerfile: Dockerfile
     container_name: readknow-tts-api-lite
     ports:
@@ -18,7 +18,7 @@ services:
       - TEMP_DIR=/app/temp
       - FFMPEG_BIN=ffmpeg
     volumes:
-      - D:\Docker\ReadKnows\tts-lite-temp:/app/temp
+      - E:\docker\ReadKnows\tts-lite-temp:/app/temp
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5050/health"]
@@ -34,5 +34,5 @@ networks:
     driver: bridge
   readknows-network:
     external: true
-    name: sh_readknows-network
+    name: readknows-network
 

@@ -838,7 +838,7 @@ router.get('/test', authenticateToken, async (req: AuthRequest, res) => {
         },
       });
     } else {
-      console.error('[AI Test] 响应头已发送，无法返回错误信息');
+      // console.error('[AI Test] 响应头已发送，无法返回错误信息');
     }
   }
 });
@@ -846,12 +846,12 @@ router.get('/test', authenticateToken, async (req: AuthRequest, res) => {
 // 调用AI API
 async function callAI(userId: string, prompt: string, systemPrompt?: string, conversationHistory?: any[]): Promise<string> {
   const config = getAIConfig(userId);
-  console.log('[AI Call] ========== 开始AI调用 ==========');
-  console.log('[AI Call] Provider:', config.provider);
-  console.log('[AI Call] API URL:', config.api_url);
-  console.log('[AI Call] Model:', config.model, '(这是实际使用的模型名称)');
-  console.log('[AI Call] Has API Key:', !!config.api_key);
-  console.log('[AI Call] =================================');
+  // console.log('[AI Call] ========== 开始AI调用 ==========');
+  // console.log('[AI Call] Provider:', config.provider);
+  // console.log('[AI Call] API URL:', config.api_url);
+  // console.log('[AI Call] Model:', config.model, '(这是实际使用的模型名称)');
+  // console.log('[AI Call] Has API Key:', !!config.api_key);
+  // console.log('[AI Call] =================================');
 
   const messages: any[] = [];
 
@@ -885,38 +885,38 @@ async function callAI(userId: string, prompt: string, systemPrompt?: string, con
       useProxy = false; // 不再使用代理，直接访问
       
       url = `${baseUrl}/api/chat`;
-      console.log('[AI] 调用Ollama API:', { 
-        apiUrl: baseUrl,
-        url, 
-        model: config.model, 
-        messagesCount: messages.length,
-        messages: messages.map(m => ({ role: m.role, contentLength: m.content?.length }))
-      });
+      // console.log('[AI] 调用Ollama API:', { 
+      //   apiUrl: baseUrl,
+      //   url, 
+      //   model: config.model, 
+      //   messagesCount: messages.length,
+      //   messages: messages.map(m => ({ role: m.role, contentLength: m.content?.length }))
+      // });
 
       // 确保使用正确的模型名称 - 直接使用config.model
       let modelToUse = config.model;
       
-      console.log('[AI Call] 初始modelToUse:', modelToUse);
-      console.log('[AI Call] config.model:', config.model);
-      console.log('[AI Call] config.model类型:', typeof config.model);
+      // console.log('[AI Call] 初始modelToUse:', modelToUse);
+      // console.log('[AI Call] config.model:', config.model);
+      // console.log('[AI Call] config.model类型:', typeof config.model);
       
       // 如果config.model不存在或为空，尝试重新获取配置
       // 注意：不再检查是否为默认值，因为默认值也是有效的模型名称
       if (!modelToUse || modelToUse.trim() === '' || modelToUse === 'null' || modelToUse === 'undefined') {
-        console.warn('[AI Call] ⚠️ 警告：config.model为空或无效！');
-        console.warn('[AI Call] config.model:', config.model);
-        console.warn('[AI Call] config.model type:', typeof config.model);
-        console.warn('[AI Call] config.model length:', config.model?.length);
+        // console.warn('[AI Call] ⚠️ 警告：config.model为空或无效！');
+        // console.warn('[AI Call] config.model:', config.model);
+        // console.warn('[AI Call] config.model type:', typeof config.model);
+        // console.warn('[AI Call] config.model length:', config.model?.length);
         
         // 尝试重新获取配置
         const freshConfig = getAIConfig(userId);
-        console.log('[AI Call] 重新获取的配置:', JSON.stringify(freshConfig, null, 2));
+        // console.log('[AI Call] 重新获取的配置:', JSON.stringify(freshConfig, null, 2));
         if (freshConfig.model && freshConfig.model.trim() !== '' && freshConfig.model !== 'null' && freshConfig.model !== 'undefined') {
           modelToUse = freshConfig.model.trim();
-          console.log('[AI Call] ✓ 使用重新获取的模型名称:', modelToUse);
+          // console.log('[AI Call] ✓ 使用重新获取的模型名称:', modelToUse);
         } else {
-          console.warn('[AI Call] ✗ 重新获取的配置也无效');
-          console.warn('[AI Call] freshConfig.model:', freshConfig.model);
+          // console.warn('[AI Call] ✗ 重新获取的配置也无效');
+          // console.warn('[AI Call] freshConfig.model:', freshConfig.model);
           
           // 最后尝试：直接从 system_settings 表读取
           try {
@@ -925,11 +925,11 @@ async function callAI(userId: string, prompt: string, systemPrompt?: string, con
               const dbModelValue = String(modelSetting.value).trim();
               if (dbModelValue !== '' && dbModelValue !== 'null' && dbModelValue !== 'undefined') {
                 modelToUse = dbModelValue;
-                console.log('[AI Call] ✓✓✓ 直接从 system_settings 读取模型名称:', modelToUse);
+                // console.log('[AI Call] ✓✓✓ 直接从 system_settings 读取模型名称:', modelToUse);
               }
             }
           } catch (dbError: any) {
-            console.error('[AI Call] 从 system_settings 读取失败:', dbError);
+            // console.error('[AI Call] 从 system_settings 读取失败:', dbError);
           }
         }
       }
@@ -937,23 +937,23 @@ async function callAI(userId: string, prompt: string, systemPrompt?: string, con
       // 最终trim
       modelToUse = modelToUse ? modelToUse.trim() : '';
       
-      console.log('[AI Call] 准备发送请求到Ollama:', {
-        url,
-        modelToUse,
-        modelFromConfig: config.model,
-        modelFromConfigType: typeof config.model,
-        modelFromConfigLength: config.model?.length,
-        messagesCount: messages.length,
-      });
+      // console.log('[AI Call] 准备发送请求到Ollama:', {
+      //   url,
+      //   modelToUse,
+      //   modelFromConfig: config.model,
+      //   modelFromConfigType: typeof config.model,
+      //   modelFromConfigLength: config.model?.length,
+      //   messagesCount: messages.length,
+      // });
 
       // 最终验证模型名称
       // 注意：如果用户确实想使用默认模型 'deepseek-v3.1:671b-cloud'，这是允许的
       // 只有当模型名称为空或无效时才报错
       if (!modelToUse || modelToUse.trim() === '' || modelToUse === 'null' || modelToUse === 'undefined') {
-        console.error('[AI Call] ⚠️⚠️⚠️ 最终警告：使用的模型是空值或无效！');
-        console.error('[AI Call] modelToUse:', modelToUse);
-        console.error('[AI Call] config.model:', config.model);
-        console.error('[AI Call] config对象:', JSON.stringify(config, null, 2));
+        // console.error('[AI Call] ⚠️⚠️⚠️ 最终警告：使用的模型是空值或无效！');
+        // console.error('[AI Call] modelToUse:', modelToUse);
+        // console.error('[AI Call] config.model:', config.model);
+        // console.error('[AI Call] config对象:', JSON.stringify(config, null, 2));
         throw new Error('模型名称未正确配置，请在系统设置中选择或输入模型名称');
       }
       
@@ -968,18 +968,31 @@ async function callAI(userId: string, prompt: string, systemPrompt?: string, con
         stream: false,
       };
       console.log('[AI Call] 最终请求体:', JSON.stringify(requestBody, null, 2));
+      console.log('[AI Call] 请求URL:', url);
 
-      const response = await axios.post(
-        url,
-        requestBody,
-        {
-          timeout: 120000, // 2分钟超时
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          validateStatus: (status) => status < 500, // 允许4xx状态码，以便捕获错误
-        }
-      );
+      let response;
+      try {
+        response = await axios.post(
+          url,
+          requestBody,
+          {
+            timeout: 120000, // 2分钟超时
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            validateStatus: (status) => status < 500, // 允许4xx状态码，以便捕获错误
+          }
+        );
+      } catch (axiosError: any) {
+        console.error('[AI Call] Axios请求异常:', {
+          message: axiosError.message,
+          code: axiosError.code,
+          response: axiosError.response?.data,
+          status: axiosError.response?.status,
+          url,
+        });
+        throw axiosError;
+      }
 
       console.log('[AI] Ollama响应:', {
         status: response.status,
@@ -1203,7 +1216,58 @@ ${bookText ? bookText.substring(0, 10000) : '无法获取书籍内容'}
       throw aiError;
     }
 
-    res.json({ response });
+    // 确保响应头未发送
+    if (res.headersSent) {
+      console.error('[AI Chat] 警告：响应头已发送，无法返回响应');
+      return;
+    }
+
+    // 验证响应内容
+    if (!response || typeof response !== 'string') {
+      console.error('[AI Chat] 错误：响应内容无效', { response, type: typeof response });
+      throw new Error('AI返回的响应格式不正确');
+    }
+
+    // 清理响应字符串，移除可能导致 JSON 序列化问题的字符
+    try {
+      // 移除控制字符（除了换行符、制表符等常见字符）
+      const cleanedResponse = response.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '');
+      
+      // 验证清理后的字符串是否可以正常序列化
+      JSON.stringify({ response: cleanedResponse });
+      
+      // 使用清理后的响应
+      response = cleanedResponse;
+    } catch (cleanError: any) {
+      console.warn('[AI Chat] 响应清理失败，使用原始响应:', cleanError.message);
+      // 如果清理失败，继续使用原始响应
+    }
+
+    console.log('[AI Chat] 准备返回响应，长度:', response.length);
+    
+    // 尝试发送响应，捕获可能的序列化错误
+    try {
+      res.json({ response });
+      console.log('[AI Chat] 响应已成功发送');
+    } catch (jsonError: any) {
+      console.error('[AI Chat] JSON序列化失败:', {
+        message: jsonError.message,
+        stack: jsonError.stack,
+      });
+      // 如果响应头还没发送，尝试发送错误响应
+      if (!res.headersSent) {
+        try {
+          res.status(500).json({ 
+            error: '响应序列化失败',
+            details: process.env.NODE_ENV === 'development' ? jsonError.message : undefined
+          });
+        } catch (sendError: any) {
+          console.error('[AI Chat] 无法发送错误响应:', sendError.message);
+        }
+      }
+      // 不再抛出错误，避免重复处理
+      return;
+    }
   } catch (error: any) {
     console.error('[AI Chat] 聊天失败:', {
       message: error.message,
@@ -1227,7 +1291,24 @@ ${bookText ? bookText.substring(0, 10000) : '无法获取书籍内容'}
         errorMessage = error.message;
       } else if (error.message && error.message.includes('无法连接')) {
         errorMessage = error.message;
+      } else if (error.code === 'ECONNREFUSED') {
+        errorMessage = `无法连接到 Ollama 服务 (${req.body?.bookId ? '请检查 Ollama 是否正在运行' : '连接被拒绝'})。请确保 Ollama 服务正在运行，并且地址配置正确。`;
+      } else if (error.code === 'ETIMEDOUT' || error.code === 'ECONNABORTED') {
+        errorMessage = 'AI 服务响应超时，请稍后重试或检查网络连接。';
+      } else if (error.response?.status === 404) {
+        errorMessage = '模型未找到。请检查系统设置中的模型名称是否正确，或使用 "ollama list" 命令查看可用的模型。';
+      } else if (error.response?.status === 502) {
+        errorMessage = '502 Bad Gateway: 无法连接到 AI 服务器。\n\n可能的原因：\n1. AI 服务器（Ollama/OpenAI等）未运行或地址/端口错误\n2. 服务器无法从当前环境访问（Docker/网络问题）\n3. 防火墙阻止了连接\n4. 服务器监听地址配置错误（应监听 0.0.0.0 而非 127.0.0.1）\n\n解决步骤：\n1. 确认 AI 服务器正在运行\n2. 检查系统设置中的 AI 服务器地址和端口是否正确\n3. 确保服务器监听在 0.0.0.0（允许外部连接）\n4. 检查防火墙规则\n5. 在 Docker 环境中，如果 AI 服务器在宿主机上，使用：http://host.docker.internal:端口';
+      } else if (error.response?.status >= 500) {
+        errorMessage = `AI 服务内部错误 (${error.response.status})。请稍后重试。`;
       }
+      
+      console.error('[AI Chat] 返回错误响应:', {
+        errorMessage,
+        originalError: error.message,
+        code: error.code,
+        status: error.response?.status,
+      });
       
       res.status(500).json({ 
         error: errorMessage,
@@ -1477,6 +1558,126 @@ router.post('/tts', authenticateToken, async (req: AuthRequest, res) => {
   } catch (error: any) {
     console.error('TTS请求失败:', error);
     res.status(500).json({ error: error.message || 'TTS请求失败' });
+  }
+});
+
+// 获取AI对话历史
+router.get('/conversations/:bookId', authenticateToken, async (req: AuthRequest, res) => {
+  try {
+    const userId = req.userId!;
+    const { bookId } = req.params;
+
+    console.log('[AI Conversations] 获取对话历史:', { userId, bookId });
+
+    const conversation = db.prepare(`
+      SELECT * FROM ai_conversations 
+      WHERE user_id = ? AND book_id = ?
+    `).get(userId, bookId) as any;
+
+    if (!conversation) {
+      return res.json({ messages: [] });
+    }
+
+    // 解析消息
+    let messages: any[] = [];
+    try {
+      messages = JSON.parse(conversation.messages);
+    } catch (error) {
+      console.error('[AI Conversations] 解析消息失败:', error);
+      return res.json({ messages: [] });
+    }
+
+    res.json({ 
+      messages,
+      updatedAt: conversation.updated_at 
+    });
+  } catch (error: any) {
+    console.error('[AI Conversations] 获取对话历史失败:', error);
+    res.status(500).json({ 
+      error: '获取对话历史失败',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+});
+
+// 保存AI对话历史
+router.post('/conversations/:bookId', authenticateToken, async (req: AuthRequest, res) => {
+  try {
+    const userId = req.userId!;
+    const { bookId } = req.params;
+    const { messages } = req.body;
+
+    console.log('[AI Conversations] 保存对话历史:', { 
+      userId, 
+      bookId, 
+      messagesCount: messages?.length 
+    });
+
+    if (!messages || !Array.isArray(messages)) {
+      return res.status(400).json({ error: '请提供有效的消息数组' });
+    }
+
+    // 检查是否已存在对话
+    const existing = db.prepare(`
+      SELECT id FROM ai_conversations 
+      WHERE user_id = ? AND book_id = ?
+    `).get(userId, bookId) as any;
+
+    const messagesJson = JSON.stringify(messages);
+
+    if (existing) {
+      // 更新现有对话
+      db.prepare(`
+        UPDATE ai_conversations 
+        SET messages = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `).run(messagesJson, existing.id);
+      console.log('[AI Conversations] 对话历史已更新');
+    } else {
+      // 创建新对话
+      const conversationId = uuidv4();
+      db.prepare(`
+        INSERT INTO ai_conversations (id, user_id, book_id, messages)
+        VALUES (?, ?, ?, ?)
+      `).run(conversationId, userId, bookId, messagesJson);
+      console.log('[AI Conversations] 对话历史已创建');
+    }
+
+    res.json({ success: true });
+  } catch (error: any) {
+    console.error('[AI Conversations] 保存对话历史失败:', error);
+    res.status(500).json({ 
+      error: '保存对话历史失败',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+});
+
+// 删除AI对话历史
+router.delete('/conversations/:bookId', authenticateToken, async (req: AuthRequest, res) => {
+  try {
+    const userId = req.userId!;
+    const { bookId } = req.params;
+
+    console.log('[AI Conversations] 删除对话历史:', { userId, bookId });
+
+    const result = db.prepare(`
+      DELETE FROM ai_conversations 
+      WHERE user_id = ? AND book_id = ?
+    `).run(userId, bookId);
+
+    if (result.changes === 0) {
+      return res.status(404).json({ error: '对话历史不存在' });
+    }
+
+    console.log('[AI Conversations] 对话历史已删除');
+    res.json({ success: true });
+  } catch (error: any) {
+    console.error('[AI Conversations] 删除对话历史失败:', error);
+    res.status(500).json({ 
+      error: '删除对话历史失败',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
   }
 });
 

@@ -1,0 +1,45 @@
+version: '3.8'
+
+services:
+  ocr-api:
+    image: ttbye/ocr-api:latest
+    platform: linux/amd64  # 指定平台，兼容 x86_64 和 ARM64
+    build:
+      context: ../ocr-api
+      dockerfile: Dockerfile
+    container_name: ocr-api
+    ports:
+      - "5080:5080"
+    environment:
+      - PORT=5080
+      - NODE_ENV=production
+      - API_KEY=${API_KEY:-}
+      - TEMP_DIR=/app/temp
+      - USE_GPU=${USE_GPU:-false}
+      - OCR_MODELS_DIR=/app/models
+      - PADDLEX_HOME=/app/models
+      - DISABLE_MODEL_SOURCE_CHECK=True
+    volumes:
+      - E:\docker\ReadKnows\ocr-temp:/app/temp
+      - E:\docker\ReadKnows\ocr-models:/app/models
+    restart: unless-stopped
+    # GPU 支持（需要 WSL2 + nvidia-container-toolkit）
+    # 取消注释以下内容以启用 GPU：
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - ocr-network
+
+networks:
+  ocr-network:
+    driver: bridge

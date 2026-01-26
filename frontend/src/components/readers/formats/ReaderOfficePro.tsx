@@ -109,7 +109,10 @@ export default function ReaderOfficePro({
             // 渲染会在 useEffect 中完成
             return;
           } catch (docxError: any) {
-            console.warn('使用docx-preview预览失败，尝试其他格式:', docxError);
+            // 安全修复：仅在开发环境输出错误信息
+            if (import.meta.env.DEV) {
+              console.warn('使用docx-preview预览失败，尝试其他格式:', docxError);
+            }
             // 如果预览失败，回退到原来的方式
           try {
             const markdownResponse = await api.get(`/books/${book.id}/markdown`);
@@ -120,7 +123,10 @@ export default function ReaderOfficePro({
               return;
             }
           } catch (markdownError: any) {
-            console.warn('获取Markdown格式失败，尝试HTML格式:', markdownError);
+            // 安全修复：仅在开发环境输出错误信息
+            if (import.meta.env.DEV) {
+              console.warn('获取Markdown格式失败，尝试HTML格式:', markdownError);
+            }
             try {
               const htmlResponse = await api.get(`/books/${book.id}/html`);
               if (htmlResponse.data && htmlResponse.data.html) {
@@ -130,7 +136,10 @@ export default function ReaderOfficePro({
                 return;
               }
             } catch (htmlError: any) {
-              console.warn('获取HTML格式失败，使用文本格式:', htmlError);
+              // 安全修复：仅在开发环境输出错误信息
+              if (import.meta.env.DEV) {
+                console.warn('获取HTML格式失败，使用文本格式:', htmlError);
+              }
               }
             }
           }
@@ -161,7 +170,10 @@ export default function ReaderOfficePro({
             setLoading(false);
             return;
           } catch (xlsxError: any) {
-            console.warn('使用xlsx预览失败，使用文本格式:', xlsxError);
+            // 安全修复：仅在开发环境输出错误信息
+            if (import.meta.env.DEV) {
+              console.warn('使用xlsx预览失败，使用文本格式:', xlsxError);
+            }
             // 如果预览失败，回退到文本格式
           }
         }
@@ -184,7 +196,10 @@ export default function ReaderOfficePro({
           throw new Error('无法获取文档内容');
         }
       } catch (err: any) {
-        console.error('加载文档内容失败:', err);
+        // 安全修复：仅在开发环境输出详细错误信息
+        if (import.meta.env.DEV) {
+          console.error('加载文档内容失败:', err);
+        }
         setError(err.response?.data?.error || err.message || '加载文档失败');
         toast.error('加载文档内容失败');
       } finally {
@@ -267,7 +282,7 @@ export default function ReaderOfficePro({
           
           // 渲染文档
           await renderAsync(blob, container, undefined, {
-            className: 'docx-wrapper',
+            className: '',
             inWrapper: true,
             ignoreWidth: false, // 保留文档的原始宽度和页边距设置
             ignoreHeight: false,
@@ -321,7 +336,7 @@ export default function ReaderOfficePro({
       toast.success('开始下载');
     } catch (error: any) {
       toast.error('下载失败');
-    }
+    } 
   };
 
   // 主题样式
@@ -630,8 +645,33 @@ export default function ReaderOfficePro({
       }
       return false;
     };
+
+    // 暴露"根据进度百分比跳转"给外部（供进度跳转功能使用）
+    (window as any).__officeGoToProgress = (progress: number) => {
+      try {
+        const el = contentRef.current;
+        if (!el) return false;
+        
+        if (typeof progress !== 'number' || isNaN(progress) || progress < 0 || progress > 1) {
+          return false;
+        }
+
+        const scrollHeight = el.scrollHeight;
+        const clientHeight = el.clientHeight;
+        const maxScroll = Math.max(1, scrollHeight - clientHeight);
+        const targetScroll = progress * maxScroll;
+        
+        el.scrollTo({ top: targetScroll, behavior: 'smooth' });
+        return true;
+      } catch {
+        // ignore
+      }
+      return false;
+    };
+
     return () => {
       delete (window as any).__officeGoToPage;
+      delete (window as any).__officeGoToProgress;
     };
   }, []);
 
@@ -691,10 +731,17 @@ export default function ReaderOfficePro({
         paddingLeft: 'env(safe-area-inset-left, 0px)',
         paddingRight: 'env(safe-area-inset-right, 0px)',
         boxSizing: 'border-box',
+        WebkitTouchCallout: 'none', // 屏蔽iOS长按系统菜单
+        WebkitUserSelect: 'none', // 阻止文本选择
+        userSelect: 'none'
       }}
       onClick={() => {
         // 统一使用 ReaderContainer 的导航栏控制
           handleToggleNavigation();
+      }}
+      onContextMenu={(e) => {
+        // 屏蔽浏览器默认右键菜单（阅读器内交互由应用接管）
+        e.preventDefault();
       }}
     >
       {/* 移除自己的顶部栏，使用 ReaderContainer 的统一导航栏 */}
@@ -956,149 +1003,7 @@ export default function ReaderOfficePro({
         .docx-preview-container * {
           background-color: transparent !important;
         }
-        .docx-wrapper {
-          background: ${themeStyles.bg} !important;
-          padding-top: ${isMobile ? '0.5rem' : '1rem'} !important;
-          padding-bottom: ${isMobile ? '0.5rem' : '1rem'} !important;
-          border-radius: 0.5rem;
-          box-sizing: border-box !important;
-          /* 移动端：适应容器宽度，但允许内容超出时横向滚动 */
-          ${isMobile ? `
-            width: 100% !important;
-            min-width: 100% !important;
-            max-width: none !important; /* 允许内容超出，由外层容器处理滚动 */
-            margin-left: 0 !important;
-            margin-right: 0 !important;
-            padding-left: 0 !important;
-            padding-right: 0 !important;
-          ` : `
-            /* PC端：保留文档自己的左右页边距，居中显示 */
-            margin-left: auto !important;
-            margin-right: auto !important;
-          `}
-          /* 确保分页正确显示 */
-          page-break-inside: avoid !important;
-        }
-        /* 确保文档页面使用主题背景色和正确的宽度 */
-        .docx-wrapper .docx-page {
-          ${isMobile ? `
-            width: 100% !important;
-            min-width: 100% !important;
-            max-width: none !important; /* 允许内容超出，由外层容器处理滚动 */
-          ` : `
-            width: 100% !important;
-            max-width: 100% !important;
-          `}
-          box-sizing: border-box !important;
-          background-color: ${themeStyles.bg} !important;
-          margin-bottom: 1rem !important;
-          page-break-after: always !important;
-          /* 移动端：移除所有左右间距 */
-          ${isMobile ? `
-            padding-left: 0 !important;
-            padding-right: 0 !important;
-            margin-left: 0 !important;
-            margin-right: 0 !important;
-          ` : ''}
-        }
-        /* 确保文档内容适应容器宽度（但表格除外） */
-        .docx-wrapper * {
-          box-sizing: border-box !important;
-        }
-        /* 文本元素适应容器宽度，但表格保持原始宽度 */
-        .docx-wrapper p,
-        .docx-wrapper div:not(.docx-wrapper),
-        .docx-wrapper span,
-        .docx-wrapper li,
-        .docx-wrapper h1,
-        .docx-wrapper h2,
-        .docx-wrapper h3,
-        .docx-wrapper h4,
-        .docx-wrapper h5,
-        .docx-wrapper h6 {
-          max-width: 100% !important;
-          overflow-wrap: break-word !important;
-          word-wrap: break-word !important;
-        }
-        /* 移动端：文本元素移除左右间距 */
-        ${isMobile ? `
-          .docx-wrapper p,
-          .docx-wrapper div:not(.docx-wrapper),
-          .docx-wrapper span,
-          .docx-wrapper li {
-            padding-left: 0 !important;
-            padding-right: 0 !important;
-            margin-left: 0 !important;
-            margin-right: 0 !important;
-          }
-        ` : ''}
-        /* 表格不受max-width限制，保持原始宽度 */
-        .docx-wrapper table {
-          max-width: none !important;
-        }
-        /* 图片自适应，但保留原始尺寸比例 */
-        .docx-wrapper img {
-          max-width: 100% !important;
-          height: auto !important;
-          display: block !important;
-        }
-        /* 表格适配：保留原始宽度，允许横向滚动 */
-        .docx-wrapper table {
-          border-collapse: collapse;
-          margin: 1rem 0;
-          display: table !important;
-          /* 不强制100%宽度，保留表格原始宽度 */
-          width: auto !important;
-          min-width: 100% !important; /* 至少占满容器宽度 */
-          max-width: none !important; /* 允许超出容器宽度 */
-          table-layout: auto !important;
-          /* 表格本身不滚动，由外层容器处理 */
-        }
-        .docx-wrapper table thead,
-        .docx-wrapper table tbody,
-        .docx-wrapper table tr {
-          display: table !important;
-          width: auto !important;
-          table-layout: auto !important;
-        }
-        /* 表格单元格：保留内容宽度，允许换行 */
-        .docx-wrapper table td,
-        .docx-wrapper table th {
-          border: 1px solid ${themeStyles.contentBorder};
-          padding: 0.5rem;
-          word-wrap: break-word !important;
-          overflow-wrap: break-word !important;
-          white-space: normal !important; /* 允许换行 */
-          /* 移除 max-width: 0，让单元格根据内容自动调整宽度 */
-          min-width: fit-content !important;
-        }
-        /* 段落和文本自适应 */
-        .docx-wrapper p,
-        .docx-wrapper div,
-        .docx-wrapper span {
-          max-width: 100% !important;
-          word-wrap: break-word !important;
-          overflow-wrap: break-word !important;
-        }
-        /* 列表自适应 */
-        .docx-wrapper ul,
-        .docx-wrapper ol {
-          max-width: 100% !important;
-          padding-left: 1.5rem;
-        }
-        /* 移动端优化 */
-        @media (max-width: 768px) {
-          .docx-wrapper {
-            padding: 0.75rem !important;
-          }
-          .docx-wrapper table {
-            font-size: 0.9em !important;
-          }
-          .docx-wrapper table td,
-          .docx-wrapper table th {
-            padding: 0.4rem !important;
-          }
-        }
+        
         .excel-preview-container {
           width: 100% !important;
           max-width: 100% !important;

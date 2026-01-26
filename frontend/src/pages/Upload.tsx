@@ -5,11 +5,13 @@
  */
 
 import { useState, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
+import toast from 'react-hot-toast';
+import { Upload as UploadIcon, FileText, Folder, Scan, CheckCircle, XCircle, Loader, History, Trash2, Clock, ChevronDown, ChevronUp, Settings, FileCheck } from 'lucide-react';
 import { useAuthStore } from '../store/authStore';
 import api from '../utils/api';
-import toast from 'react-hot-toast';
-import { Upload as UploadIcon, FileText, Folder, Scan, CheckCircle, XCircle, Loader, History, Trash2, Clock } from 'lucide-react';
 import CategoryCombobox from '../components/CategoryCombobox';
+import i18n from '../i18n/config';
 
 interface ScannedFile {
   path: string;
@@ -37,7 +39,20 @@ interface LocalFile {
 }
 
 export default function Upload() {
-  const { isAuthenticated } = useAuthStore();
+  const { t } = useTranslation();
+  const { isAuthenticated, user } = useAuthStore();
+  
+  // 检查上传权限
+  const canUploadBooks = user?.can_upload_books !== undefined 
+    ? user.can_upload_books 
+    : true; // 默认为true（向后兼容）
+  
+  // 如果没有上传权限，显示提示
+  useEffect(() => {
+    if (isAuthenticated && !canUploadBooks) {
+      toast.error(t('upload.uploadPermissionDisabled') || '您没有权限上传书籍，请联系管理员开启此权限');
+    }
+  }, [isAuthenticated, canUploadBooks, t]);
   const [scanPath, setScanPath] = useState('');
   const [scanning, setScanning] = useState(false);
   const [scannedFiles, setScannedFiles] = useState<ScannedFile[]>([]);
@@ -53,6 +68,10 @@ export default function Upload() {
   const [autoConvertTxt, setAutoConvertTxt] = useState(true);
   const [autoConvertMobi, setAutoConvertMobi] = useState(true);
   const [autoFetchDouban, setAutoFetchDouban] = useState(true);
+  // 根据用户权限设置默认值：如果没有权限上传私人书籍，默认为公开且禁用选择
+  const canUploadPrivate = user?.can_upload_private !== undefined 
+    ? user.can_upload_private 
+    : (user?.role === 'admin'); // 默认：管理员允许，普通用户不允许
   const [isPublic, setIsPublic] = useState(true); // 默认改为公开
   const [category, setCategory] = useState('未分类');
   const [deleteSource, setDeleteSource] = useState(false); // 是否删除源文件
@@ -60,7 +79,8 @@ export default function Upload() {
   
   // 免责声明同意状态
   const [agreedToDisclaimer, setAgreedToDisclaimer] = useState(false);
-  
+  const [showDisclaimer, setShowDisclaimer] = useState(false); // 移动端免责声明折叠
+
   // 导入历史
   const [importHistory, setImportHistory] = useState<ImportHistoryItem[]>([]);
   const [showHistory, setShowHistory] = useState(false);
@@ -73,9 +93,13 @@ export default function Upload() {
     }
   }, [isAuthenticated, showHistory]);
 
-  // 加载书籍类型列表
+  // 延迟加载书籍类型列表（非关键数据，避免阻塞页面）
   useEffect(() => {
-    fetchBookCategories();
+    const timer = setTimeout(() => {
+      fetchBookCategories();
+    }, 200);
+    
+    return () => clearTimeout(timer);
   }, []);
 
   const fetchBookCategories = async () => {
@@ -84,7 +108,7 @@ export default function Upload() {
       
       if (!response.data || !response.data.categories) {
         console.warn('API返回数据格式不正确:', response.data);
-        setBookCategories(['未分类']);
+        setBookCategories([t('book.uncategorized')]);
         return;
       }
       
@@ -99,14 +123,17 @@ export default function Upload() {
         setBookCategories(cats);
       } else {
         console.warn('书籍类型列表为空，使用默认值');
-        setBookCategories(['未分类']);
+        setBookCategories([t('book.uncategorized')]);
       }
     } catch (error: any) {
-      console.error('获取书籍类型列表失败:', error);
-      console.error('错误状态码:', error.response?.status);
-      console.error('错误详情:', error.response?.data || error.message);
+      // 静默失败，使用默认分类列表
+      if (error.code !== 'ECONNABORTED' && error.code !== 'ERR_NETWORK' && error.code !== 'ERR_ADDRESS_INVALID') {
+        console.error('获取书籍类型列表失败:', error);
+        console.error('错误状态码:', error.response?.status);
+        console.error('错误详情:', error.response?.data || error.message);
+      }
       // 使用默认分类列表
-      setBookCategories(['未分类', '小说', '文学', '历史', '哲学', '武侠', '传记', '科技', '计算机', '编程', '经济', '管理', '心理学', '社会科学', '自然科学', '艺术', '教育', '儿童读物', '漫画']);
+      setBookCategories([t('book.uncategorized')]);
     }
   };
 
@@ -123,16 +150,16 @@ export default function Upload() {
   };
 
   const handleClearHistory = async () => {
-    if (!window.confirm('确定要清空导入历史吗？')) {
+    if (!window.confirm(t('upload.confirmClearHistory'))) {
       return;
     }
 
     try {
       await api.delete('/scan/import-history');
       setImportHistory([]);
-      toast.success('导入历史已清空');
+      toast.success(t('upload.historyCleared'));
     } catch (error: any) {
-      toast.error(error.response?.data?.error || '清空失败');
+      toast.error(error.response?.data?.error || t('upload.clearFailed'));
     }
   };
 
@@ -150,7 +177,7 @@ export default function Upload() {
     }));
 
     setLocalFiles(prev => [...prev, ...newLocalFiles]);
-    toast.success(`已添加 ${files.length} 个文件`);
+    toast.success(t('upload.filesAdded', { count: files.length }));
     e.target.value = ''; // 重置input，允许再次选择相同文件
   };
 
@@ -171,13 +198,13 @@ export default function Upload() {
   const handleBatchUpload = async () => {
     // 检查是否同意免责声明
     if (!agreedToDisclaimer) {
-      toast.error('请先阅读并同意免责声明');
+      toast.error(t('upload.pleaseAgreeDisclaimer'));
       return;
     }
     
     const selectedFiles = localFiles.filter((f) => f.selected);
     if (selectedFiles.length === 0) {
-      toast.error('请至少选择一个文件');
+      toast.error(t('upload.selectAtLeastOneFile'));
       return;
     }
 
@@ -204,9 +231,23 @@ export default function Upload() {
           formData.append('autoFetchDouban', String(autoFetchDouban));
           formData.append('category', category);
 
-          await api.post('/books/upload', formData, {
+          // 检查上传权限
+          if (isAuthenticated && user?.can_upload_books === false) {
+            throw new Error(t('upload.uploadPermissionDisabled') || '您没有权限上传书籍，请联系管理员开启此权限');
+          }
+          
+          // 大文件上传需要更长的超时时间（10分钟）
+          
+          const response = await api.post('/books/upload', formData, {
             headers: {
               'Content-Type': 'multipart/form-data',
+            },
+            timeout: 600000, // 10分钟超时，适用于大文件上传
+            onUploadProgress: (progressEvent) => {
+              if (progressEvent.total) {
+                const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+                // 可以在这里更新上传进度（如果需要）
+              }
             },
           });
 
@@ -215,18 +256,52 @@ export default function Upload() {
           // 显示单个文件上传成功
           toast.success(`✓ ${localFile.name}`, { duration: 2000 });
         } catch (error: any) {
-          console.error(`上传失败 ${localFile.name}:`, error);
+
           failed++;
-          toast.error(`✗ ${localFile.name}: ${error.response?.data?.error || '上传失败'}`, { duration: 3000 });
+          
+          // 提供更详细的错误信息
+          let errorMessage = error.response?.data?.error || error.message || t('upload.uploadFailed') || '上传失败';
+          
+          // 处理各种错误情况
+          if (error.code === 'ECONNABORTED' || error.message?.includes('timeout') || error.message?.includes('Timeout')) {
+            errorMessage = t('upload.uploadTimeout') || '上传超时，请检查网络连接或文件大小。如果文件较大，请稍后重试。';
+          } else if (error.code === 'ERR_NETWORK' || error.code === 'ERR_ADDRESS_INVALID' || error.message?.includes('Network Error')) {
+            errorMessage = t('upload.networkError') || '网络连接失败，请检查网络设置和服务器连接';
+          } else if (error.response?.status === 403) {
+            errorMessage = error.response?.data?.error || t('upload.uploadPermissionDisabled') || '您没有权限上传书籍';
+          } else if (error.response?.status === 400) {
+            errorMessage = error.response?.data?.error || '请求参数错误，请检查文件格式和大小';
+          } else if (error.response?.status === 413) {
+            errorMessage = '文件太大，超过服务器限制（最大500MB）';
+          } else if (error.response?.status === 500) {
+            errorMessage = error.response?.data?.error || '服务器内部错误，请稍后重试或联系管理员';
+          } else if (error.response?.status === 502 || error.response?.status === 503 || error.response?.status === 504) {
+            errorMessage = '服务器暂时不可用，请稍后重试';
+          } else if (!error.response) {
+            // 没有响应，可能是网络问题或请求被拦截
+            errorMessage = '请求失败，可能是网络问题或服务器未响应。请检查：\n1. 网络连接是否正常\n2. 服务器是否运行\n3. 防火墙设置';
+          }
+          
+          // 显示错误提示（延长显示时间以便用户阅读）
+          toast.error(`✗ ${localFile.name}: ${errorMessage}`, { duration: 5000 });
         }
       }
 
       // 显示汇总结果
       if (uploaded > 0) {
-        toast.success(`成功上传 ${uploaded} 本书籍`);
+        toast.success(t('upload.uploadSuccess', { count: uploaded }));
       }
       if (failed > 0) {
-        toast.error(`失败 ${failed} 本`);
+        toast.error(t('upload.uploadFailedCount', { count: failed }), { duration: 5000 });
+        // 如果所有文件都失败了，显示更详细的提示
+        if (uploaded === 0 && failed === selectedFiles.length) {
+          // console.error('[上传] 所有文件上传失败，可能的原因：');
+          // console.error('1. 网络连接问题');
+          // console.error('2. 服务器超时（文件太大）');
+          // console.error('3. 权限问题');
+          // console.error('4. 服务器配置问题（nginx超时、文件大小限制等）');
+          toast.error('所有文件上传失败，请检查：\n1. 网络连接\n2. 文件大小（最大500MB）\n3. 服务器日志', { duration: 8000 });
+        }
       }
 
       // 移除已上传的文件
@@ -237,7 +312,7 @@ export default function Upload() {
         fetchImportHistory();
       }
     } catch (error: any) {
-      toast.error(error.response?.data?.error || '批量上传失败');
+      toast.error(error.response?.data?.error || t('upload.batchUploadFailed'));
     } finally {
       setBatchUploading(false);
       setBatchProgress({ current: 0, total: 0 });
@@ -251,7 +326,7 @@ export default function Upload() {
 
   const handleScanDirectory = async () => {
     if (!scanPath.trim()) {
-      toast.error('请输入扫描路径');
+      toast.error(t('upload.pleaseEnterScanPath'));
       return;
     }
 
@@ -271,14 +346,14 @@ export default function Upload() {
       setScannedFiles(files);
       const errorCount = response.data.errors || 0;
       if (errorCount > 0) {
-        toast.success(`扫描完成，找到 ${files.length} 个文件（${errorCount} 个错误）`, {
+        toast.success(t('upload.scanCompleteWithErrors', { count: files.length, errors: errorCount }), {
           duration: 4000,
         });
       } else {
-        toast.success(`扫描完成，找到 ${files.length} 个文件`);
+        toast.success(t('upload.scanComplete', { count: files.length }));
       }
     } catch (error: any) {
-      const errorMessage = error.response?.data?.error || error.response?.data?.message || '扫描失败';
+      const errorMessage = error.response?.data?.error || error.response?.data?.message || t('upload.scanFailed');
       console.error('扫描错误:', error.response?.data);
       toast.error(errorMessage);
     } finally {
@@ -300,13 +375,13 @@ export default function Upload() {
   const handleImportAll = async () => {
     // 检查是否同意免责声明
     if (!agreedToDisclaimer) {
-      toast.error('请先阅读并同意免责声明');
+      toast.error(t('upload.pleaseAgreeDisclaimer'));
       return;
     }
     
     const selectedFiles = scannedFiles.filter((f) => f.selected);
     if (selectedFiles.length === 0) {
-      toast.error('请至少选择一个文件');
+      toast.error(t('upload.selectAtLeastOneFile'));
       return;
     }
 
@@ -356,13 +431,13 @@ export default function Upload() {
 
       // 显示汇总结果
       if (imported > 0) {
-        toast.success(`导入成功 ${imported} 本书籍`);
+        toast.success(t('upload.importSuccess', { count: imported }));
       }
       if (skipped > 0) {
-        toast(`跳过 ${skipped} 本（已存在或不支持）`, { icon: 'ℹ️' });
+        toast(t('upload.skipped', { count: skipped }), { icon: 'ℹ️' });
       }
       if (failed > 0) {
-        toast.error(`失败 ${failed} 本`);
+        toast.error(t('upload.failed', { count: failed }));
       }
 
       // 移除已导入的文件
@@ -373,7 +448,7 @@ export default function Upload() {
         fetchImportHistory();
       }
     } catch (error: any) {
-      toast.error(error.response?.data?.error || '批量导入失败');
+      toast.error(error.response?.data?.error || t('upload.batchImportFailed'));
     } finally {
       setImporting(false);
       setImportProgress({ current: 0, total: 0 });
@@ -387,13 +462,13 @@ export default function Upload() {
   };
 
   const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleString('zh-CN');
+    return new Date(dateString).toLocaleString(i18n.language === 'zh' ? 'zh-CN' : 'en-US');
   };
 
   if (!isAuthenticated) {
     return (
       <div className="text-center py-12">
-        <p className="text-gray-500 dark:text-gray-400">请先登录</p>
+        <p className="text-gray-500 dark:text-gray-400">{t('upload.pleaseLogin')}</p>
       </div>
     );
   }
@@ -428,66 +503,79 @@ export default function Upload() {
   };
 
   return (
-    <div className="max-w-6xl mx-auto">
-      <div className="mb-6 flex items-center justify-end">
-        <button
-          onClick={() => setShowHistory(!showHistory)}
-          className="btn btn-secondary flex items-center gap-2"
-        >
-          <History className="w-4 h-4" />
-          {showHistory ? '隐藏历史' : '导入历史'}
-        </button>
-      </div>
-
-      {/* 全局导入选项卡片 */}
-      <div className="card bg-gradient-to-br from-blue-50 via-purple-50 to-pink-50 dark:from-blue-900/20 dark:via-purple-900/20 dark:to-pink-900/20 border-2 border-blue-200 dark:border-blue-700 mb-6">
-        <div className="flex items-center gap-3 mb-4">
-          <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-blue-600 to-purple-600 flex items-center justify-center">
-            <FileText className="w-5 h-5 text-white" />
+    <div className="w-full max-w-6xl mx-auto px-3 sm:px-4 py-4">
+      {/* 紧凑的页面头部 */}
+      <div className="mb-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <UploadIcon className="w-6 h-6 text-gray-600 dark:text-gray-400" />
+            <h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100">导入书籍</h1>
           </div>
-          <div>
-            <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">导入选项</h2>
-            <p className="text-sm text-gray-600 dark:text-gray-400">这些选项适用于所有导入方式（批量选择和目录扫描）</p>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setShowHistory(!showHistory)}
+              className="p-2 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors"
+              title={showHistory ? '隐藏历史' : '导入历史'}
+            >
+              <History className="w-5 h-5" />
+            </button>
           </div>
         </div>
-        
-        {/* 免责声明 */}
-        <div className="mb-4 p-4 rounded-lg border-2 border-red-300 dark:border-red-700 bg-red-50 dark:bg-red-900/20">
-          <div className="flex items-start gap-3 mb-3">
-            <div className="text-red-600 dark:text-red-400 mt-0.5 flex-shrink-0">
-              <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
-                <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
-              </svg>
+      </div>
+
+      {/* 紧凑的导入选项卡片 */}
+      <div className="bg-gray-50 dark:bg-gray-800/50 p-4 rounded-lg border border-gray-200 dark:border-gray-700 mb-4">
+        <div className="flex items-center gap-3 mb-4">
+          <Settings className="w-6 h-6 text-blue-600" />
+          <div>
+            <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">导入设置</h2>
+            <p className="text-sm text-gray-600 dark:text-gray-400">配置书籍导入选项</p>
+          </div>
+        </div>
+
+        {/* 重要免责声明 - 同意复选框始终可见 */}
+        <div className="mb-4">
+          <button
+            onClick={() => setShowDisclaimer(!showDisclaimer)}
+            className="w-full flex items-center justify-between p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg hover:bg-red-100 dark:hover:bg-red-900/30 transition-colors"
+          >
+            <div className="flex items-center gap-2">
+              <div className="text-red-600 dark:text-red-400">
+                <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                </svg>
+              </div>
+              <span className="text-sm font-medium text-red-800 dark:text-red-200">重要免责声明</span>
             </div>
-            <div className="flex-1">
-              <p className="text-sm font-bold text-red-800 dark:text-red-200 mb-2">
-                重要免责声明
-              </p>
+            {showDisclaimer ? (
+              <ChevronUp className="w-4 h-4 text-red-600 dark:text-red-400" />
+            ) : (
+              <ChevronDown className="w-4 h-4 text-red-600 dark:text-red-400" />
+            )}
+          </button>
+
+          {/* 折叠的免责声明内容 */}
+          {showDisclaimer && (
+            <div className="mt-3 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
               <div className="text-xs text-red-700 dark:text-red-300 leading-relaxed space-y-2">
                 <p>
-                  <strong>1. 内容合规性：</strong>用户保证上传的所有书籍内容均符合国家法律法规，不包含任何违法违规、色情、暴力、恐怖主义、极端主义、分裂国家、颠覆国家政权等禁止性内容。
+                  <strong>版权声明：</strong>请确保您拥有上传书籍的合法版权，或书籍已进入公共领域。
                 </p>
                 <p>
-                  <strong>2. 隐私保护：</strong>用户不得上传涉及个人隐私、商业秘密、他人肖像权、名誉权等合法权益的内容。不得上传包含他人身份证号、手机号、地址等敏感信息的文档。
+                  <strong>内容审核：</strong>系统会自动处理书籍内容，但请自行确保内容合规。
                 </p>
                 <p>
-                  <strong>3. 知识产权：</strong>用户保证上传的内容不侵犯任何第三方的著作权、商标权、专利权等知识产权。如因上传内容侵犯他人权益，由用户承担全部法律责任。
+                  <strong>数据安全：</strong>上传的文件将存储在服务器上，请谨慎选择。
                 </p>
                 <p>
-                  <strong>4. 责任承担：</strong>用户明确知晓并同意，因上传违规内容导致的一切法律后果、经济损失、行政处罚等均由用户个人承担全部责任，与平台无关。
-                </p>
-                <p>
-                  <strong>5. 内容审查：</strong>平台保留对上传内容进行审查的权利，如发现违规内容，平台有权立即删除并可能采取进一步措施。
-                </p>
-                <p>
-                  <strong>6. 用户承诺：</strong>用户承诺已充分理解上述条款，并保证严格遵守。如违反上述规定，用户愿意承担一切法律责任。
+                  <strong>技术支持：</strong>如遇问题请联系管理员获取帮助。
                 </p>
               </div>
             </div>
-          </div>
-          
-          {/* 同意复选框 */}
-          <div className="mt-3 pt-3 border-t border-red-200 dark:border-red-800">
+          )}
+
+          {/* 同意复选框 - 始终可见 */}
+          <div className="mt-3 p-3 bg-red-50 dark:bg-red-900/10 border border-red-200 dark:border-red-800 rounded-lg">
             <label className="flex items-start gap-2 cursor-pointer group">
               <input
                 type="checkbox"
@@ -496,187 +584,217 @@ export default function Upload() {
                 className="w-5 h-5 mt-0.5 rounded border-red-300 dark:border-red-700 text-red-600 focus:ring-red-500 focus:ring-2"
                 required
               />
-              <span className="text-sm font-semibold text-red-800 dark:text-red-200 group-hover:text-red-900 dark:group-hover:text-red-100 transition-colors">
-                我已仔细阅读并完全理解上述免责声明，同意遵守所有规定，并愿意承担因违反规定而产生的一切法律责任。
-              </span>
+              <div className="flex-1">
+                <span className="text-sm font-medium text-red-800 dark:text-red-200 group-hover:text-red-900 dark:group-hover:text-red-100 transition-colors">
+                  我已阅读并同意上述声明
+                </span>
+                {!agreedToDisclaimer && (
+                  <p className="text-xs text-red-600 dark:text-red-400 mt-1">
+                    必须同意免责声明才能继续操作
+                  </p>
+                )}
+              </div>
             </label>
-            {!agreedToDisclaimer && (
-              <p className="text-xs text-red-600 dark:text-red-400 mt-2 ml-7">
-                ⚠️ 必须同意免责声明才能上传书籍
-              </p>
-            )}
           </div>
         </div>
-        
-        <div className="space-y-4">
+
+        {/* 紧凑的导入选项 */}
+        <div className="space-y-3">
           {/* 书籍分类 */}
-          <div className="space-y-2">
-            <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 flex items-center gap-2">
+          <div>
+            <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
               📚 书籍分类
             </label>
             <CategoryCombobox
               value={category}
               onChange={setCategory}
               categories={bookCategories}
-              placeholder="选择或输入书籍分类"
+              placeholder="选择或输入分类"
             />
-            <p className="text-xs text-gray-500 dark:text-gray-400">
-              导入的所有书籍将使用此分类，可在书籍详情页单独修改
+            <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+              为上传的书籍设置分类标签
             </p>
+            {/* PC端显示更详细的说明 */}
+            <div className="hidden md:block mt-2">
+              <p className="text-xs text-gray-500 dark:text-gray-400">
+                选择现有分类或输入新分类名称，有助于更好地组织和管理您的书籍收藏
+              </p>
+            </div>
           </div>
 
-          {/* 导入选项 */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {/* 获取豆瓣信息 */}
-            <div className="space-y-2">
-              <label className="flex items-center gap-2 cursor-pointer group">
+          {/* 导入选项网格 */}
+          <div className="grid grid-cols-2 gap-3">
+            <div className="p-3 bg-white dark:bg-gray-800 rounded border border-gray-200 dark:border-gray-600">
+              <label className="flex items-start gap-2 cursor-pointer">
                 <input
                   type="checkbox"
                   checked={autoFetchDouban}
                   onChange={(e) => setAutoFetchDouban(e.target.checked)}
-                  className="w-5 h-5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                  className="w-4 h-4 mt-0.5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                 />
-                <span className="text-sm font-medium text-gray-700 dark:text-gray-300 group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
-                  🔍 自动从豆瓣获取书籍信息
-                </span>
+                <div className="flex-1">
+                  <span className="text-sm font-medium text-gray-700 dark:text-gray-300">🔍 获取豆瓣信息</span>
+                  {/* PC端显示详细说明 */}
+                  <div className="hidden md:block">
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                      自动从豆瓣获取书籍的详细信息，包括简介、评分、作者信息等
+                    </p>
+                  </div>
+                </div>
               </label>
-              <p className="text-xs text-gray-500 dark:text-gray-400 ml-7">
-                自动获取书籍封面、简介、评分等详细信息
-              </p>
             </div>
 
-            {/* 公开/私有 */}
-            <div className="space-y-2">
-              <label className="flex items-center gap-2 cursor-pointer group">
+            <div className={`p-3 bg-white dark:bg-gray-800 rounded border border-gray-200 dark:border-gray-600 ${canUploadPrivate ? '' : 'opacity-60'}`}>
+              <label className={`flex items-start gap-2 ${canUploadPrivate ? 'cursor-pointer' : 'cursor-not-allowed'}`}>
                 <input
                   type="checkbox"
                   checked={isPublic}
-                  onChange={(e) => setIsPublic(e.target.checked)}
-                  className="w-5 h-5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                  onChange={(e) => {
+                    if (canUploadPrivate) {
+                      setIsPublic(e.target.checked);
+                    }
+                  }}
+                  disabled={!canUploadPrivate}
+                  className="w-4 h-4 mt-0.5 rounded border-gray-300 text-blue-600 focus:ring-blue-500 disabled:cursor-not-allowed"
                 />
-                <span className="text-sm font-medium text-gray-700 dark:text-gray-300 group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
-                  🌐 设为公开书籍
-                </span>
+                <div className="flex-1">
+                  <span className={`text-sm font-medium text-gray-700 dark:text-gray-300 ${canUploadPrivate ? '' : 'cursor-not-allowed'}`}>
+                    🌐 {isPublic ? '公开书籍' : '私有书籍'}
+                  </span>
+                  {/* PC端显示详细说明 */}
+                  <div className="hidden md:block">
+                    <p className={`text-xs mt-1 ${canUploadPrivate ? 'text-gray-500 dark:text-gray-400' : 'text-orange-600 dark:text-orange-400'}`}>
+                      {canUploadPrivate
+                        ? (isPublic ? '书籍对所有用户可见' : '书籍仅自己可见')
+                        : '需要管理员开启私有上传权限'}
+                    </p>
+                  </div>
+                </div>
               </label>
-              <p className="text-xs text-gray-500 dark:text-gray-400 ml-7">
-                {isPublic ? '✅ 所有用户都可以查看（默认）' : '🔒 仅自己可见'}
-              </p>
             </div>
-          </div>
 
-          {/* 文件处理选项 */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {/* TXT转EPUB */}
-            <div className="space-y-2">
-              <label className="flex items-center gap-2 cursor-pointer group">
+            <div className="p-3 bg-white dark:bg-gray-800 rounded border border-gray-200 dark:border-gray-600">
+              <label className="flex items-start gap-2 cursor-pointer">
                 <input
                   type="checkbox"
                   checked={autoConvertTxt}
                   onChange={(e) => setAutoConvertTxt(e.target.checked)}
-                  className="w-5 h-5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                  className="w-4 h-4 mt-0.5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                 />
-                <span className="text-sm font-medium text-gray-700 dark:text-gray-300 group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
-                  📄 自动将TXT转换为EPUB
-                </span>
+                <div className="flex-1">
+                  <span className="text-sm font-medium text-gray-700 dark:text-gray-300">📄 TXT转EPUB</span>
+                  {/* PC端显示详细说明 */}
+                  <div className="hidden md:block">
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                      自动将TXT格式文件转换为标准EPUB格式，便于阅读和兼容
+                    </p>
+                  </div>
+                </div>
               </label>
-              <p className="text-xs text-gray-500 dark:text-gray-400 ml-7">
-                TXT文件会转换为EPUB格式以获得更好的阅读体验
-              </p>
             </div>
 
-            {/* MOBI转EPUB */}
-            <div className="space-y-2">
-              <label className="flex items-center gap-2 cursor-pointer group">
+            <div className="p-3 bg-white dark:bg-gray-800 rounded border border-gray-200 dark:border-gray-600">
+              <label className="flex items-start gap-2 cursor-pointer">
                 <input
                   type="checkbox"
                   checked={autoConvertMobi}
                   onChange={(e) => setAutoConvertMobi(e.target.checked)}
-                  className="w-5 h-5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                  className="w-4 h-4 mt-0.5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                 />
-                <span className="text-sm font-medium text-gray-700 dark:text-gray-300 group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
-                  📱 自动将MOBI转换为EPUB
-                </span>
+                <div className="flex-1">
+                  <span className="text-sm font-medium text-gray-700 dark:text-gray-300">📱 MOBI转EPUB</span>
+                  {/* PC端显示详细说明 */}
+                  <div className="hidden md:block">
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                      自动将MOBI格式文件转换为标准EPUB格式，提高兼容性
+                    </p>
+                  </div>
+                </div>
               </label>
-              <p className="text-xs text-gray-500 dark:text-gray-400 ml-7">
-                MOBI文件会转换为EPUB格式以支持在线阅读（需要安装 Calibre）
-              </p>
             </div>
+          </div>
 
-            {/* 删除源文件 */}
-            <div className="space-y-2">
-              <label className="flex items-center gap-2 cursor-pointer group">
-                <input
-                  type="checkbox"
-                  checked={deleteSource}
-                  onChange={(e) => setDeleteSource(e.target.checked)}
-                  className="w-5 h-5 rounded border-gray-300 text-red-600 focus:ring-red-500"
-                />
-                <span className="text-sm font-medium text-gray-700 dark:text-gray-300 group-hover:text-red-600 dark:group-hover:text-red-400 transition-colors">
-                  🗑️ 导入后删除源文件
-                </span>
-              </label>
-              <p className="text-xs text-gray-500 dark:text-gray-400 ml-7">
-                {deleteSource ? '⚠️ 导入成功后将删除原始文件' : '✅ 保留原始文件（默认）'}
-              </p>
-            </div>
+          {/* 删除源文件选项 */}
+          <div className="p-3 bg-white dark:bg-gray-800 rounded border border-gray-200 dark:border-gray-600">
+            <label className="flex items-start gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={deleteSource}
+                onChange={(e) => setDeleteSource(e.target.checked)}
+                className="w-4 h-4 mt-0.5 rounded border-gray-300 text-red-600 focus:ring-red-500"
+              />
+              <div className="flex-1">
+                <span className="text-sm font-medium text-gray-700 dark:text-gray-300">🗑️ 导入后删除源文件</span>
+                {/* PC端显示详细说明 */}
+                <div className="hidden md:block">
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                    {deleteSource ? '导入成功后自动删除服务器上的源文件，节省存储空间' : '保留源文件在服务器上，可用于重新处理'}
+                  </p>
+                </div>
+              </div>
+            </label>
           </div>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* 批量选择文件 */}
-        <div className="card bg-gradient-to-br from-purple-50 to-pink-50 dark:from-purple-900/20 dark:to-pink-900/20 border-2 border-purple-200 dark:border-purple-700">
-          <div className="flex items-center gap-3 mb-4">
-            <FileText className="w-6 h-6 text-purple-600" />
-            <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">批量选择</h2>
+      {/* 文件选择区域 */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        {/* 本地文件选择 */}
+        <div className="bg-white dark:bg-gray-800 p-4 rounded-lg border border-gray-200 dark:border-gray-700">
+          <div className="flex items-center gap-3 mb-3">
+            <FileText className="w-5 h-5 text-purple-600" />
+            <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">本地文件</h2>
           </div>
-          <div className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium mb-2 text-gray-900 dark:text-gray-100">
-                从本地选择文件
-              </label>
-              <label className="flex items-center justify-center w-full h-32 border-2 border-dashed border-purple-300 dark:border-purple-700 rounded-lg cursor-pointer hover:border-purple-500 transition-colors bg-white dark:bg-gray-800">
-                <div className="text-center">
-                  <FileText className="w-8 h-8 mx-auto mb-2 text-purple-400" />
-                  <p className="text-sm text-gray-600 dark:text-gray-400">
-                    点击选择文件（支持单个或多个）
-                  </p>
-                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                    支持 EPUB, PDF, TXT, MOBI, Word, Excel, PowerPoint, Markdown
+          <div className="space-y-3">
+            <label className="flex flex-col items-center justify-center w-full h-24 border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-lg cursor-pointer hover:border-purple-500 hover:bg-purple-50 dark:hover:bg-purple-900/20 transition-colors bg-gray-50 dark:bg-gray-800/50">
+              <div className="text-center">
+                <FileText className="w-6 h-6 mx-auto mb-1 text-gray-400" />
+                <p className="text-xs text-gray-600 dark:text-gray-400">
+                  点击选择文件
+                </p>
+                <p className="text-xs text-gray-500 dark:text-gray-500 mt-0.5">
+                  支持多种格式
+                </p>
+                {/* PC端显示更详细的说明 */}
+                <div className="hidden md:block mt-2">
+                  <p className="text-xs text-gray-500 dark:text-gray-400">
+                    支持EPUB、PDF、TXT、MOBI等多种电子书格式
                   </p>
                 </div>
-                <input
-                  type="file"
-                  className="hidden"
-                  accept=".epub,.pdf,.txt,.mobi,.docx,.doc,.xlsx,.xls,.pptx,.md"
-                  multiple
-                  onChange={handleBatchFileSelect}
-                  disabled={batchUploading}
-                />
-              </label>
-            </div>
+              </div>
+              <input
+                type="file"
+                className="hidden"
+                accept=".epub,.pdf,.txt,.mobi,.docx,.doc,.xlsx,.xls,.pptx,.md"
+                multiple
+                onChange={handleBatchFileSelect}
+                disabled={batchUploading}
+              />
+            </label>
             {localFiles.length > 0 && (
               <div className="text-sm text-purple-600 dark:text-purple-400">
-                <p>📚 已选择 {localFiles.length} 个文件</p>
+                已选择 {localFiles.length} 个文件
               </div>
             )}
           </div>
         </div>
 
-        {/* 目录扫描（服务器） */}
-        <div className="card">
-          <div className="flex items-center gap-3 mb-4">
-            <Folder className="w-6 h-6 text-green-600" />
-            <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">目录扫描</h2>
+        {/* 服务器目录扫描 */}
+        <div className="bg-white dark:bg-gray-800 p-4 rounded-lg border border-gray-200 dark:border-gray-700">
+          <div className="flex items-center gap-3 mb-3">
+            <Folder className="w-5 h-5 text-green-600" />
+            <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">服务器目录</h2>
           </div>
-          <div className="space-y-4">
+          <div className="space-y-3">
             <div>
-              <label className="block text-sm font-medium mb-2">服务器路径</label>
+              <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
+                服务器路径
+              </label>
               <div className="flex gap-2">
                 <input
                   type="text"
-                  className="input flex-1"
-                  placeholder="例如: /app/scan"
+                  className="flex-1 px-2.5 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
+                  placeholder="输入服务器目录路径"
                   value={scanPath}
                   onChange={(e) => setScanPath(e.target.value)}
                   onKeyPress={(e) => {
@@ -688,12 +806,12 @@ export default function Upload() {
                 <button
                   onClick={handleScanDirectory}
                   disabled={scanning}
-                  className="btn btn-primary"
+                  className="px-3 py-2 bg-green-600 hover:bg-green-700 text-white text-sm rounded transition-colors flex items-center gap-1 disabled:opacity-50"
                 >
                   {scanning ? (
                     <>
                       <Loader className="w-4 h-4 animate-spin" />
-                      扫描中...
+                      扫描中
                     </>
                   ) : (
                     <>
@@ -703,6 +821,12 @@ export default function Upload() {
                   )}
                 </button>
               </div>
+              {/* PC端显示详细说明 */}
+              <div className="hidden md:block mt-2">
+                <p className="text-xs text-gray-500 dark:text-gray-400">
+                  输入服务器上的目录路径，系统将自动扫描该目录下的所有支持的文件格式
+                </p>
+              </div>
             </div>
           </div>
         </div>
@@ -710,90 +834,71 @@ export default function Upload() {
 
       {/* 本地文件列表 */}
       {localFiles.length > 0 && (
-        <div className="card mt-6 bg-gradient-to-br from-purple-50/50 to-pink-50/50 dark:from-purple-900/10 dark:to-pink-900/10 border-2 border-purple-200 dark:border-purple-800">
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-3">
+        <div className="mt-4 bg-white dark:bg-gray-800 p-4 rounded-lg border border-gray-200 dark:border-gray-700">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
               <FileText className="w-5 h-5 text-purple-600" />
-              <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">
-                本地文件列表 ({localFiles.length} 个文件)
+              <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
+                已选择文件 ({localFiles.length})
               </h2>
             </div>
-            <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2">
               <button
                 onClick={handleSelectAllLocalFiles}
-                className="text-sm text-purple-600 hover:text-purple-700 dark:text-purple-400"
+                className="text-sm text-purple-600 hover:text-purple-700 dark:text-purple-400 px-2 py-1 rounded hover:bg-purple-50 dark:hover:bg-purple-900/20"
               >
                 {localFiles.every((f) => f.selected) ? '取消全选' : '全选'}
               </button>
               <span className="text-sm text-gray-600 dark:text-gray-400">
-                已选择 {selectedLocalCount} 个
+                已选 {selectedLocalCount} 个
               </span>
-              <button
-                onClick={handleBatchUpload}
-                disabled={batchUploading || selectedLocalCount === 0 || !agreedToDisclaimer}
-                className="btn btn-primary bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {batchUploading ? (
-                  <>
-                    <Loader className="w-4 h-4 animate-spin" />
-                    上传中 ({batchProgress.current}/{batchProgress.total})...
-                  </>
-                ) : (
-                  <>
-                    <UploadIcon className="w-4 h-4" />
-                    批量上传 ({selectedLocalCount})
-                  </>
-                )}
-              </button>
             </div>
           </div>
 
-          <div className="overflow-x-auto">
+          {/* 桌面端表格 */}
+          <div className="hidden md:block overflow-x-auto mb-4">
             <table className="w-full">
               <thead>
-                <tr className="border-b border-purple-200 dark:border-purple-800">
-                  <th className="text-left py-3 px-4">
+                <tr className="border-b border-gray-200 dark:border-gray-700">
+                  <th className="text-left py-2 px-3">
                     <input
                       type="checkbox"
                       checked={localFiles.every((f) => f.selected)}
                       onChange={handleSelectAllLocalFiles}
-                      className="w-4 h-4"
+                      className="w-3 h-3"
                     />
                   </th>
-                  <th className="text-left py-3 px-4">文件名</th>
-                  <th className="text-left py-3 px-4">格式</th>
-                  <th className="text-left py-3 px-4">大小</th>
-                  <th className="text-left py-3 px-4">操作</th>
+                  <th className="text-left py-2 px-3 text-sm font-medium text-gray-700 dark:text-gray-300">文件名</th>
+                  <th className="text-left py-2 px-3 text-sm font-medium text-gray-700 dark:text-gray-300">格式</th>
+                  <th className="text-left py-2 px-3 text-sm font-medium text-gray-700 dark:text-gray-300">大小</th>
+                  <th className="text-left py-2 px-3 text-sm font-medium text-gray-700 dark:text-gray-300">操作</th>
                 </tr>
               </thead>
               <tbody>
                 {localFiles.map((file, index) => (
-                  <tr
-                    key={index}
-                    className="border-b border-purple-100 dark:border-purple-900/50 hover:bg-purple-50 dark:hover:bg-purple-900/20 transition-colors"
-                  >
-                    <td className="py-3 px-4">
+                  <tr key={index} className="border-b border-gray-100 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-gray-800/50">
+                    <td className="py-2 px-3">
                       <input
                         type="checkbox"
                         checked={file.selected}
                         onChange={() => handleToggleLocalFile(index)}
-                        className="w-4 h-4"
+                        className="w-3 h-3"
                       />
                     </td>
-                    <td className="py-3 px-4 font-medium">{file.name}</td>
-                    <td className="py-3 px-4">
-                      <span className="px-2 py-1 bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 rounded text-xs uppercase">
+                    <td className="py-2 px-3 font-medium text-sm truncate max-w-xs">{file.name}</td>
+                    <td className="py-2 px-3">
+                      <span className="px-1.5 py-0.5 bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 rounded text-xs uppercase">
                         {file.ext}
                       </span>
                     </td>
-                    <td className="py-3 px-4 text-gray-600 dark:text-gray-400">
+                    <td className="py-2 px-3 text-sm text-gray-600 dark:text-gray-400">
                       {formatFileSize(file.size)}
                     </td>
-                    <td className="py-3 px-4">
+                    <td className="py-2 px-3">
                       <button
                         onClick={() => handleRemoveLocalFile(index)}
-                        className="text-red-600 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300 text-sm"
-                        title="移除"
+                        className="text-red-600 hover:text-red-700 dark:text-red-400 text-sm p-1 rounded hover:bg-red-50 dark:hover:bg-red-900/20"
+                        title="删除"
                       >
                         <Trash2 className="w-4 h-4" />
                       </button>
@@ -804,109 +909,145 @@ export default function Upload() {
             </table>
           </div>
 
-          <div className="mt-4 p-4 card-gradient rounded-lg">
+          {/* PC端使用说明 */}
+          <div className="hidden md:block mt-4 p-4 bg-purple-50 dark:bg-purple-900/10 border border-purple-200 dark:border-purple-800 rounded-lg">
             <div className="flex items-start gap-3">
               <div className="text-purple-600 mt-0.5">💡</div>
               <div className="text-sm text-gray-600 dark:text-gray-400">
-                <p className="font-medium text-gray-900 dark:text-gray-100 mb-1">使用说明：</p>
+                <p className="font-medium text-gray-900 dark:text-gray-100 mb-2">使用说明</p>
                 <ul className="space-y-1 text-xs">
-                  <li>• 点击上方"批量选择"按钮，可一次选择多个文件</li>
-                  <li>• 勾选要上传的文件，点击"批量上传"开始上传</li>
-                  <li>• 系统会逐个上传文件，实时显示进度</li>
-                  <li>• 上传成功的文件会自动从列表中移除</li>
+                  <li>• 支持同时上传多个文件，系统会自动处理</li>
+                  <li>• 上传过程中请勿关闭页面，文件较大时需要较长时间</li>
+                  <li>• 上传成功后可在"我的书架"中查看和管理书籍</li>
+                  <li>• 如遇上传失败，请检查文件格式和网络连接</li>
                 </ul>
               </div>
             </div>
           </div>
+
+          {/* 移动端卡片列表 */}
+          <div className="md:hidden space-y-2 mb-4">
+            {localFiles.map((file, index) => (
+              <div key={index} className="flex items-center gap-3 p-3 bg-gray-50 dark:bg-gray-800/50 rounded-lg border border-gray-200 dark:border-gray-700">
+                <input
+                  type="checkbox"
+                  checked={file.selected}
+                  onChange={() => handleToggleLocalFile(index)}
+                  className="w-4 h-4 text-purple-600 focus:ring-purple-500"
+                />
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-medium text-gray-900 dark:text-gray-100 truncate">
+                    {file.name}
+                  </div>
+                  <div className="flex items-center gap-2 mt-1">
+                    <span className="px-1.5 py-0.5 bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 rounded text-xs uppercase">
+                      {file.ext}
+                    </span>
+                    <span className="text-xs text-gray-600 dark:text-gray-400">
+                      {formatFileSize(file.size)}
+                    </span>
+                  </div>
+                </div>
+                <button
+                  onClick={() => handleRemoveLocalFile(index)}
+                  className="text-red-600 hover:text-red-700 dark:text-red-400 p-1 rounded hover:bg-red-50 dark:hover:bg-red-900/20"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              </div>
+            ))}
+          </div>
+
+          {/* 批量上传按钮 */}
+          <div className="flex justify-center">
+            <button
+              onClick={handleBatchUpload}
+              disabled={batchUploading || selectedLocalCount === 0 || !agreedToDisclaimer}
+              className="px-6 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg transition-colors flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {batchUploading ? (
+                <>
+                  <Loader className="w-4 h-4 animate-spin" />
+                  上传中 ({batchProgress.current}/{batchProgress.total})
+                </>
+              ) : (
+                <>
+                  <UploadIcon className="w-4 h-4" />
+                  批量上传 ({selectedLocalCount})
+                </>
+              )}
+            </button>
+          </div>
         </div>
       )}
 
-      {/* 扫描结果列表（服务器目录） */}
+      {/* 扫描结果列表 */}
       {scannedFiles.length > 0 && (
-        <div className="card mt-6">
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-3">
+        <div className="mt-4 bg-white dark:bg-gray-800 p-4 rounded-lg border border-gray-200 dark:border-gray-700">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
               <Folder className="w-5 h-5 text-green-600" />
-              <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">
-                服务器目录扫描结果 ({scannedFiles.length} 个文件)
+              <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
+                扫描结果 ({scannedFiles.length})
               </h2>
             </div>
-            <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2">
               <button
                 onClick={handleSelectAll}
-                className="text-sm text-blue-600 hover:text-blue-700"
+                className="text-sm text-blue-600 hover:text-blue-700 dark:text-blue-400 px-2 py-1 rounded hover:bg-blue-50 dark:hover:bg-blue-900/20"
               >
                 {scannedFiles.every((f) => f.selected) ? '取消全选' : '全选'}
               </button>
               <span className="text-sm text-gray-600 dark:text-gray-400">
-                已选择 {selectedCount} 个
+                已选 {selectedCount} 个
               </span>
-              <button
-                onClick={handleImportAll}
-                disabled={importing || selectedCount === 0 || !agreedToDisclaimer}
-                className="btn btn-primary disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {importing ? (
-                  <>
-                    <Loader className="w-4 h-4 animate-spin" />
-                    导入中 ({importProgress.current}/{importProgress.total})...
-                  </>
-                ) : (
-                  <>
-                    <UploadIcon className="w-4 h-4" />
-                    导入所有 ({selectedCount})
-                  </>
-                )}
-              </button>
             </div>
           </div>
 
-          <div className="overflow-x-auto">
+          {/* 桌面端表格 */}
+          <div className="hidden md:block overflow-x-auto mb-4">
             <table className="w-full">
               <thead>
                 <tr className="border-b border-gray-200 dark:border-gray-700">
-                  <th className="text-left py-3 px-4">
+                  <th className="text-left py-2 px-3">
                     <input
                       type="checkbox"
                       checked={scannedFiles.every((f) => f.selected)}
                       onChange={handleSelectAll}
-                      className="w-4 h-4"
+                      className="w-3 h-3"
                     />
                   </th>
-                  <th className="text-left py-3 px-4">文件名</th>
-                  <th className="text-left py-3 px-4">格式</th>
-                  <th className="text-left py-3 px-4">大小</th>
-                  <th className="text-left py-3 px-4">修改时间</th>
-                  <th className="text-left py-3 px-4">路径</th>
+                  <th className="text-left py-2 px-3 text-sm font-medium text-gray-700 dark:text-gray-300">文件名</th>
+                  <th className="text-left py-2 px-3 text-sm font-medium text-gray-700 dark:text-gray-300">格式</th>
+                  <th className="text-left py-2 px-3 text-sm font-medium text-gray-700 dark:text-gray-300">大小</th>
+                  <th className="text-left py-2 px-3 text-sm font-medium text-gray-700 dark:text-gray-300">修改时间</th>
+                  <th className="text-left py-2 px-3 text-sm font-medium text-gray-700 dark:text-gray-300">路径</th>
                 </tr>
               </thead>
               <tbody>
                 {scannedFiles.map((file, index) => (
-                  <tr
-                    key={index}
-                    className="border-b border-gray-100 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors"
-                  >
-                    <td className="py-3 px-4">
+                  <tr key={index} className="border-b border-gray-100 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-gray-800/50">
+                    <td className="py-2 px-3">
                       <input
                         type="checkbox"
                         checked={file.selected}
                         onChange={() => handleToggleFile(index)}
-                        className="w-4 h-4"
+                        className="w-3 h-3"
                       />
                     </td>
-                    <td className="py-3 px-4 font-medium">{file.name}</td>
-                    <td className="py-3 px-4">
-                      <span className="px-2 py-1 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded text-xs uppercase">
+                    <td className="py-2 px-3 font-medium text-sm truncate max-w-xs">{file.name}</td>
+                    <td className="py-2 px-3">
+                      <span className="px-1.5 py-0.5 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded text-xs uppercase">
                         {file.ext}
                       </span>
                     </td>
-                    <td className="py-3 px-4 text-gray-600 dark:text-gray-400">
+                    <td className="py-2 px-3 text-sm text-gray-600 dark:text-gray-400">
                       {formatFileSize(file.size)}
                     </td>
-                    <td className="py-3 px-4 text-gray-600 dark:text-gray-400 text-sm">
+                    <td className="py-2 px-3 text-sm text-gray-600 dark:text-gray-400">
                       {formatDate(file.modified)}
                     </td>
-                    <td className="py-3 px-4 text-gray-500 dark:text-gray-500 text-sm font-mono truncate max-w-xs">
+                    <td className="py-2 px-3 text-sm text-gray-500 dark:text-gray-500 font-mono truncate max-w-xs">
                       {file.path}
                     </td>
                   </tr>
@@ -914,21 +1055,72 @@ export default function Upload() {
               </tbody>
             </table>
           </div>
+
+          {/* 移动端卡片列表 */}
+          <div className="md:hidden space-y-2 mb-4">
+            {scannedFiles.map((file, index) => (
+              <div key={index} className="flex items-center gap-3 p-3 bg-gray-50 dark:bg-gray-800/50 rounded-lg border border-gray-200 dark:border-gray-700">
+                <input
+                  type="checkbox"
+                  checked={file.selected}
+                  onChange={() => handleToggleFile(index)}
+                  className="w-4 h-4 text-blue-600 focus:ring-blue-500"
+                />
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-medium text-gray-900 dark:text-gray-100 truncate">
+                    {file.name}
+                  </div>
+                  <div className="flex items-center gap-2 mt-1">
+                    <span className="px-1.5 py-0.5 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded text-xs uppercase">
+                      {file.ext}
+                    </span>
+                    <span className="text-xs text-gray-600 dark:text-gray-400">
+                      {formatFileSize(file.size)}
+                    </span>
+                  </div>
+                  <div className="text-xs text-gray-500 dark:text-gray-500 truncate mt-1">
+                    修改时间: {formatDate(file.modified)}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* 批量导入按钮 */}
+          <div className="flex justify-center">
+            <button
+              onClick={handleImportAll}
+              disabled={importing || selectedCount === 0 || !agreedToDisclaimer}
+              className="px-6 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {importing ? (
+                <>
+                  <Loader className="w-4 h-4 animate-spin" />
+                  导入中 ({importProgress.current}/{importProgress.total})
+                </>
+              ) : (
+                <>
+                  <UploadIcon className="w-4 h-4" />
+                  批量导入 ({selectedCount})
+                </>
+              )}
+            </button>
+          </div>
         </div>
       )}
 
       {/* 导入历史 */}
       {showHistory && (
-        <div className="card mt-6">
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-3">
+        <div className="mt-4 bg-white dark:bg-gray-800 p-4 rounded-lg border border-gray-200 dark:border-gray-700">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
               <History className="w-5 h-5 text-purple-600" />
-              <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">导入历史</h2>
+              <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">导入历史</h2>
             </div>
             {importHistory.length > 0 && (
               <button
                 onClick={handleClearHistory}
-                className="btn btn-secondary flex items-center gap-2"
+                className="px-3 py-1.5 text-sm bg-red-600 hover:bg-red-700 text-white rounded transition-colors flex items-center gap-1"
               >
                 <Trash2 className="w-4 h-4" />
                 清空历史
@@ -937,33 +1129,33 @@ export default function Upload() {
           </div>
 
           {loadingHistory ? (
-            <div className="text-center py-8">
+            <div className="text-center py-6">
               <Loader className="w-6 h-6 animate-spin mx-auto text-blue-600" />
               <p className="text-sm text-gray-500 dark:text-gray-400 mt-2">加载中...</p>
             </div>
           ) : importHistory.length === 0 ? (
-            <div className="text-center py-8">
-              <History className="w-12 h-12 mx-auto text-gray-400 mb-2" />
+            <div className="text-center py-6">
+              <History className="w-10 h-10 mx-auto text-gray-400 mb-2" />
               <p className="text-gray-500 dark:text-gray-400">暂无导入历史</p>
             </div>
           ) : (
-            <div className="space-y-2 max-h-96 overflow-y-auto">
+            <div className="space-y-2 max-h-80 overflow-y-auto">
               {importHistory.map((item) => (
                 <div
                   key={item.id}
-                  className="flex items-start gap-3 p-3 bg-gray-50 dark:bg-gray-800 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                  className="flex items-start gap-3 p-3 bg-gray-50 dark:bg-gray-800/50 rounded-lg border border-gray-200 dark:border-gray-700"
                 >
-                  <div className="flex-shrink-0 mt-1">
+                  <div className="flex-shrink-0 mt-0.5">
                     {getStatusIcon(item.status)}
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="font-medium text-sm truncate">{item.file_name}</p>
+                    <p className="font-medium text-sm text-gray-900 dark:text-gray-100 truncate">{item.file_name}</p>
                     <p className={`text-xs ${getStatusColor(item.status)} mt-1`}>
                       {item.message}
                     </p>
-                    <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400 mt-1">
+                    <div className="flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400 mt-2">
                       <Clock className="w-3 h-3" />
-                      <span>{new Date(item.created_at).toLocaleString('zh-CN')}</span>
+                      <span>{new Date(item.created_at).toLocaleString(i18n.language === 'zh' ? 'zh-CN' : 'en-US')}</span>
                     </div>
                   </div>
                 </div>

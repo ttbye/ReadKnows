@@ -7,7 +7,7 @@
 import { useEffect, useState, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { Link, useNavigate } from 'react-router-dom';
-import api from '../utils/api';
+import api, { getCurrentApiUrl, debugApiConfig, getCustomApiUrl } from '../utils/api';
 import { Book, Search, Grid3x3, List, ChevronLeft, ChevronRight, ArrowUpDown, Clock, ArrowUp, ArrowDown, Star, Calendar, X, RefreshCw } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { getCoverUrl } from '../utils/coverHelper';
@@ -17,6 +17,7 @@ import PullToRefreshIndicator from '../components/PullToRefresh';
 import { offlineDataCache } from '../utils/offlineDataCache';
 import { useNetworkStatus } from '../hooks/useNetworkStatus';
 import BookDetailModal from '../components/BookDetailModal';
+import { useTranslation } from 'react-i18next';
 
 interface BookItem {
   id: string;
@@ -37,6 +38,7 @@ type SortOption = 'created_at' | 'title' | 'author' | 'rating';
 type SortOrder = 'desc' | 'asc';
 
 export default function BookList() {
+  const { t } = useTranslation();
   const isNoteBook = (b: BookItem) => {
     const title = (b?.title || '').toString();
     return b?.category === '笔记' || title.includes('[笔记]');
@@ -61,21 +63,49 @@ export default function BookList() {
   const sortButtonRef = useRef<HTMLButtonElement>(null);
   const [hasMore, setHasMore] = useState(true);
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
+  const [selectedScope, setSelectedScope] = useState<string>('all'); // all, public, private, shared, group
   const [bookCategories, setBookCategories] = useState<Array<{ category: string; count: number }>>([]);
   const [selectedBookId, setSelectedBookId] = useState<string | null>(null);
   const [showBookDetailModal, setShowBookDetailModal] = useState(false);
+  // 记录各筛选类型的书籍数量（用于决定是否显示筛选按钮）
+  const [scopeCounts, setScopeCounts] = useState<{ [key: string]: number }>({
+    all: 0,
+    public: 0,
+    private: 0,
+    shared: 0,
+    group: 0,
+  });
   const limit = 20;
 
   // 监听网络状态
   const { isOnline, checkAndResetOfflineFlag } = useNetworkStatus();
 
   useEffect(() => {
+    // 安全修复：仅在开发环境显示API配置，避免生产环境泄露敏感信息
+    if (import.meta.env.DEV) {
+      debugApiConfig();
+      console.log('[BookList] 当前 API 地址:', getCurrentApiUrl());
+    }
+    
+    // 如果配置了自定义服务器地址，优先从网络获取，不使用缓存
+    const customApiUrl = getCustomApiUrl();
+    if (customApiUrl && customApiUrl.trim()) {
+      console.log('[BookList] 检测到自定义服务器地址，跳过缓存，直接从网络获取');
+      // 直接从网络获取，不使用缓存
+      fetchAllData();
+      return;
+    }
+    
+    // 如果没有自定义服务器地址，才使用缓存策略
     // 先尝试从缓存加载数据（快速显示）
     loadFromCache().then((hasData) => {
       // 如果从缓存加载到数据，先显示缓存数据
       // 然后从网络获取最新数据（如果在线）
       if (offlineDataCache.isOnline()) {
-        fetchAllData();
+        // 延迟200ms再获取网络数据，让缓存数据先显示
+        setTimeout(() => {
+          fetchAllData();
+        }, 200);
       } else {
         // 离线时，无论是否有缓存数据，都不显示loading了
         setLoading(false);
@@ -173,20 +203,58 @@ export default function BookList() {
     if (!searchQuery) {
     fetchBooks();
     }
-  }, [page, searchQuery, sortBy, sortOrder, selectedCategory]);
+  }, [page, searchQuery, sortBy, sortOrder, selectedCategory, selectedScope]);
 
-  // 获取书籍分类统计
+  // 获取书籍分类统计（延迟加载，避免阻塞页面）
   useEffect(() => {
-    fetchBookCategories();
+    const timer = setTimeout(() => {
+      fetchBookCategories();
+      // 同时获取各筛选类型的书籍数量
+      if (isAuthenticated) {
+        fetchScopeCounts();
+      }
+    }, 500);
+    return () => clearTimeout(timer);
   }, [isAuthenticated]);
 
   const fetchBookCategories = async () => {
     try {
-      const response = await api.get('/books/categories');
-      setBookCategories(response.data.categories || []);
+      const response = await api.get('/books/categories', {
+        timeout: 3000, // 3秒超时
+      });
+      
+      // 处理不同的响应格式，保留 count 字段
+      let categories: Array<{ category: string; count: number }> = [];
+      if (Array.isArray(response.data.categories)) {
+        // 如果是对象数组 [{category: 'xxx', count: 1}]
+        if (response.data.categories.length > 0 && typeof response.data.categories[0] === 'object') {
+          categories = response.data.categories.map((item: any) => ({
+            category: item.category || item.name || String(item),
+            count: typeof item.count === 'number' ? item.count : 0,
+          }));
+        } else {
+          // 如果是字符串数组，转换为对象数组（count设为0或从其他地方获取）
+          categories = response.data.categories.map((cat: string) => ({
+            category: cat,
+            count: 0, // 字符串数组没有count信息，设为0
+          }));
+        }
+      } else if (response.data.categories && typeof response.data.categories === 'object') {
+        // 如果是对象 {category: count}，转换为数组格式
+        categories = Object.entries(response.data.categories).map(([category, count]) => ({
+          category,
+          count: typeof count === 'number' ? count : 0,
+        }));
+      }
+      
+      setBookCategories(categories);
     } catch (error: any) {
       console.error('获取书籍分类统计失败:', error);
-      // 静默失败，不影响主功能
+      // 网络错误时静默失败，不影响主功能
+      if (error.code !== 'ERR_NETWORK' && error.code !== 'ERR_ADDRESS_INVALID' && error.code !== 'ECONNABORTED') {
+        // 使用默认分类（对象格式）
+        setBookCategories([{ category: '未分类', count: 0 }]);
+      }
     }
   };
 
@@ -222,13 +290,21 @@ export default function BookList() {
 
     setLoading(true);
     try {
-      await Promise.all([
-        fetchBooks(),
-        fetchRecentBooks(),
-        fetchRecommendedBooks(),
-        isAuthenticated && fetchRecentReadBooks(),
-        isAuthenticated && fetchPrivateBooks(),
-      ]);
+      // 优先加载关键数据（书籍列表）
+      await fetchBooks();
+      
+      // 延迟加载非关键数据，避免阻塞页面渲染
+      setTimeout(() => {
+        Promise.all([
+          fetchRecentBooks(),
+          fetchRecommendedBooks(),
+          isAuthenticated && fetchRecentReadBooks(),
+          isAuthenticated && fetchPrivateBooks(),
+        ]).catch((error) => {
+          // 静默失败，不影响主列表显示
+          console.error('获取辅助数据失败:', error);
+        });
+      }, 200);
     } catch (error: any) {
       console.error('获取数据失败:', error);
       
@@ -255,17 +331,21 @@ export default function BookList() {
   const handleRefresh = async () => {
     setPage(1);
     setSelectedCategory('all');
+    setSelectedScope('all');
     await fetchAllData();
     await fetchBookCategories();
+    if (isAuthenticated) {
+      await fetchScopeCounts();
+    }
     toast.success(
-      (t) => (
+      (toastInstance) => (
         <div className="flex items-center gap-3">
           <div className="flex-shrink-0 w-8 h-8 rounded-full bg-white/20 flex items-center justify-center">
             <RefreshCw className="w-5 h-5 text-white animate-spin" style={{ animationDuration: '0.5s' }} />
           </div>
           <div>
-            <div className="font-semibold text-white">刷新成功</div>
-            <div className="text-xs text-white/80 mt-0.5">数据已更新</div>
+            <div className="font-semibold text-white">{t('shelf.refreshSuccess')}</div>
+            <div className="text-xs text-white/80 mt-0.5">{t('shelf.shelfUpdated')}</div>
           </div>
         </div>
       ),
@@ -291,21 +371,80 @@ export default function BookList() {
     onRefresh: handleRefresh,
   });
 
+  // 获取各筛选类型的书籍数量（用于决定是否显示筛选按钮）
+  const fetchScopeCounts = async () => {
+    if (!isAuthenticated) return;
+    
+    try {
+      const scopes = ['all', 'public', 'private', 'shared', 'group'];
+      const countPromises = scopes.map(async (scope) => {
+        try {
+          const params: any = { page: 1, limit: 1 };
+          if (scope !== 'all') {
+            params.scope = scope;
+          }
+          const response = await api.get('/books', { params, timeout: 3000 });
+          return {
+            scope,
+            count: response.data.pagination?.total || 0,
+          };
+        } catch (error) {
+          console.warn(`获取 ${scope} 类型书籍数量失败:`, error);
+          return { scope, count: 0 };
+        }
+      });
+      
+      const results = await Promise.all(countPromises);
+      const newScopeCounts: { [key: string]: number } = {};
+      results.forEach((result) => {
+        newScopeCounts[result.scope] = result.count;
+      });
+      setScopeCounts(newScopeCounts);
+    } catch (error) {
+      console.error('获取筛选类型书籍数量失败:', error);
+    }
+  };
+
   const fetchBooks = async () => {
     try {
-      const response = await api.get('/books', {
-        params: { 
-          page, 
-          limit, 
-          search: searchQuery || undefined,
-          sort: sortBy,
-          order: sortOrder,
-          category: selectedCategory !== 'all' ? selectedCategory : undefined,
-        },
+      const params: any = { 
+        page, 
+        limit, 
+        search: searchQuery || undefined,
+        sort: sortBy,
+        order: sortOrder,
+        category: selectedCategory !== 'all' ? selectedCategory : undefined,
+      };
+      
+      // 根据选择的scope添加筛选参数
+      if (selectedScope === 'public') {
+        params.scope = 'public';
+      } else if (selectedScope === 'private') {
+        params.scope = 'private';
+      } else if (selectedScope === 'shared') {
+        params.scope = 'shared';
+      } else if (selectedScope === 'group') {
+        params.scope = 'group';
+      }
+      
+      const response = await api.get('/books', { 
+        params,
+        timeout: 5000, // 5秒超时
       });
       
       if (page === 1) {
         setBooks(response.data.books || []);
+        // 更新当前筛选类型的数量
+        const currentTotal = response.data.pagination?.total || 0;
+        setScopeCounts(prev => {
+          const updated = { ...prev };
+          updated[selectedScope] = currentTotal;
+          // 如果是 "all" 类型，也更新 total（用于判断是否显示筛选区域）
+          if (selectedScope === 'all') {
+            updated.all = currentTotal;
+          }
+          return updated;
+        });
       } else {
         setBooks(prev => [...prev, ...(response.data.books || [])]);
       }
@@ -314,7 +453,7 @@ export default function BookList() {
       setHasMore((response.data.books || []).length === limit);
     } catch (error) {
       console.error('获取书籍列表失败:', error);
-      toast.error('获取书籍列表失败');
+      toast.error(t('book.fetchBooksFailed'));
     }
   };
 
@@ -322,6 +461,7 @@ export default function BookList() {
     try {
       const response = await api.get('/books/recent', {
         params: { limit: 20 },
+        timeout: 3000, // 3秒超时
       });
       const books: BookItem[] = response.data.books || [];
       // 去重：根据book_id去重
@@ -339,6 +479,7 @@ export default function BookList() {
     try {
       const response = await api.get('/books/recommended', {
         params: { limit: 20 },
+        timeout: 3000, // 3秒超时
       });
       const books: BookItem[] = response.data.books || [];
       // 去重：根据book_id去重
@@ -356,6 +497,7 @@ export default function BookList() {
     try {
       const response = await api.get('/reading/progress', {
         params: { limit: 20 },
+        timeout: 3000, // 3秒超时
       });
       const books: BookItem[] = response.data.progresses?.map((p: any) => ({
         id: p.book_id,
@@ -380,6 +522,7 @@ export default function BookList() {
     try {
       const response = await api.get('/books', {
         params: { limit: 20, scope: 'private' },
+        timeout: 3000, // 3秒超时
       });
       const books: BookItem[] = response.data.books || [];
       // 去重：根据book_id去重
@@ -401,7 +544,7 @@ export default function BookList() {
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
     if (!search.trim()) {
-      toast.error('请输入搜索关键词');
+      toast.error(t('book.enterSearchKeyword'));
       return;
     }
     // 跳转到搜索结果页面
@@ -427,6 +570,7 @@ export default function BookList() {
                 alt={book.title}
                 className="w-full h-full object-cover object-center group-hover:scale-105 transition-transform duration-300"
                 style={{ minWidth: '100%', minHeight: '100%' }}
+                onContextMenu={(e) => e.preventDefault()}
                 onError={(e) => {
                   const target = e.target as HTMLImageElement;
                   target.style.display = 'none';
@@ -451,7 +595,7 @@ export default function BookList() {
           })()}
           {isNoteBook(book) && (
             <div className="absolute top-2 left-2 px-2 py-0.5 rounded-md text-[10px] font-bold tracking-wide bg-black/70 text-white backdrop-blur">
-              笔记
+              {t('book.note')}
             </div>
           )}
           {book.rating && (
@@ -467,7 +611,7 @@ export default function BookList() {
           </h3>
           <div className="mt-auto space-y-0.5">
             <p className="text-[10px] text-gray-500 dark:text-gray-400 line-clamp-1">
-            {book.author || '未知作者'}
+            {book.author || t('book.unknownAuthor')}
           </p>
           </div>
         </div>
@@ -492,8 +636,16 @@ export default function BookList() {
               alt={book.title}
               className="w-full h-full object-cover object-center"
               style={{ minWidth: '100%', minHeight: '100%' }}
+              onContextMenu={(e) => e.preventDefault()}
               onError={(e) => {
                 const target = e.target as HTMLImageElement;
+                const imgSrc = target.src;
+                console.error('[BookList] 封面图片加载失败:', {
+                  title: book.title,
+                  coverUrl: book.cover_url,
+                  finalUrl: imgSrc,
+                });
+                
                 target.style.display = 'none';
                 const parent = target.parentElement;
                 if (parent) {
@@ -516,7 +668,7 @@ export default function BookList() {
         })()}
         {isNoteBook(book) && (
           <div className="absolute top-1 left-1 px-1.5 py-0.5 rounded-md text-[10px] font-bold tracking-wide bg-black/70 text-white backdrop-blur">
-            笔记
+            {t('book.note')}
           </div>
         )}
       </div>
@@ -525,7 +677,7 @@ export default function BookList() {
           {book.title.length > 30 ? `${book.title.substring(0, 30)}...` : book.title}
         </h3>
         <p className="text-xs sm:text-sm text-gray-500 dark:text-gray-400 mb-2">
-          {book.author || '未知作者'}
+          {book.author || t('book.unknownAuthor')}
         </p>
         {book.description && (
           <p className="text-xs text-gray-600 dark:text-gray-400 line-clamp-2 hidden sm:block">
@@ -568,14 +720,14 @@ export default function BookList() {
             <button
               onClick={() => scroll('left')}
               className="p-1.5 rounded-lg bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
-              title="向左滚动"
+              title={t('book.scrollLeft')}
             >
               <ChevronLeft className="w-4 h-4" />
             </button>
             <button
               onClick={() => scroll('right')}
               className="p-1.5 rounded-lg bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
-              title="向右滚动"
+              title={t('book.scrollRight')}
             >
               <ChevronRight className="w-4 h-4" />
             </button>
@@ -614,8 +766,8 @@ export default function BookList() {
                 </div>
                 <input
                   type="text"
-                  placeholder="搜索书籍、作者..."
-                    className="w-full pl-12 pr-12 py-3 bg-gray-50/80 dark:bg-gray-800/80 backdrop-blur-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 rounded-xl border-0 focus:outline-none focus:ring-2 focus:ring-blue-500/50 dark:focus:ring-blue-400/50 transition-all shadow-sm hover:shadow-md"
+                  placeholder={t('book.searchPlaceholder')}
+                    className="w-full pl-14 pr-12 py-3 bg-gray-50/80 dark:bg-gray-800/80 backdrop-blur-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 rounded-xl border-0 focus:outline-none focus:ring-2 focus:ring-blue-500/50 dark:focus:ring-blue-400/50 transition-all shadow-sm hover:shadow-md"
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                 />
@@ -632,7 +784,7 @@ export default function BookList() {
               <button 
                 type="submit" 
                   className="flex-shrink-0 w-12 h-12 flex items-center justify-center bg-blue-600 hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 text-white rounded-xl transition-all shadow-sm hover:shadow-md active:scale-95"
-                  title="搜索"
+                  title={t('common.search')}
               >
                   <Search className="w-5 h-5" />
               </button>
@@ -650,7 +802,7 @@ export default function BookList() {
 
           {/* 最近新增 */}
           {recentBooks.length > 0 && (
-            <HorizontalBookList title="最近新增" books={recentBooks} />
+            <HorizontalBookList title={t('book.recentAdded')} books={recentBooks} />
           )}
 
           {/* 私人书籍（仅登录用户）- 移动到最近新增下方 */}
@@ -659,7 +811,7 @@ export default function BookList() {
               <div className="flex items-center justify-between mb-4">
                 <h2 className="text-base sm:text-lg font-bold text-gray-900 dark:text-gray-100 flex items-center gap-2">
                   <div className="w-1 h-5 bg-gradient-to-b from-purple-500 to-pink-500 rounded-full"></div>
-                  <span className="bg-gradient-to-r from-purple-600 to-pink-600 bg-clip-text text-transparent">我的书籍</span>
+                  <span className="bg-gradient-to-r from-purple-600 to-pink-600 bg-clip-text text-transparent">{t('book.myBooks')}</span>
                 </h2>
                 <div className="flex gap-1.5">
                   <button
@@ -670,7 +822,7 @@ export default function BookList() {
                       }
                     }}
                     className="p-1.5 rounded-lg bg-purple-100 dark:bg-purple-900/30 hover:bg-purple-200 dark:hover:bg-purple-800/40 transition-colors"
-                    title="向左滚动"
+                    title={t('book.scrollLeft')}
                   >
                     <ChevronLeft className="w-4 h-4 text-purple-600 dark:text-purple-400" />
                   </button>
@@ -682,7 +834,7 @@ export default function BookList() {
                       }
                     }}
                     className="p-1.5 rounded-lg bg-purple-100 dark:bg-purple-900/30 hover:bg-purple-200 dark:hover:bg-purple-800/40 transition-colors"
-                    title="向右滚动"
+                    title={t('book.scrollRight')}
                   >
                     <ChevronRight className="w-4 h-4 text-purple-600 dark:text-purple-400" />
                   </button>
@@ -712,6 +864,7 @@ export default function BookList() {
                                 alt={book.title}
                                 className="w-full h-full object-cover object-center group-hover:scale-105 transition-transform duration-300"
                                 style={{ minWidth: '100%', minHeight: '100%' }}
+                                onContextMenu={(e) => e.preventDefault()}
                                 onError={(e) => {
                                   const target = e.target as HTMLImageElement;
                                   target.style.display = 'none';
@@ -736,7 +889,7 @@ export default function BookList() {
                           })()}
                           {isNoteBook(book) && (
                             <div className="absolute top-2 left-2 px-2 py-0.5 rounded-md text-[10px] font-bold tracking-wide bg-black/70 text-white backdrop-blur">
-                              笔记
+                              {t('book.note')}
                             </div>
                           )}
                           {book.rating && (
@@ -751,7 +904,7 @@ export default function BookList() {
                             {book.title}
                           </h3>
                           <p className="text-[10px] text-gray-500 dark:text-gray-400 line-clamp-1 mt-auto">
-                            {book.author || '未知作者'}
+                            {book.author || t('book.unknownAuthor')}
                           </p>
                         </div>
                       </div>
@@ -764,53 +917,150 @@ export default function BookList() {
 
           {/* 好书推荐 */}
           {recommendedBooks.length > 0 && (
-            <HorizontalBookList title="好书推荐" books={recommendedBooks} />
+            <HorizontalBookList title={t('book.recommended')} books={recommendedBooks} />
           )}
 
           {/* 所有书籍 */}
+          {/* 范围筛选（公开/私有/分享/群组） - 只在有对应类型书籍时显示，且没有搜索关键词时显示 */}
+          {isAuthenticated && !searchQuery && (() => {
+            // 检查是否有任何类型的书籍（除了 "all"）
+            const hasAnyBooks = scopeCounts.public > 0 || scopeCounts.private > 0 || scopeCounts.shared > 0 || scopeCounts.group > 0;
+            // 如果没有任何类型的书籍，不显示筛选区域
+            if (!hasAnyBooks) {
+              return null;
+            }
+            return (
+              <div className="mb-4 px-4">
+                <div className="flex items-center gap-2 overflow-x-auto scrollbar-hide pb-2">
+                  {/* "全部"按钮 - 只要有任何类型的书籍就显示 */}
+                  {scopeCounts.all > 0 && (
+                    <button
+                      onClick={() => {
+                        setSelectedScope('all');
+                        setPage(1);
+                      }}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all whitespace-nowrap ${
+                        selectedScope === 'all'
+                          ? 'bg-blue-600 text-white shadow-md'
+                          : 'bg-gray-50/80 dark:bg-gray-800/80 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700/80'
+                      }`}
+                    >
+                      {t('book.all') || '全部'}
+                    </button>
+                  )}
+                  {/* "公开"按钮 - 只在有公开书籍时显示 */}
+                  {scopeCounts.public > 0 && (
+                    <button
+                      onClick={() => {
+                        setSelectedScope('public');
+                        setPage(1);
+                      }}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all whitespace-nowrap ${
+                        selectedScope === 'public'
+                          ? 'bg-blue-600 text-white shadow-md'
+                          : 'bg-gray-50/80 dark:bg-gray-800/80 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700/80'
+                      }`}
+                    >
+                      {t('book.public') || '公开'}
+                    </button>
+                  )}
+                  {/* "私有"按钮 - 只在有私有书籍时显示 */}
+                  {scopeCounts.private > 0 && (
+                    <button
+                      onClick={() => {
+                        setSelectedScope('private');
+                        setPage(1);
+                      }}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all whitespace-nowrap ${
+                        selectedScope === 'private'
+                          ? 'bg-blue-600 text-white shadow-md'
+                          : 'bg-gray-50/80 dark:bg-gray-800/80 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700/80'
+                      }`}
+                    >
+                      {t('book.private') || '私有'}
+                    </button>
+                  )}
+                  {/* "分享给我"按钮 - 只在有分享书籍时显示 */}
+                  {scopeCounts.shared > 0 && (
+                    <button
+                      onClick={() => {
+                        setSelectedScope('shared');
+                        setPage(1);
+                      }}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all whitespace-nowrap ${
+                        selectedScope === 'shared'
+                          ? 'bg-blue-600 text-white shadow-md'
+                          : 'bg-gray-50/80 dark:bg-gray-800/80 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700/80'
+                      }`}
+                    >
+                      {t('book.shared') || '分享给我'}
+                    </button>
+                  )}
+                  {/* "书友会可见"按钮 - 只在有群组书籍时显示 */}
+                  {scopeCounts.group > 0 && (
+                    <button
+                      onClick={() => {
+                        setSelectedScope('group');
+                        setPage(1);
+                      }}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all whitespace-nowrap ${
+                        selectedScope === 'group'
+                          ? 'bg-blue-600 text-white shadow-md'
+                          : 'bg-gray-50/80 dark:bg-gray-800/80 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700/80'
+                      }`}
+                    >
+                      {t('book.group') || '书友会可见'}
+                    </button>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* 书籍分类筛选 - 扁平化设计 - 始终显示，即使没有书籍 */}
+          {bookCategories.length > 0 && (
+            <div className="mb-4 px-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  onClick={() => {
+                    setSelectedCategory('all');
+                    setPage(1);
+                  }}
+                  className={`px-4 py-2 rounded-xl text-sm font-medium transition-all ${
+                    selectedCategory === 'all'
+                      ? 'bg-blue-600 text-white shadow-md shadow-blue-500/30'
+                      : 'bg-gray-50/80 dark:bg-gray-800/80 backdrop-blur-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700/80 shadow-sm hover:shadow-md'
+                  }`}
+                >
+                  {t('shelf.all')}
+                </button>
+                {bookCategories.map((cat) => (
+                  <button
+                    key={cat.category}
+                    onClick={() => {
+                      setSelectedCategory(cat.category);
+                      setPage(1);
+                    }}
+                    className={`px-4 py-2 rounded-xl text-sm font-medium transition-all ${
+                      selectedCategory === cat.category
+                        ? 'bg-blue-600 text-white shadow-md shadow-blue-500/30'
+                        : 'bg-gray-50/80 dark:bg-gray-800/80 backdrop-blur-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700/80 shadow-sm hover:shadow-md'
+                    }`}
+                  >
+                    {cat.category}{cat.count !== undefined && cat.count !== null ? ` (${cat.count})` : ''}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* 书籍列表内容 */}
           {books.length === 0 ? (
             <div className="text-center py-12 text-gray-500 dark:text-gray-400">
-              暂无书籍
+              {t('book.noBooks')}
             </div>
           ) : (
             <>
-              {/* 书籍分类筛选 - 扁平化设计 */}
-              {bookCategories.length > 0 && (
-                <div className="mb-4 px-0">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <button
-                      onClick={() => {
-                        setSelectedCategory('all');
-                        setPage(1);
-                      }}
-                      className={`px-4 py-2 rounded-xl text-sm font-medium transition-all ${
-                        selectedCategory === 'all'
-                          ? 'bg-blue-600 text-white shadow-md shadow-blue-500/30'
-                          : 'bg-gray-50/80 dark:bg-gray-800/80 backdrop-blur-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700/80 shadow-sm hover:shadow-md'
-                      }`}
-                    >
-                      全部
-                    </button>
-                    {bookCategories.map((cat) => (
-                      <button
-                        key={cat.category}
-                        onClick={() => {
-                          setSelectedCategory(cat.category);
-                          setPage(1);
-                        }}
-                        className={`px-4 py-2 rounded-xl text-sm font-medium transition-all ${
-                          selectedCategory === cat.category
-                            ? 'bg-blue-600 text-white shadow-md shadow-blue-500/30'
-                            : 'bg-gray-50/80 dark:bg-gray-800/80 backdrop-blur-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700/80 shadow-sm hover:shadow-md'
-                        }`}
-                      >
-                        {cat.category} ({cat.count})
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-
               {/* 视图切换和排序 - 有背景容器 */}
               <div className="px-0 mb-6">
                 <div className="bg-white/90 dark:bg-gray-800/90 backdrop-blur-sm rounded-xl p-2 shadow-sm border border-gray-200/50 dark:border-gray-700/50">
@@ -823,7 +1073,7 @@ export default function BookList() {
                           ? 'bg-blue-600 text-white shadow-sm'
                           : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-600'
                       }`}
-                      title="网格视图"
+                      title={t('shelf.gridView')}
                     >
                       <Grid3x3 className="w-5 h-5" />
                     </button>
@@ -834,7 +1084,7 @@ export default function BookList() {
                           ? 'bg-blue-600 text-white shadow-sm'
                           : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-600'
                       }`}
-                      title="列表视图"
+                      title={t('shelf.listView')}
                     >
                       <List className="w-5 h-5" />
                     </button>
@@ -855,14 +1105,14 @@ export default function BookList() {
                         setSortMenuOpen(!sortMenuOpen);
                       }}
                       className="flex items-center gap-2 px-3 py-2 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors shadow-sm"
-                      title="排序"
+                      title={t('shelf.sort')}
                     >
                       <ArrowUpDown className="w-4 h-4 text-gray-600 dark:text-gray-400" />
                       <span className="text-sm text-gray-700 dark:text-gray-300 hidden sm:inline font-medium">
-                        {sortBy === 'created_at' && (sortOrder === 'desc' ? '最新添加' : '最早添加')}
-                        {sortBy === 'title' && (sortOrder === 'asc' ? '标题 A-Z' : '标题 Z-A')}
-                        {sortBy === 'author' && (sortOrder === 'asc' ? '作者 A-Z' : '作者 Z-A')}
-                        {sortBy === 'rating' && (sortOrder === 'desc' ? '评分最高' : '评分最低')}
+                        {sortBy === 'created_at' && (sortOrder === 'desc' ? t('shelf.recentAdded') : t('shelf.earliestAdded'))}
+                        {sortBy === 'title' && (sortOrder === 'asc' ? t('shelf.titleAZ') : t('shelf.titleZA'))}
+                        {sortBy === 'author' && (sortOrder === 'asc' ? t('shelf.authorAZ') : t('shelf.authorZA'))}
+                        {sortBy === 'rating' && (sortOrder === 'desc' ? t('shelf.ratingHighest') : t('shelf.ratingLowest'))}
                       </span>
                     </button>
                     
@@ -880,14 +1130,14 @@ export default function BookList() {
                           }}
                         >
                           <div className="px-3 py-2 text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase border-b border-gray-200 dark:border-gray-700">
-                            排序方式
+                            {t('shelf.sortBy')}
                           </div>
                           
                           {/* 创建时间 */}
                           <div className="px-3 py-1.5">
                             <div className="text-xs text-gray-500 dark:text-gray-400 mb-1.5 flex items-center gap-1">
                               <Calendar className="w-3 h-3" />
-                              创建时间
+                              {t('shelf.createTime')}
                             </div>
                             <div className="flex gap-1">
                               <button
@@ -904,7 +1154,7 @@ export default function BookList() {
                                 }`}
                               >
                                 <ArrowDown className="w-3 h-3" />
-                                最新
+                                {t('shelf.newest')}
                               </button>
                               <button
                                 onClick={() => {
@@ -920,7 +1170,7 @@ export default function BookList() {
                                 }`}
                               >
                                 <ArrowUp className="w-3 h-3" />
-                                最早
+                                {t('shelf.oldest')}
                               </button>
                             </div>
                           </div>
@@ -929,7 +1179,7 @@ export default function BookList() {
                           <div className="px-3 py-1.5">
                             <div className="text-xs text-gray-500 dark:text-gray-400 mb-1.5 flex items-center gap-1">
                               <Book className="w-3 h-3" />
-                              标题
+                              {t('book.title')}
                             </div>
                             <div className="flex gap-1">
                               <button
@@ -971,7 +1221,7 @@ export default function BookList() {
                           <div className="px-3 py-1.5">
                             <div className="text-xs text-gray-500 dark:text-gray-400 mb-1.5 flex items-center gap-1">
                               <Book className="w-3 h-3" />
-                              作者
+                              {t('book.author')}
                             </div>
                             <div className="flex gap-1">
                               <button
@@ -1013,7 +1263,7 @@ export default function BookList() {
                           <div className="px-3 py-1.5">
                             <div className="text-xs text-gray-500 dark:text-gray-400 mb-1.5 flex items-center gap-1">
                               <Star className="w-3 h-3" />
-                              评分
+                              {t('shelf.rating')}
                             </div>
                             <div className="flex gap-1">
                               <button
@@ -1030,7 +1280,7 @@ export default function BookList() {
                                 }`}
                               >
                                 <ArrowDown className="w-3 h-3" />
-                                最高
+                                {t('shelf.highest')}
                               </button>
                               <button
                                 onClick={() => {
@@ -1046,7 +1296,7 @@ export default function BookList() {
                                 }`}
                               >
                                 <ArrowUp className="w-3 h-3" />
-                                最低
+                                {t('shelf.lowest')}
                               </button>
                             </div>
                           </div>
@@ -1081,17 +1331,17 @@ export default function BookList() {
                     disabled={page === 1}
                     className="btn btn-secondary"
                   >
-                    上一页
+                    {t('book.previousPage')}
                   </button>
                   <span className="flex items-center px-4">
-                    第 {page} 页 / 共 {Math.ceil(total / limit)} 页
+                    {t('book.pageInfo', { page, total: Math.ceil(total / limit) })}
                   </span>
                   <button
                     onClick={() => setPage(page + 1)}
                     disabled={page >= Math.ceil(total / limit)}
                     className="btn btn-secondary"
                   >
-                    下一页
+                    {t('book.nextPage')}
                   </button>
                 </div>
               )}
@@ -1104,7 +1354,7 @@ export default function BookList() {
                     disabled={loading}
                     className="btn btn-secondary"
                   >
-                    {loading ? '加载中...' : '加载更多'}
+                    {loading ? t('common.loading') : t('book.loadMore')}
                   </button>
                 </div>
               )}

@@ -2,79 +2,64 @@
  * @file version.ts
  * @author ttbye
  * @description 版本号管理工具
+ * 
+ * 统一从根目录 package.json 读取版本号（单一真实来源）
  */
 
 import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { resolve } from 'path';
 
-// 在编译后的 dist 目录中，__dirname 指向 dist/utils
-// 在源码中，__dirname 指向 src/utils
-// 所以需要根据实际情况调整路径
-const getVersionFilePath = () => {
-  // 尝试从当前文件位置推断项目根目录
+// 获取项目根目录的 package.json 路径（单一真实来源）
+const getRootPackageJsonPath = () => {
   const currentDir = __dirname;
   // 如果在 dist/utils 中，需要回到项目根目录
   if (currentDir.includes('dist')) {
+    return resolve(currentDir, '../../../package.json');
+  }
+  // 如果在 src/utils 中，需要回到项目根目录
+  return resolve(currentDir, '../../../package.json');
+};
+
+// 获取 backend/version.json 路径（用于保存构建时间）
+const getVersionFilePath = () => {
+  const currentDir = __dirname;
+  if (currentDir.includes('dist')) {
     return resolve(currentDir, '../../version.json');
   }
-  // 如果在 src/utils 中，也需要回到项目根目录
   return resolve(currentDir, '../../version.json');
 };
 
+const ROOT_PACKAGE_JSON = getRootPackageJsonPath();
 const VERSION_FILE = getVersionFilePath();
 
 /**
- * 获取 package.json 路径
+ * 从根目录 package.json 读取版本号（单一真实来源）
  */
-const getPackageJsonPath = () => {
-  const currentDir = __dirname;
-  if (currentDir.includes('dist')) {
-    return resolve(currentDir, '../../package.json');
-  }
-  return resolve(currentDir, '../../package.json');
-};
-
-/**
- * 生成带随机码的版本号
- * 格式：1.225.12-XXXXXX
- * 1: 大版本号（固定）
- * 225: 小版本号 = "2" + 年份后两位（2025 -> "25"） = "2" + "25" = "225"
- * 12: 编译月份
- * XXXXXX: 6位随机码
- */
-export function generateVersion(): string {
+function getVersionFromRootPackage(): string {
   try {
-    const now = new Date();
-    const year = now.getFullYear();
-    const month = now.getMonth() + 1; // 月份从0开始，需要+1
-    
-    // 计算小版本号：字符串拼接 "2" + 年份后两位
-    const yearLastTwo = (year % 100).toString().padStart(2, '0'); // 2025 -> "25"
-    const minorVersion = `2${yearLastTwo}`; // "2" + "25" = "225"
-    
-    // 生成6位随机码
-    const randomCode = Math.random().toString(36).substring(2, 8).toUpperCase(); // 6位随机码
-    
-    // 格式：1.225.12(XXXXXX)
-    return `1.${minorVersion}.${month.toString().padStart(2, '0')}(${randomCode})`;
+    if (existsSync(ROOT_PACKAGE_JSON)) {
+      const pkg = JSON.parse(readFileSync(ROOT_PACKAGE_JSON, 'utf-8'));
+      return pkg.version || '0.0.0-UNKNOWN';
+    }
   } catch (error) {
-    console.error('生成版本号失败:', error);
-    return '1.2.0-UNKNOWN';
+    console.error('读取根目录 package.json 失败:', error);
   }
+  return '0.0.0-UNKNOWN';
 }
 
 /**
- * 获取当前版本号
+ * 获取当前版本号（从根目录 package.json）
  */
 export function getVersion(): string {
   try {
-    if (existsSync(VERSION_FILE)) {
-      const versionData = JSON.parse(readFileSync(VERSION_FILE, 'utf-8'));
-      return versionData.version || '0.0.0-UNKNOWN';
+    // 优先从根目录 package.json 读取（单一真实来源）
+    const version = getVersionFromRootPackage();
+    
+    // 同时更新 backend/version.json（用于保存构建时间）
+    if (version !== '0.0.0-UNKNOWN') {
+      saveVersion(version);
     }
-    // 如果版本文件不存在，尝试生成一个（开发环境）
-    const version = generateVersion();
-    saveVersion(version);
+    
     return version;
   } catch (error) {
     console.error('读取版本号失败:', error);
@@ -87,20 +72,29 @@ export function getVersion(): string {
  */
 export function getVersionInfo(): { version: string; buildTime?: string } {
   try {
+    // 从根目录 package.json 读取版本号
+    const version = getVersionFromRootPackage();
+    
+    // 读取或创建 version.json（用于保存构建时间）
+    let buildTime: string | undefined;
     if (existsSync(VERSION_FILE)) {
-      const versionData = JSON.parse(readFileSync(VERSION_FILE, 'utf-8'));
-      return {
-        version: versionData.version || '0.0.0-UNKNOWN',
-        buildTime: versionData.buildTime,
-      };
+      try {
+        const versionData = JSON.parse(readFileSync(VERSION_FILE, 'utf-8'));
+        buildTime = versionData.buildTime;
+      } catch (e) {
+        // 忽略读取错误
+      }
     }
-    // 如果版本文件不存在，尝试生成一个（开发环境）
-    const version = generateVersion();
-    saveVersion(version);
-    const versionData = JSON.parse(readFileSync(VERSION_FILE, 'utf-8'));
+    
+    // 如果没有构建时间，创建新的
+    if (!buildTime) {
+      buildTime = new Date().toISOString();
+      saveVersion(version);
+    }
+    
     return {
-      version: versionData.version || '0.0.0-UNKNOWN',
-      buildTime: versionData.buildTime,
+      version: version !== '0.0.0-UNKNOWN' ? version : '0.0.0-UNKNOWN',
+      buildTime,
     };
   } catch (error) {
     console.error('读取版本信息失败:', error);
@@ -109,7 +103,7 @@ export function getVersionInfo(): { version: string; buildTime?: string } {
 }
 
 /**
- * 保存版本号到文件
+ * 保存版本号到 backend/version.json（用于保存构建时间）
  */
 export function saveVersion(version: string): void {
   try {
@@ -118,18 +112,8 @@ export function saveVersion(version: string): void {
       buildTime: new Date().toISOString(),
     };
     writeFileSync(VERSION_FILE, JSON.stringify(versionData, null, 2), 'utf-8');
-    console.log(`📦 后端版本号已保存: ${version}`);
   } catch (error) {
     console.error('保存版本号失败:', error);
   }
-}
-
-/**
- * 在构建时生成版本号（用于构建脚本）
- */
-if (require.main === module) {
-  const version = generateVersion();
-  saveVersion(version);
-  console.log(`✅ 版本号生成完成: ${version}`);
 }
 

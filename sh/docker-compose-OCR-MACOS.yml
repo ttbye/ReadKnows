@@ -1,0 +1,36 @@
+version: '3.8'
+
+services:
+  ocr-api:
+    image: ttbye/ocr-api:latest
+    platform: linux/amd64  # 指定平台，兼容 x86_64 和 ARM64
+    build:
+      context: ../ocr-api
+      dockerfile: Dockerfile
+    container_name: ocr-api
+    ports:
+      - "5080:5080"
+    environment:
+      - PORT=5080
+      - NODE_ENV=production
+      - API_KEY=${API_KEY:-}
+      - TEMP_DIR=/app/temp
+      - USE_GPU=${USE_GPU:-false}
+      - OCR_MODELS_DIR=/app/models
+      - PADDLEX_HOME=/app/models
+      - DISABLE_MODEL_SOURCE_CHECK=True
+    volumes:
+      - /Users/ttbye/ReadKnows/ocr-temp:/app/temp
+      - /Users/ttbye/ReadKnows/ocr-models:/app/models
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - ocr-network
+
+networks:
+  ocr-network:
+    driver: bridge

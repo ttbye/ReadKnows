@@ -63,8 +63,18 @@ class OfflineDataCache {
    * 生成缓存键
    */
   private generateKey(url: string, params?: any): string {
+    // 获取当前用户ID用于隔离缓存
+    let userId = null;
+    try {
+      const authStore = JSON.parse(localStorage.getItem('auth-store') || '{}');
+      userId = authStore?.state?.user?.id || null;
+    } catch (e) {
+      // 忽略localStorage解析错误
+    }
+
     const paramsStr = params ? JSON.stringify(params) : '';
-    return `${url}${paramsStr}`;
+    const userPrefix = userId ? `user:${userId}:` : 'guest:';
+    return `${userPrefix}${url}${paramsStr}`;
   }
 
   /**

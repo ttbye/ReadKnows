@@ -6,9 +6,23 @@
  */
 
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { BookData, ReadingSettings, ReadingPosition, TOCItem } from '../../../types/reader';
+import { BookData, ReadingSettings, ReadingPosition, TOCItem, Highlight } from '../../../types/reader';
 import toast from 'react-hot-toast';
 import { GestureHandler, GestureCallbacks } from '../utils/GestureHandler';
+import { useTranslation } from 'react-i18next';
+import { selectSentenceAtPoint } from '../common/text-selection/textSelection';
+import { getFullApiUrl, getApiKeyHeader, getFullBookUrl } from '../../../utils/api';
+
+interface BookNote {
+  id: string;
+  content: string;
+  position?: string;
+  page_number?: number;
+  chapter_index?: number;
+  selected_text?: string;
+  created_at: string;
+  updated_at: string;
+}
 
 interface ReaderEPUBProProps {
   book: BookData;
@@ -18,6 +32,9 @@ interface ReaderEPUBProProps {
   onProgressChange: (progress: number, position: ReadingPosition) => void;
   onTOCChange: (toc: TOCItem[]) => void;
   onClose: () => void;
+  highlights?: Highlight[];
+  notes?: BookNote[];
+  onNoteClick?: (note: BookNote) => void;
 }
 
 // 阅读器引擎类型
@@ -37,7 +54,11 @@ export default function ReaderEPUBPro({
   onProgressChange,
   onTOCChange,
   onClose,
+  highlights = [],
+  notes = [],
+  onNoteClick,
 }: ReaderEPUBProProps) {
+  const { t } = useTranslation();
   // 核心状态
   const containerRef = useRef<HTMLDivElement>(null);
   const [loading, setLoading] = useState(true);
@@ -141,9 +162,12 @@ export default function ReaderEPUBPro({
         return offlineStorage.createBlobURL(blob);
       }
     } catch (error) {
-      // 离线存储不可用，使用服务器URL
+      // 离线存储不可用，使用服务器URL（需要构建完整URL以支持自定义API URL）
+      return getFullBookUrl(serverUrl);
     }
 
+    // 如果离线存储成功，返回blob URL；否则返回完整URL
+    // 注意：如果离线存储失败，上面的catch已经返回了完整URL
     return serverUrl;
   }, [book.id, book.file_path, book.file_name]);
 
@@ -456,13 +480,26 @@ export default function ReaderEPUBPro({
         // ignore
       }
 
-      // ⚠️ 禁用 epubjs.locations.generate：
-      // 部分书籍会在 epubjs 内部异步解析 locations 时抛出 Locations.parse(ownerDocument) 异常，
-      // 该异常发生在 requestAnimationFrame 队列中，无法通过 Promise catch 完全捕获，会导致控制台持续报错。
-      // 因此这里直接不生成 locations，回退使用 percentage/章节进度（阅读与进度保存不受影响）。
-      locationsReadyRef.current = false;
-      totalLocationsRef.current = 0;
-      locationsFailedRef.current = true;
+      // ⚠️ 注意：部分书籍会在 epubjs 内部异步解析 locations 时抛出异常
+      // 但为了支持全书进度跳转，我们仍然尝试生成 locations
+      // 如果生成失败，会在跳转时使用回退方案
+      // 尝试在后台生成 locations（不阻塞初始化）
+      try {
+        // 延迟生成，避免阻塞初始化
+        setTimeout(() => {
+          if (bookInstance?.locations && typeof bookInstance.locations.generate === 'function') {
+            generateLocationsInBackground().catch((e) => {
+              // 生成失败不影响阅读，跳转时会使用回退方案
+              console.log('[ReaderEPUBPro] locations 生成失败，跳转时将使用章节估算方案:', e);
+              locationsFailedRef.current = true;
+            });
+          }
+        }, 3000); // 延迟3秒生成，确保阅读器已完全初始化
+      } catch (e) {
+        // 如果触发生成也失败，标记为失败
+        console.warn('[ReaderEPUBPro] 无法触发 locations 生成:', e);
+        // 不直接设置 locationsFailedRef，允许后续尝试
+      }
       
       // ⚠️ 不要 monkey-patch rendition.hooks.content.trigger
       // epubjs 这里的第一个参数是 Contents（带 .on/.addStylesheetRules 等），不是 Document。
@@ -923,9 +960,114 @@ export default function ReaderEPUBPro({
             }
           };
 
+          // ==================== 图片点击/长按检测 ====================
+          // 为所有图片添加点击和长按事件监听
+          const setupImageListeners = () => {
+            const images = doc.querySelectorAll('img');
+            images.forEach((img) => {
+              // 跳过已处理的图片
+              if ((img as any).__rkImageListener) return;
+              (img as any).__rkImageListener = true;
+
+              let longPressTimer: any = null;
+              const LONG_PRESS_MS = 500;
+              let hasMoved = false;
+              let touchStartPos: { x: number; y: number } | null = null;
+
+              const handleImageClick = (e: MouseEvent | TouchEvent) => {
+                // 如果用户正在选择文本，不触发图片查看
+                const selection = win?.getSelection?.() || doc.getSelection?.();
+                if (selection && !selection.isCollapsed) {
+                  const text = selection.toString().trim();
+                  if (text && text.length > 0) {
+                    return; // 有文本选择，不处理图片点击
+                  }
+                }
+
+                const imgElement = e.target as HTMLImageElement;
+                if (!imgElement || imgElement.tagName !== 'IMG') return;
+
+                const imageUrl = imgElement.src || imgElement.getAttribute('src') || '';
+                if (!imageUrl) return;
+
+                // 双击或长按后点击：显示图片查看器
+                window.dispatchEvent(
+                  new CustomEvent('__reader_view_image', {
+                    detail: { imageUrl },
+                  })
+                );
+              };
+
+              const handleImageLongPress = (e: TouchEvent) => {
+                const imgElement = e.target as HTMLImageElement;
+                if (!imgElement || imgElement.tagName !== 'IMG') return;
+
+                const imageUrl = imgElement.src || imgElement.getAttribute('src') || '';
+                if (!imageUrl) return;
+
+                // 长按显示图片查看器
+                window.dispatchEvent(
+                  new CustomEvent('__reader_view_image', {
+                    detail: { imageUrl },
+                  })
+                );
+              };
+
+              // 鼠标双击
+              img.addEventListener('dblclick', handleImageClick);
+
+              // 触摸长按
+              img.addEventListener('touchstart', (e: TouchEvent) => {
+                if (e.touches.length === 1) {
+                  touchStartPos = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+                  hasMoved = false;
+                  longPressTimer = setTimeout(() => {
+                    if (!hasMoved && touchStartPos) {
+                      handleImageLongPress(e);
+                    }
+                  }, LONG_PRESS_MS);
+                }
+              }, { passive: true });
+
+              img.addEventListener('touchmove', () => {
+                hasMoved = true;
+                if (longPressTimer) {
+                  clearTimeout(longPressTimer);
+                  longPressTimer = null;
+                }
+              }, { passive: true });
+
+              img.addEventListener('touchend', () => {
+                if (longPressTimer) {
+                  clearTimeout(longPressTimer);
+                  longPressTimer = null;
+                }
+                touchStartPos = null;
+                hasMoved = false;
+              }, { passive: true });
+
+              // 移除单击事件监听，只保留双击和长按，避免与点击翻页冲突
+            });
+          };
+
+          // 立即设置图片监听器
+          setupImageListeners();
+
+          // 监听DOM变化，为新加载的图片添加监听器
+          const imageObserver = new MutationObserver(() => {
+            setupImageListeners();
+          });
+          imageObserver.observe(doc.body, {
+            childList: true,
+            subtree: true,
+          });
+
+          // 保存observer以便清理
+          (doc as any).__rkImageObserver = imageObserver;
+
           // 监听鼠标/触摸结束后上报选区
-          // 说明：移动端/滚动/滑动翻页时，WebView/Chrome 可能产生“短暂选区”，会导致误弹菜单；
-          // 这里加入“手势移动阈值”与“最小文本长度”来防误触。
+          // 说明：移动端/滚动/滑动翻页时，WebView/Chrome 可能产生"短暂选区"，会导致误弹菜单；
+          // 这里加入"手势移动阈值"与"最小文本长度"来防误触。
           if (!(doc as any).__rkSelectionListener) {
             const state = {
               touchStart: null as { x: number; y: number } | null,
@@ -1166,54 +1308,9 @@ export default function ReaderEPUBPro({
               return r || { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight };
             };
 
-            // 长按自动选择“一句话”
-            const SENTENCE_BREAK = /[。！？；;.!?\n\r]/;
-            const selectSentenceAtPoint = (clientX: number, clientY: number) => {
-              try {
-                const anyDoc = doc as any;
-                let range: Range | null = null;
-                if (typeof anyDoc.caretRangeFromPoint === 'function') {
-                  range = anyDoc.caretRangeFromPoint(clientX, clientY);
-                } else if (typeof anyDoc.caretPositionFromPoint === 'function') {
-                  const pos = anyDoc.caretPositionFromPoint(clientX, clientY);
-                  if (pos) {
-                    range = doc.createRange();
-                    range.setStart(pos.offsetNode, pos.offset);
-                    range.collapse(true);
-                  }
-                }
-                if (!range) return false;
-
-                let node = range.startContainer as any;
-                let offset = range.startOffset;
-                if (node && node.nodeType !== Node.TEXT_NODE) {
-                  const walker = doc.createTreeWalker(node, NodeFilter.SHOW_TEXT);
-                  const textNode = walker.nextNode();
-                  if (!textNode) return false;
-                  node = textNode;
-                  offset = 0;
-                }
-                const text = (node?.textContent || '') as string;
-                if (!text) return false;
-
-                let start = Math.min(offset, text.length);
-                let end = Math.min(offset, text.length);
-                while (start > 0 && !SENTENCE_BREAK.test(text[start - 1])) start--;
-                while (end < text.length && !SENTENCE_BREAK.test(text[end])) end++;
-                if (end < text.length) end++;
-                if (end - start < 2) return false;
-
-                const sel = win?.getSelection?.() || doc.getSelection?.();
-                if (!sel) return false;
-                const sentenceRange = doc.createRange();
-                sentenceRange.setStart(node, start);
-                sentenceRange.setEnd(node, end);
-                sel.removeAllRanges();
-                sel.addRange(sentenceRange);
-                return true;
-              } catch (e) {
-                return false;
-              }
+            // 长按自动选择"一句话"（使用通用模块，支持跨节点选择）
+            const selectSentenceAtPointLocal = (clientX: number, clientY: number) => {
+              return selectSentenceAtPoint(doc, win, clientX, clientY);
             };
 
             let longPressTimer: any = null;
@@ -1234,6 +1331,10 @@ export default function ReaderEPUBPro({
             // 统一使用 pointer 处理 swipe，再保留 touch 作为兜底
             let pointerDown: { x: number; y: number; time: number } | null = null;
             let pointerMove: { maxX: number; maxY: number; lastX: number; lastY: number } = { maxX: 0, maxY: 0, lastX: 0, lastY: 0 };
+            
+            // 记录鼠标按下和移动状态，用于区分"选择文字"和"点击翻页"
+            let mouseDownForClick: { x: number; y: number; time: number } | null = null;
+            let mouseMovedForClick = false;
 
             const onPointerDown = (e: PointerEvent) => {
               if (settingsRef.current.pageTurnMethod !== 'swipe') return;
@@ -1295,6 +1396,12 @@ export default function ReaderEPUBPro({
               if (pageTurnStateRef.current.isTurningPage) return;
               pageTurnStateRef.current.isTurningPage = true;
               pageTurnStateRef.current.lastPageTurnTime = now;
+              // 翻页时通知外层容器隐藏工具条
+              window.dispatchEvent(
+                new CustomEvent('__reader_page_turn', {
+                  detail: { direction: dir },
+                })
+              );
               try {
                 if (dir === 'prev') epubjsRenditionRef.current.prev();
                 else epubjsRenditionRef.current.next();
@@ -1324,7 +1431,7 @@ export default function ReaderEPUBPro({
                 try {
                   const sel = win?.getSelection?.() || doc.getSelection?.();
                   if (!sel || sel.isCollapsed) {
-                    const ok = selectSentenceAtPoint(t.clientX, t.clientY);
+                    const ok = selectSentenceAtPointLocal(t.clientX, t.clientY);
                     if (ok) {
                       longPressSelected = true;
                       // 长按成功后立即上报选区并弹出菜单（不必等抬手）
@@ -1406,6 +1513,12 @@ export default function ReaderEPUBPro({
               if (pageTurnStateRef.current.isTurningPage) return;
               pageTurnStateRef.current.isTurningPage = true;
               pageTurnStateRef.current.lastPageTurnTime = now;
+              // 翻页时通知外层容器隐藏工具条
+              window.dispatchEvent(
+                new CustomEvent('__reader_page_turn', {
+                  detail: { direction: dir },
+                })
+              );
               try {
                 if (dir === 'prev') epubjsRenditionRef.current.prev();
                 else epubjsRenditionRef.current.next();
@@ -1418,14 +1531,39 @@ export default function ReaderEPUBPro({
               const s = settingsRef.current;
               if (s.pageTurnMethod !== 'click' || !s.clickToTurn) return;
               if (!epubjsRenditionRef.current) return;
+              
+              // 检查是否点击了笔记标记或脚注，如果是则不触发翻页
+              const target = e.target as HTMLElement;
+              if (target && (
+                target.classList.contains('rk-note-mark') ||
+                target.classList.contains('rk-note-footnote') ||
+                target.closest('.rk-note-mark') ||
+                target.closest('.rk-note-footnote')
+              )) {
+                return;
+              }
+              
               const rect = getRect();
               const x = e.clientX - rect.left;
               const y = e.clientY - rect.top;
 
-              // 若有选区，不触发点击翻页
+              // 优先检查并隐藏 UI 元素（工具条、选择等）
+              // 如果隐藏了 UI，则不翻页
+              const checkAndHideUI = (window as any).__readerCheckAndHideUI;
+              if (checkAndHideUI && typeof checkAndHideUI === 'function') {
+                const hasHiddenUI = checkAndHideUI();
+                if (hasHiddenUI) {
+                  // 如果隐藏了 UI，不执行翻页
+                  return;
+                }
+              }
+              
+              // 若有选区，不触发点击翻页（让 checkAndHideUI 处理清除选择）
               try {
                 const sel = doc.getSelection?.();
-                if (sel && !sel.isCollapsed) return;
+                if (sel && !sel.isCollapsed) {
+                  return;
+                }
               } catch (e) {}
 
               const now = Date.now();
@@ -1434,6 +1572,16 @@ export default function ReaderEPUBPro({
               if (pageTurnStateRef.current.isTurningPage) return;
               pageTurnStateRef.current.isTurningPage = true;
               pageTurnStateRef.current.lastPageTurnTime = now;
+              
+              // 翻页时通知外层容器隐藏工具条
+              const turnDirection = s.pageTurnMode === 'horizontal' 
+                ? (x < rect.width / 2 ? 'prev' : 'next')
+                : (y < rect.height / 2 ? 'prev' : 'next');
+              window.dispatchEvent(
+                new CustomEvent('__reader_page_turn', {
+                  detail: { direction: turnDirection },
+                })
+              );
 
               if (s.pageTurnMode === 'horizontal') {
                 if (x < rect.width / 2) epubjsRenditionRef.current.prev();
@@ -1502,27 +1650,27 @@ export default function ReaderEPUBPro({
       
       // 优先使用 CFI（最精确的位置）
       if (initialPosition?.currentLocation && initialPosition.currentLocation.startsWith('epubcfi(')) {
-        console.log('[ReaderEPUBPro] [初始化] 尝试使用CFI恢复位置:', {
-          cfi: initialPosition.currentLocation.substring(0, 50) + '...',
-          cfiValid: initialPosition.currentLocation.startsWith('epubcfi('),
-          progress: initialPosition.progress,
-          currentPage: initialPosition.currentPage,
-          chapterIndex: initialPosition.chapterIndex,
-        });
+        // console.log('[ReaderEPUBPro] [初始化] 尝试使用CFI恢复位置:', {
+        //   cfi: initialPosition.currentLocation.substring(0, 50) + '...',
+        //   cfiValid: initialPosition.currentLocation.startsWith('epubcfi('),
+        //   progress: initialPosition.progress,
+        //   currentPage: initialPosition.currentPage,
+        //   chapterIndex: initialPosition.chapterIndex,
+        // });
         try {
           displayPromise = rendition.display(initialPosition.currentLocation);
           restoredByCFI = true;
-          console.log('[ReaderEPUBPro] [初始化] ✅ CFI恢复成功');
+          // console.log('[ReaderEPUBPro] [初始化] ✅ CFI恢复成功');
         } catch (error) {
-          console.error('ReaderEPUBPro: ❌ CFI 恢复失败，回退到章节索引', error);
+          // console.error('ReaderEPUBPro: ❌ CFI 恢复失败，回退到章节索引', error);
           // CFI 失败，回退到章节索引
           if (initialPosition.chapterIndex !== undefined) {
             const item = spine.get(initialPosition.chapterIndex);
             displayPromise = item ? rendition.display(item.href) : rendition.display(spine.get(0).href);
-            console.log('[ReaderEPUBPro] [初始化] 回退到章节索引:', initialPosition.chapterIndex);
+            // console.log('[ReaderEPUBPro] [初始化] 回退到章节索引:', initialPosition.chapterIndex);
           } else {
             displayPromise = rendition.display(spine.get(0).href);
-            console.log('[ReaderEPUBPro] [初始化] 回退到第一章');
+            // console.log('[ReaderEPUBPro] [初始化] 回退到第一章');
           }
         }
       } else if (initialPosition?.chapterIndex !== undefined) {
@@ -1553,11 +1701,11 @@ export default function ReaderEPUBPro({
           const actualCfi = actualLocation?.start?.cfi;
           const expectedCfi = initialPosition.currentLocation;
           
-          console.log('[ReaderEPUBPro] [初始化] 验证CFI恢复结果:', {
-            expectedCfi: expectedCfi.substring(0, 50) + '...',
-            actualCfi: actualCfi ? actualCfi.substring(0, 50) + '...' : 'null',
-            cfiMatch: actualCfi === expectedCfi || (actualCfi && expectedCfi.startsWith(actualCfi.substring(0, Math.min(30, actualCfi.length)))),
-          });
+          // console.log('[ReaderEPUBPro] [初始化] 验证CFI恢复结果:', {
+          //   expectedCfi: expectedCfi.substring(0, 50) + '...',
+          //   actualCfi: actualCfi ? actualCfi.substring(0, 50) + '...' : 'null',
+          //   cfiMatch: actualCfi === expectedCfi || (actualCfi && expectedCfi.startsWith(actualCfi.substring(0, Math.min(30, actualCfi.length)))),
+          // });
           
           // 提取CFI的章节路径部分（例如：/6/32! 之前的部分）
           const getChapterPath = (cfiStr: string) => {
@@ -1584,16 +1732,16 @@ export default function ReaderEPUBPro({
           // 如果章节相同，认为匹配成功（允许同一章节内的CFI差异）
           const cfiMatches = cfiExactMatch || cfiPrefixMatch || sameChapter;
           
-          console.log('[ReaderEPUBPro] [初始化] 验证CFI恢复结果:', {
-            expectedCfi: expectedCfi.substring(0, 50) + '...',
-            actualCfi: actualCfi ? actualCfi.substring(0, 50) + '...' : 'null',
-            expectedChapterPath,
-            actualChapterPath,
-            sameChapter,
-            cfiExactMatch,
-            cfiPrefixMatch,
-            cfiMatch: cfiMatches,
-          });
+          // console.log('[ReaderEPUBPro] [初始化] 验证CFI恢复结果:', {
+          //   expectedCfi: expectedCfi.substring(0, 50) + '...',
+          //   actualCfi: actualCfi ? actualCfi.substring(0, 50) + '...' : 'null',
+          //   expectedChapterPath,
+          //   actualChapterPath,
+          //   sameChapter,
+          //   cfiExactMatch,
+          //   cfiPrefixMatch,
+          //   cfiMatch: cfiMatches,
+          // });
           
           if (!cfiMatches) {
             console.warn('[ReaderEPUBPro] [初始化] ⚠️ CFI恢复后位置不匹配（不在同一章节），尝试重新跳转');
@@ -1615,16 +1763,16 @@ export default function ReaderEPUBPro({
               const retryMatches = retryExactMatch || retryPrefixMatch || retrySameChapter;
               
               if (retryMatches) {
-                console.log('[ReaderEPUBPro] [初始化] ✅ 重新跳转后CFI匹配成功', retrySameChapter ? '(同一章节内)' : '(精确匹配)');
+                // console.log('[ReaderEPUBPro] [初始化] ✅ 重新跳转后CFI匹配成功', retrySameChapter ? '(同一章节内)' : '(精确匹配)');
               } else {
-                console.warn('[ReaderEPUBPro] [初始化] ⚠️ 重新跳转后CFI仍不匹配，使用章节索引回退');
+                // console.warn('[ReaderEPUBPro] [初始化] ⚠️ 重新跳转后CFI仍不匹配，使用章节索引回退');
                 // 如果重新跳转后仍不匹配，回退到章节索引
                 if (initialPosition.chapterIndex !== undefined) {
                   const item = spine.get(initialPosition.chapterIndex);
                   if (item) {
                     await rendition.display(item.href);
                     await new Promise(resolve => setTimeout(resolve, 300));
-                    console.log('[ReaderEPUBPro] [初始化] 回退到章节索引:', initialPosition.chapterIndex);
+                    // console.log('[ReaderEPUBPro] [初始化] 回退到章节索引:', initialPosition.chapterIndex);
                   }
                 }
               }
@@ -1640,7 +1788,7 @@ export default function ReaderEPUBPro({
               }
             }
           } else {
-            console.log('[ReaderEPUBPro] [初始化] ✅ CFI恢复验证成功', sameChapter ? '(同一章节内)' : '(精确匹配)');
+            // console.log('[ReaderEPUBPro] [初始化] ✅ CFI恢复验证成功', sameChapter ? '(同一章节内)' : '(精确匹配)');
           }
         } catch (e) {
           console.warn('[ReaderEPUBPro] [初始化] 验证CFI恢复失败:', e);
@@ -1919,23 +2067,12 @@ export default function ReaderEPUBPro({
 
         // 获取并输出当前页面文本内容（调试用）
         const currentPageText = getCurrentPageText(location);
-        // if (currentPageText) {
-        //   console.log('=== 当前页面文本内容 ===');
-        //   console.log('CFI:', cfi);
-        //   console.log('页码:', chapterCurrentPage, '/', chapterTotalPages);
-        //   console.log('文本内容:');
-        //   console.log(currentPageText);
-        //   console.log('======================');
-        // }
 
         // 若正在执行“重排后定位”的恢复流程，避免把中间态写回进度（会造成进度跳动）
         if (isRestoringLayoutRef.current) {
           return;
         }
-        
-        // 进度策略（locations 被禁用时也要“随翻页变化”）：
-        // - 优先使用 epubjs 提供的全书 percentage（若可用）
-        // - 否则使用 “spineIndex/spineLength + 当前章节内页码比例” 的组合近似全书进度
+
         const totalChapters = getTotalChapters();
         let progress = 0;
 
@@ -1948,7 +2085,7 @@ export default function ReaderEPUBPro({
             ? Math.min(1, Math.max(0, (chapterCurrentPage - 1) / chapterTotalPages))
             : 0;
 
-        // 先尝试使用 epubjs 的 percentage（如果存在且有效）
+        // 先尝试使用 epubjs 的 percentage（如果存在且有效，这是全书进度）
         const percentage = location.start?.percentage;
         if (percentage !== undefined && percentage !== null && !isNaN(percentage) && percentage > 0) {
           progress = Math.min(1, Math.max(0, percentage));
@@ -1985,23 +2122,42 @@ export default function ReaderEPUBPro({
                 if (recalculatedTotal > 0 && recalculatedTotal > spineIndex) {
                   totalChaptersRef.current = recalculatedTotal;
                   progress = Math.min(1, Math.max(0, (spineIndex + withinChapter) / recalculatedTotal));
+                } else if (spineIndex >= 0) {
+                  // 如果重算失败，至少使用spineIndex来估算全书进度
+                  const estimatedTotal = Math.max(spineIndex + 1, 1);
+                  progress = Math.min(1, Math.max(0, (spineIndex + withinChapter) / estimatedTotal));
                 } else {
-                  // 兜底：至少让进度随章节内翻页变化
+                  // 完全无法获取章节信息时，才使用章节内进度作为最后兜底
                   progress = Math.min(1, Math.max(0, withinChapter));
                 }
+              } else if (spineIndex >= 0) {
+                // book实例不存在，但至少知道章节索引，使用估算
+                const estimatedTotal = Math.max(spineIndex + 1, 1);
+                progress = Math.min(1, Math.max(0, (spineIndex + withinChapter) / estimatedTotal));
               } else {
                 progress = Math.min(1, Math.max(0, withinChapter));
               }
             } catch {
-              progress = Math.min(1, Math.max(0, withinChapter));
+              if (spineIndex >= 0) {
+                // 异常时，至少使用spineIndex来估算全书进度
+                const estimatedTotal = Math.max(spineIndex + 1, 1);
+                progress = Math.min(1, Math.max(0, (spineIndex + withinChapter) / estimatedTotal));
+              } else {
+                progress = Math.min(1, Math.max(0, withinChapter));
+              }
             }
           } else {
             // 正常：组合进度（确保同章节内翻页也会变化）
-            const denom = totalChapters > 0 ? totalChapters : Math.max(1, spineIndex + 1);
+            const denom = totalChapters;
             progress = Math.min(1, Math.max(0, (spineIndex + withinChapter) / denom));
           }
+        } else if (spineIndex >= 0) {
+          // 如果无法获取总章节数，但至少知道当前章节索引，使用spineIndex+1作为估算分母
+          // 这样可以避免使用纯章节内进度，至少能反映章节在全书中的大致位置
+          const estimatedTotal = Math.max(spineIndex + 1, 1);
+          progress = Math.min(1, Math.max(0, (spineIndex + withinChapter) / estimatedTotal));
         } else {
-          // 完全拿不到章节信息时：至少使用章节内页码比例
+          // 完全拿不到章节信息时：至少使用章节内页码比例（最后兜底）
           progress = Math.min(1, Math.max(0, withinChapter));
         }
         
@@ -2108,19 +2264,6 @@ export default function ReaderEPUBPro({
             const progressDiff = Math.abs((savedInitialPosition.progress || 0) - finalProgress);
             const cfiMatches = cfiExactMatch || cfiPrefixMatch || (sameChapter && progressDiff < 0.1);
             
-            console.log('[ReaderEPUBPro] [首次relocated] 验证初始位置:', {
-              expectedCfi: expectedCfi.substring(0, 50) + '...',
-              actualCfi: actualCfi ? actualCfi.substring(0, 50) + '...' : 'null',
-              expectedChapterPath,
-              actualChapterPath,
-              sameChapter,
-              cfiExactMatch,
-              cfiPrefixMatch,
-              cfiMatches,
-              expectedProgress: savedInitialPosition.progress,
-              actualProgress: finalProgress,
-              progressDiff,
-            });
             
             // 如果CFI不匹配且不在同一章节，或进度差异很大，说明恢复失败
             if (!cfiMatches && !sameChapter) {
@@ -2130,7 +2273,7 @@ export default function ReaderEPUBPro({
                 try {
                   await rendition.display(expectedCfi);
                   await new Promise(resolve => setTimeout(resolve, 500));
-                  console.log('[ReaderEPUBPro] [首次relocated] ✅ 重新跳转到正确位置');
+                  // console.log('[ReaderEPUBPro] [首次relocated] ✅ 重新跳转到正确位置');
                 } catch (e) {
                   console.error('[ReaderEPUBPro] [首次relocated] ❌ 重新跳转失败:', e);
                 }
@@ -2151,16 +2294,23 @@ export default function ReaderEPUBPro({
               }, 300);
               return;
             } else {
-              console.log('[ReaderEPUBPro] [首次relocated] ✅ 初始位置恢复成功', sameChapter ? '(同一章节内)' : '(精确匹配)');
+              // console.log('[ReaderEPUBPro] [首次relocated] ✅ 初始位置恢复成功', sameChapter ? '(同一章节内)' : '(精确匹配)');
             }
           }
         }
         
+        // 如果处于书签浏览模式，不更新 lastPositionRef 和 lastProgressRef（保持原阅读位置）
+        // 这样 flushNow 时就不会保存书签位置
+        const isBookmarkBrowsing = (window as any).__isBookmarkBrowsingMode === true;
+        
         // 触发进度保存（使用最终进度）
-        lastProgressRef.current = finalProgress;
-        lastPositionRef.current = position;
-        if (cfi && typeof cfi === 'string' && cfi.startsWith('epubcfi(')) {
-          lastCfiRef.current = cfi;
+        // 只有在非书签浏览模式时才更新 lastPositionRef
+        if (!isBookmarkBrowsing) {
+          lastProgressRef.current = finalProgress;
+          lastPositionRef.current = position;
+          if (cfi && typeof cfi === 'string' && cfi.startsWith('epubcfi(')) {
+            lastCfiRef.current = cfi;
+          }
         }
         
         // 只有在非恢复布局状态时才保存阅读进度
@@ -2181,19 +2331,6 @@ export default function ReaderEPUBPro({
               };
             }
             
-            // 添加CFI保存日志
-            console.log('[ReaderEPUBPro] [relocated事件] 保存阅读进度:', {
-              source: 'relocated_event',
-              cfi: cfi ? cfi.substring(0, 50) + '...' : 'null',
-              cfiValid: cfi && typeof cfi === 'string' && cfi.startsWith('epubcfi('),
-              progress: finalProgress,
-              currentPage: finalCurrentPage,
-              totalPages: finalTotalPages,
-              chapterIndex: spineIndex,
-              chapterTitle: chapterTitle || '无标题',
-              isTTSPlaying: ttsIsPlayingRef.current,
-            });
-            
             onProgressChange(finalProgress, position);
           } else {
             // 跳过重复保存（静默，不输出日志）
@@ -2211,15 +2348,23 @@ export default function ReaderEPUBPro({
           if (currentLocation) {
             // 调用 getCurrentPageText 以初始化函数引用
             getCurrentPageText(currentLocation);
-            console.log('[ReaderEPUBPro] getCurrentPageText 函数已初始化');
+            // console.log('[ReaderEPUBPro] getCurrentPageText 函数已初始化');
           }
         } catch (e) {
           console.warn('[ReaderEPUBPro] 初始化 getCurrentPageText 失败:', e);
         }
       }, 1000); // 延迟1秒，确保内容完全渲染
 
-      // 键盘快捷键（保存函数引用用于清理）
+      // 键盘快捷键（直接在 window 上添加，避免 passive 事件监听器问题）
       eventHandlers.keyup = (e: KeyboardEvent) => {
+        // 如果焦点在输入框/文本域，跳过
+        if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || (e.target as HTMLElement)?.isContentEditable) {
+          return;
+        }
+        
+        // 标记已处理，避免容器层重复处理
+        (e as any).__readerHandled = true;
+        
         if (e.key === settings.keyboardShortcuts.prev || e.key === 'ArrowLeft') {
           e.preventDefault();
           rendition.prev();
@@ -2228,7 +2373,8 @@ export default function ReaderEPUBPro({
           rendition.next();
         }
       };
-      rendition.on('keyup', eventHandlers.keyup);
+      // 使用 keydown 事件并在 window 上注册，确保可以调用 preventDefault
+      window.addEventListener('keydown', eventHandlers.keyup, { passive: false });
 
       // 注意：点击/触摸翻页现在由最顶层的透明捕获层处理
       // 不在这里添加事件监听，避免重复触发
@@ -2239,6 +2385,13 @@ export default function ReaderEPUBPro({
 
       // 暴露翻页函数到全局
       (window as any).__readerPageTurn = async (direction: 'prev' | 'next') => {
+        // 翻页时通知外层容器隐藏工具条
+        window.dispatchEvent(
+          new CustomEvent('__reader_page_turn', {
+            detail: { direction },
+          })
+        );
+        
         // 检查是否正在播放TTS，如果是，不停止播放，只更新位置
         const isTTSPlaying = ttsIsPlayingRef.current;
         
@@ -2308,11 +2461,19 @@ export default function ReaderEPUBPro({
               let progress = 0;
               const percentage = currentLocation.start?.percentage;
               if (percentage !== undefined && percentage !== null && !isNaN(percentage) && percentage > 0) {
+                // 优先使用epubjs提供的percentage（这是全书进度）
                 progress = Math.min(1, Math.max(0, percentage));
               } else if (totalChapters > 0 && spineIndex >= 0) {
-                const denom = totalChapters > 0 ? totalChapters : Math.max(1, spineIndex + 1);
+                // 使用章节索引和章节内进度计算全书进度
+                const denom = totalChapters;
                 progress = Math.min(1, Math.max(0, (spineIndex + withinChapter) / denom));
+              } else if (spineIndex >= 0) {
+                // 如果无法获取总章节数，但至少知道当前章节索引，使用spineIndex+1作为估算分母
+                // 这样可以避免使用纯章节内进度，至少能反映章节在全书中的大致位置
+                const estimatedTotal = Math.max(spineIndex + 1, 1);
+                progress = Math.min(1, Math.max(0, (spineIndex + withinChapter) / estimatedTotal));
               } else {
+                // 完全无法获取章节信息时，才使用章节内进度作为最后兜底
                 progress = Math.min(1, Math.max(0, withinChapter));
               }
               
@@ -2374,11 +2535,15 @@ export default function ReaderEPUBPro({
                 chapterTitle: chapterTitle || undefined,
               };
               
-              // 保存进度
-              lastProgressRef.current = finalProgress;
-              lastPositionRef.current = position;
-              if (cfi && typeof cfi === 'string' && cfi.startsWith('epubcfi(')) {
-                lastCfiRef.current = cfi;
+              // 如果处于书签浏览模式，不更新 lastPositionRef（保持原阅读位置）
+              const isBookmarkBrowsing = (window as any).__isBookmarkBrowsingMode === true;
+              if (!isBookmarkBrowsing) {
+                // 保存进度
+                lastProgressRef.current = finalProgress;
+                lastPositionRef.current = position;
+                if (cfi && typeof cfi === 'string' && cfi.startsWith('epubcfi(')) {
+                  lastCfiRef.current = cfi;
+                }
               }
               
               // 手动翻页只保存阅读进度（不影响TTS进度）
@@ -2416,6 +2581,355 @@ export default function ReaderEPUBPro({
           // ignore
         }
         return false;
+      };
+
+      // 暴露“根据进度百分比跳转”给外部（供进度跳转功能使用）
+      // 注意：这里的 progress 是全书进度（0-1），不是章节进度
+      (window as any).__readerGoToProgress = async (progress: number) => {
+        try {
+          if (typeof progress !== 'number' || isNaN(progress) || progress < 0 || progress > 1) {
+            console.warn('[ReaderEPUBPro] 无效的进度值:', progress);
+            return false;
+          }
+
+          const bookInstance = epubjsBookRef.current;
+          if (!bookInstance || !rendition) {
+            console.warn('[ReaderEPUBPro] 书籍实例或 rendition 不存在');
+            return false;
+          }
+
+          console.log('[ReaderEPUBPro] 开始跳转到全书进度:', (progress * 100).toFixed(2) + '%', {
+            locationsReady: locationsReadyRef.current,
+            totalLocations: totalLocationsRef.current,
+            hasLocationsAPI: !!(bookInstance.locations && typeof bookInstance.locations.cfiFromLocation === 'function')
+          });
+
+          // 方案1：优先使用 locations API（如果可用且已生成）- 这是最准确的全书进度跳转方法
+          if (locationsReadyRef.current && totalLocationsRef.current > 0 && 
+              bookInstance.locations) {
+            try {
+              // 优先使用 cfiFromLocation（标准方法，更可靠）
+              if (typeof bookInstance.locations.cfiFromLocation === 'function') {
+                // 根据全书进度计算 location 索引（0-based）
+                // locations 是基于全书内容生成的，每个 location 代表全书中的一个位置点
+                // 注意：locations 索引范围是 0 到 (totalLocations - 1)
+                // 进度 0% 对应索引 0，进度 100% 对应索引 (totalLocations - 1)
+                // 计算公式：targetLocation = progress * (totalLocations - 1)
+                const targetLocationIndex = Math.round(progress * (totalLocationsRef.current - 1));
+                const targetLocation = Math.max(0, Math.min(targetLocationIndex, totalLocationsRef.current - 1));
+                
+                // 计算实际对应的进度（用于验证）
+                const actualCalculatedProgress = totalLocationsRef.current > 1 
+                  ? targetLocation / (totalLocationsRef.current - 1)
+                  : 0;
+                
+                console.log('[ReaderEPUBPro] 使用 cfiFromLocation 跳转（全书进度）:', {
+                  targetProgress: (progress * 100).toFixed(2) + '%',
+                  targetLocationIndex: targetLocation,
+                  totalLocations: totalLocationsRef.current,
+                  calculatedProgress: (actualCalculatedProgress * 100).toFixed(2) + '%',
+                  formula: `Math.round(${progress} * ${totalLocationsRef.current - 1}) = ${targetLocation}`
+                });
+                
+                // 获取对应的 CFI（这是全书位置的 CFI，不是章节位置的 CFI）
+                const cfi = bookInstance.locations.cfiFromLocation(targetLocation);
+                if (cfi && typeof cfi === 'string' && cfi.startsWith('epubcfi(') && typeof rendition.display === 'function') {
+                  console.log('[ReaderEPUBPro] 跳转到 CFI（全书位置）:', cfi.substring(0, 80) + '...');
+                  
+                  // 设置跳转标志，避免首次 relocated 验证误报
+                  (window as any).__isProgressJumping = true;
+                  
+                  await rendition.display(cfi);
+                  // 等待跳转完成，确保页面已渲染
+                  await new Promise(resolve => setTimeout(resolve, 500));
+                  
+                  // 清除跳转标志（延迟清除，确保 relocated 事件已处理）
+                  setTimeout(() => {
+                    (window as any).__isProgressJumping = false;
+                  }, 1000);
+                  
+                  // 验证跳转结果（用于调试，延迟验证以确保位置已更新）
+                  setTimeout(() => {
+                    try {
+                      const actualLocation = rendition.currentLocation();
+                      const actualCfi = (actualLocation as any)?.start?.cfi;
+                      if (actualCfi && bookInstance.locations.locationFromCfi) {
+                        const actualLoc = bookInstance.locations.locationFromCfi(actualCfi);
+                        if (typeof actualLoc === 'number' && actualLoc >= 0 && totalLocationsRef.current > 1) {
+                          const actualProgress = actualLoc / (totalLocationsRef.current - 1);
+                          const errorPercent = Math.abs(progress - actualProgress) * 100;
+                          console.log('[ReaderEPUBPro] 跳转验证（延迟）:', {
+                            targetProgress: (progress * 100).toFixed(2) + '%',
+                            actualProgress: (actualProgress * 100).toFixed(2) + '%',
+                            error: errorPercent.toFixed(2) + '%',
+                            targetLocation,
+                            actualLocation: actualLoc,
+                            totalLocations: totalLocationsRef.current
+                          });
+                          
+                          // 如果误差超过15%，记录警告（但不影响跳转成功）
+                          if (errorPercent > 15) {
+                            console.warn('[ReaderEPUBPro] 跳转精度较低，误差:', errorPercent.toFixed(2) + '%', {
+                              targetLocation,
+                              actualLocation: actualLoc,
+                              targetProgress: progress,
+                              actualProgress
+                            });
+                          }
+                        }
+                      }
+                    } catch (e) {
+                      // 验证失败不影响跳转成功
+                      console.warn('[ReaderEPUBPro] 跳转验证失败（不影响跳转）:', e);
+                    }
+                  }, 800);
+                  
+                  console.log('[ReaderEPUBPro] cfiFromLocation 跳转成功（全书进度）');
+                  return true;
+                } else {
+                  console.warn('[ReaderEPUBPro] cfiFromLocation 返回的 CFI 无效:', cfi);
+                }
+              }
+              
+              // 备用方法：尝试使用 cfiFromPercentage（如果可用，但可能不准确）
+              // 注意：这个方法可能不是 epubjs 的标准 API，使用时要谨慎
+              if (typeof (bookInstance.locations as any).cfiFromPercentage === 'function') {
+                try {
+                  const cfi = (bookInstance.locations as any).cfiFromPercentage(progress);
+                  if (cfi && typeof cfi === 'string' && cfi.startsWith('epubcfi(') && typeof rendition.display === 'function') {
+                    console.log('[ReaderEPUBPro] 使用 cfiFromPercentage 跳转（备用方法，可能不准确）:', {
+                      progress: (progress * 100).toFixed(2) + '%',
+                      cfi: cfi.substring(0, 60) + '...'
+                    });
+                    await rendition.display(cfi);
+                    await new Promise(resolve => setTimeout(resolve, 500));
+                    console.log('[ReaderEPUBPro] cfiFromPercentage 跳转完成（备用方法）');
+                    return true;
+                  }
+                } catch (e) {
+                  console.warn('[ReaderEPUBPro] cfiFromPercentage 跳转失败:', e);
+                }
+              }
+            } catch (e) {
+              console.error('[ReaderEPUBPro] 使用 locations API 跳转失败:', e);
+              // 继续尝试其他方案
+            }
+          }
+
+          // 方案2：如果 locations 未生成但可以生成，尝试触发并等待生成
+          if (!locationsReadyRef.current && !locationsFailedRef.current && 
+              bookInstance.locations && typeof bookInstance.locations.generate === 'function') {
+            console.log('[ReaderEPUBPro] locations 未生成，尝试生成并等待（最多10秒）...');
+            try {
+              // 触发生成并等待（最多等待10秒，因为生成可能需要较长时间）
+              const generatePromise = bookInstance.locations.generate(1600);
+              
+              // 如果 generate 返回 Promise，使用它；否则使用包装的 Promise
+              const actualGeneratePromise = generatePromise && typeof (generatePromise as any).then === 'function'
+                ? generatePromise
+                : Promise.resolve();
+              
+              const timeoutPromise = new Promise((_, reject) => 
+                setTimeout(() => reject(new Error('Locations generation timeout')), 10000)
+              );
+              
+              try {
+                await Promise.race([actualGeneratePromise, timeoutPromise]);
+                
+                // 等待一下，确保 locations 对象已更新
+                await new Promise(resolve => setTimeout(resolve, 500));
+                
+                // 生成完成后，重新检查并更新 refs
+                const total = typeof bookInstance.locations.length === 'function'
+                  ? bookInstance.locations.length()
+                  : ((bookInstance.locations as any)?.locations?.length || (bookInstance.locations as any)?.length || 0);
+                
+                console.log('[ReaderEPUBPro] locations 生成完成，检查结果:', {
+                  total,
+                  hasCfiFromLocation: typeof bookInstance.locations.cfiFromLocation === 'function',
+                  hasCfiFromPercentage: typeof (bookInstance.locations as any).cfiFromPercentage === 'function'
+                });
+                
+                if (total > 0 && typeof bookInstance.locations.cfiFromLocation === 'function') {
+                  totalLocationsRef.current = total;
+                  locationsReadyRef.current = true;
+                  
+                  // 现在可以使用 locations API 跳转
+                  // 优先使用 cfiFromLocation（标准方法，更可靠）
+                  const targetLocationIndex = Math.round(progress * (total - 1));
+                  const targetLocation = Math.max(0, Math.min(targetLocationIndex, total - 1));
+                  const cfi = bookInstance.locations.cfiFromLocation(targetLocation);
+                  
+                  if (cfi && typeof cfi === 'string' && cfi.startsWith('epubcfi(') && typeof rendition.display === 'function') {
+                    console.log('[ReaderEPUBPro] locations 生成完成，使用 cfiFromLocation 跳转（全书进度）:', {
+                      progress: (progress * 100).toFixed(2) + '%',
+                      targetLocation,
+                      total,
+                      calculatedProgress: ((targetLocation / total) * 100).toFixed(2) + '%'
+                    });
+                    await rendition.display(cfi);
+                    await new Promise(resolve => setTimeout(resolve, 400));
+                    console.log('[ReaderEPUBPro] cfiFromLocation 跳转成功（生成后）');
+                    return true;
+                  } else {
+                    console.warn('[ReaderEPUBPro] cfiFromLocation 返回的 CFI 无效:', cfi);
+                  }
+                } else {
+                  console.warn('[ReaderEPUBPro] locations 生成完成但 total 无效或 API 不可用:', {
+                    total,
+                    hasCfiFromLocation: typeof bookInstance.locations.cfiFromLocation === 'function'
+                  });
+                  locationsFailedRef.current = true;
+                }
+              } catch (e: any) {
+                console.warn('[ReaderEPUBPro] locations 生成超时或失败，使用回退方案:', e?.message || e);
+                // 如果生成失败，标记为失败，避免重复尝试
+                locationsFailedRef.current = true;
+              }
+            } catch (e) {
+              console.warn('[ReaderEPUBPro] 触发 locations 生成失败:', e);
+              locationsFailedRef.current = true;
+            }
+          }
+
+          // 方案3：回退方案 - 使用章节索引 + 章节内进度
+          // 注意：这是基于章节的估算方法，可能不够精确，但至少能跳转到正确的章节
+          const spine = bookInstance.spine;
+          if (!spine) {
+            console.warn('[ReaderEPUBPro] spine 不存在，跳转失败');
+            return false;
+          }
+
+          const totalChapters = totalChaptersRef.current || 1;
+          if (totalChapters <= 0) {
+            console.warn('[ReaderEPUBPro] 总章节数无效:', totalChapters);
+            return false;
+          }
+
+          // 根据全书进度计算目标章节索引和章节内进度
+          // 假设章节长度均匀（虽然不准确，但这是在没有 locations 时的最佳估算）
+          const targetChapterFloatIndex = progress * totalChapters;
+          const targetChapterIndex = Math.floor(targetChapterFloatIndex);
+          const chapterProgress = targetChapterFloatIndex - targetChapterIndex; // 章节内进度（0-1）
+
+          // 确保章节索引有效
+          const safeChapterIndex = Math.max(0, Math.min(targetChapterIndex, totalChapters - 1));
+          const item = spine.get(safeChapterIndex);
+          
+          if (!item?.href) {
+            console.warn('[ReaderEPUBPro] 无法获取目标章节:', safeChapterIndex);
+            return false;
+          }
+
+          console.log('[ReaderEPUBPro] 使用章节跳转方案（回退，基于章节估算）:', {
+            progress: (progress * 100).toFixed(2) + '%',
+            totalChapters,
+            targetChapterIndex: safeChapterIndex + 1,
+            chapterProgress: (chapterProgress * 100).toFixed(2) + '%',
+            note: '注意：这是基于章节均匀分布的估算，可能不够精确'
+          });
+
+          // 先跳转到章节开头
+          await rendition.display(item.href);
+          // 等待章节加载完成
+          await new Promise(resolve => setTimeout(resolve, 500));
+
+          // 如果有章节内进度，尝试在章节内定位
+          // 注意：由于 epubjs 的限制，如果没有 locations API，精确的章节内定位可能不可靠
+          // 但我们仍然尝试使用一些方法来提高准确性
+          if (chapterProgress > 0 && chapterProgress < 1) {
+            try {
+              const currentLocation = rendition.currentLocation();
+              if (currentLocation) {
+                const chapterTotalPages = (currentLocation as any).start?.displayed?.total || 1;
+                
+                if (chapterTotalPages > 1) {
+                  // 计算目标页码（章节内，1-based）
+                  const targetPageInChapter = Math.max(1, Math.min(
+                    Math.ceil(chapterProgress * chapterTotalPages), 
+                    chapterTotalPages
+                  ));
+                  
+                  console.log('[ReaderEPUBPro] 尝试章节内定位:', {
+                    chapterProgress: (chapterProgress * 100).toFixed(2) + '%',
+                    chapterTotalPages,
+                    targetPageInChapter
+                  });
+                  
+                  // 方法：通过多次翻页到达目标位置（如果页数不多）
+                  // 但这对大章节不适用，因为会太慢
+                  // 
+                  // 更好的方法：尝试使用 rendition 的内部方法（如果可用）
+                  // 但由于 epubjs 的限制，暂时只跳转到章节开头
+                  // 
+                  // 用户可以通过手动翻页来调整到精确位置
+                  console.log('[ReaderEPUBPro] 已跳转到目标章节（第', safeChapterIndex + 1, '章），预计在第', targetPageInChapter, '页附近');
+                  console.log('[ReaderEPUBPro] 提示：如需更精确的位置，请等待 locations 生成完成（后台进行中）或手动翻页');
+                  return true;
+                }
+              }
+              
+              // 如果无法获取章节页数，至少已跳转到章节开头
+              console.log('[ReaderEPUBPro] 已跳转到目标章节（第', safeChapterIndex + 1, '章）开头');
+              console.log('[ReaderEPUBPro] 提示：章节内进度约为', (chapterProgress * 100).toFixed(1) + '%，请手动翻页到目标位置');
+              return true;
+            } catch (e) {
+              console.warn('[ReaderEPUBPro] 章节内定位失败:', e);
+              // 即使定位失败，至少已跳转到章节
+              console.log('[ReaderEPUBPro] 已跳转到目标章节（第', safeChapterIndex + 1, '章）');
+              return true;
+            }
+          } else if (chapterProgress === 0) {
+            // 章节进度为 0，已在章节开头
+            console.log('[ReaderEPUBPro] 已跳转到目标章节开头（第', safeChapterIndex + 1, '章）');
+            return true;
+          } else if (chapterProgress >= 1) {
+            // 章节进度 >= 1，跳转到下一章节
+            const nextIndex = Math.min(safeChapterIndex + 1, totalChapters - 1);
+            const nextItem = spine.get(nextIndex);
+            if (nextItem?.href && typeof rendition.display === 'function') {
+              await rendition.display(nextItem.href);
+              await new Promise(resolve => setTimeout(resolve, 300));
+              console.log('[ReaderEPUBPro] 已跳转到下一章节（第', nextIndex + 1, '章）');
+              return true;
+            }
+          }
+          
+          console.log('[ReaderEPUBPro] 已跳转到目标章节（第', safeChapterIndex + 1, '章）');
+          return true;
+        } catch (e) {
+          console.error('[ReaderEPUBPro] 进度跳转失败:', e);
+        }
+        return false;
+      };
+
+      // 暴露"保存当前进度"给外部（供关闭书签浏览模式时使用）
+      (window as any).__saveCurrentProgress = () => {
+        try {
+          const currentLocation = rendition.currentLocation?.();
+          if (currentLocation) {
+            // 强制保存当前进度（忽略书签浏览模式标志）
+            const wasBrowsingMode = (window as any).__isBookmarkBrowsingMode;
+            (window as any).__isBookmarkBrowsingMode = false;
+            // 直接调用 saveReadingProgress，此时标志已清除，会正常保存
+            saveReadingProgress(currentLocation, 'bookmark_close');
+            // 不再恢复标志，因为已经关闭了书签浏览模式
+          }
+        } catch (e) {
+          console.warn('[ReaderEPUBPro] 保存当前进度失败:', e);
+        }
+      };
+
+      // 暴露"保存之前的阅读位置"给外部（供关闭书籍时使用）
+      (window as any).__savePreviousPosition = (previousPos: ReadingPosition) => {
+        try {
+          if (previousPos) {
+            // 直接保存之前的阅读位置
+            onProgressChange(previousPos.progress || 0, previousPos);
+          }
+        } catch (e) {
+          console.warn('[ReaderEPUBPro] 保存之前的阅读位置失败:', e);
+        }
       };
 
       // 窗口大小变化时调整
@@ -2494,7 +3008,7 @@ export default function ReaderEPUBPro({
       };
 
       // 暴露高亮函数（用于笔记高亮）
-      (window as any).__epubHighlight = (cfiRange: string) => {
+      (window as any).__epubHighlight = (cfiRange: string, color?: string) => {
         try {
           if (!cfiRange || typeof cfiRange !== 'string') return;
           if (!epubjsRenditionRef.current?.annotations?.highlight) return;
@@ -2505,7 +3019,7 @@ export default function ReaderEPUBPro({
             'rk-note-highlight',
             {
               // 更明显的“背景高亮”效果（epubjs 通过 SVG overlay 实现）
-              fill: 'rgba(255, 235, 59, 0.55)',
+              fill: color || 'rgba(255, 235, 59, 0.55)',
               'mix-blend-mode': 'multiply',
             }
           );
@@ -2810,11 +3324,642 @@ export default function ReaderEPUBPro({
     }
   }, [settings.theme, settings.fontSize, settings.fontFamily, settings.lineHeight, settings.margin, settings.textIndent]);
 
-  // 在切后台/关闭页面时，强制 flush 一次最新位置，避免“最后一次 relocated 未落库”导致回退到上一页
+  // 监听高亮列表变化并自动渲染到阅读器
+  useEffect(() => {
+    if (loading || !epubjsRenditionRef.current || !highlights) return;
+
+    const rendition = epubjsRenditionRef.current;
+    
+    // 渲染所有高亮
+    const applyHighlights = () => {
+      if (!rendition?.annotations) return;
+      
+      highlights.forEach((h) => {
+        if (!h.cfiRange) return;
+        try {
+          // 先尝试移除旧的（避免重复渲染导致颜色变深）
+          try {
+            // @ts-ignore
+            rendition.annotations.remove(h.cfiRange, 'highlight');
+          } catch (e) { /* ignore */ }
+          
+          rendition.annotations.highlight(
+            h.cfiRange,
+            {},
+            () => {},
+            'rk-note-highlight',
+            {
+              fill: h.color || 'rgba(255, 235, 59, 0.55)',
+              'mix-blend-mode': 'multiply',
+            }
+          );
+        } catch (e) {
+          // ignore
+        }
+      });
+    };
+
+    // 延迟一会确保内容加载完成，做一次全量渲染
+    const timer = setTimeout(applyHighlights, 1000);
+    
+    // 监听 rendition 的 relocated 事件，确保在翻页后也能显示高亮
+    // EPUB.js 的 annotations.add 虽然是全局的，但在某些版本的渲染引擎中，
+    // 翻页后新内容可能需要重新触发一下或者确保 annotations 系统已经处理。
+    const handleRelocated = () => {
+      // relocated 触发时，内容可能还没完全渲染，稍微延迟一下
+      setTimeout(applyHighlights, 200);
+    };
+    
+    rendition.on('relocated', handleRelocated);
+
+    return () => {
+      clearTimeout(timer);
+      if (rendition) {
+        rendition.off('relocated', handleRelocated);
+      }
+    };
+  }, [highlights, loading]);
+
+  // 使用 ref 存储笔记列表，确保在闭包中能访问到最新值
+  const notesRef = useRef<BookNote[]>(notes);
+  useEffect(() => {
+    notesRef.current = notes;
+  }, [notes]);
+
+  // 确保tooltip样式已添加到外层窗口（组件初始化时执行一次）
+  useEffect(() => {
+    const styleId = 'rk-note-tooltip-global-style';
+    if (!document.getElementById(styleId)) {
+      const styleEl = document.createElement('style');
+      styleEl.id = styleId;
+      styleEl.textContent = `
+        .rk-note-tooltip {
+          position: fixed;
+          z-index: 10000;
+          max-width: 320px;
+          padding: 10px 14px;
+          background-color: rgba(0, 0, 0, 0.9);
+          color: #fff;
+          border-radius: 8px;
+          font-size: 13px;
+          line-height: 1.5;
+          box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+          pointer-events: none;
+          opacity: 0;
+          transition: opacity 0.2s ease;
+          word-wrap: break-word;
+        }
+        .rk-note-tooltip.show {
+          opacity: 1;
+        }
+        .rk-note-tooltip-quote {
+          font-style: italic;
+          color: rgba(255, 255, 255, 0.85);
+          margin-bottom: 8px;
+          padding-bottom: 8px;
+          border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+          font-size: 12px;
+        }
+        .rk-note-tooltip-content {
+          color: rgba(255, 255, 255, 0.95);
+          white-space: pre-wrap;
+          word-break: break-word;
+          font-size: 13px;
+        }
+      `;
+      document.head.appendChild(styleEl);
+    }
+  }, []);
+
+  // 监听笔记列表变化并自动渲染笔记标记（下虚线+脚注）
+  useEffect(() => {
+    
+    if (loading || !epubjsRenditionRef.current) {
+      return;
+    }
+    
+    if (!notes || notes.length === 0) {
+      // 如果没有笔记，清除所有标记
+      const iframe = containerRef.current?.querySelector('iframe');
+      if (iframe) {
+        const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
+        if (iframeDoc) {
+          iframeDoc.querySelectorAll('.rk-note-mark').forEach((el) => {
+            const parent = el.parentNode;
+            if (parent && el.textContent) {
+              parent.replaceChild(iframeDoc.createTextNode(el.textContent), el);
+            }
+          });
+        }
+      }
+      return;
+    }
+
+    const rendition = epubjsRenditionRef.current;
+    
+    // 渲染笔记标记
+    const applyNoteMarks = () => {
+      if (!rendition?.annotations) return;
+      
+      const iframe = containerRef.current?.querySelector('iframe');
+      if (!iframe) return;
+      const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
+      if (!iframeDoc) return;
+
+      // 辅助函数：为笔记标记添加tooltip（PC端）
+      const addNoteTooltip = (
+        markEl: HTMLElement,
+        footnoteEl: HTMLElement | null,
+        note: BookNote,
+        iframe: HTMLIFrameElement,
+        iframeDoc: Document
+      ) => {
+        // 检测是否为移动设备
+        const isMobileDevice = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) || window.innerWidth <= 768;
+        if (isMobileDevice) return; // 移动端不显示tooltip
+        
+        // 创建tooltip元素（添加到外层窗口的body，而不是iframe的body）
+        const tooltip = document.createElement('div');
+        tooltip.className = 'rk-note-tooltip';
+        tooltip.style.display = 'none';
+        
+        // 构建tooltip内容
+        let tooltipHtml = '';
+        if (note.selected_text) {
+          const quoteText = note.selected_text.length > 50 
+            ? note.selected_text.substring(0, 50) + '...' 
+            : note.selected_text;
+          tooltipHtml += `<div class="rk-note-tooltip-quote">"${quoteText.replace(/"/g, '&quot;')}"</div>`;
+        }
+        const contentText = note.content.length > 150 
+          ? note.content.substring(0, 150) + '...' 
+          : note.content;
+        tooltipHtml += `<div class="rk-note-tooltip-content">${contentText.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</div>`;
+        tooltip.innerHTML = tooltipHtml;
+        
+        // 添加到外层窗口的body
+        document.body.appendChild(tooltip);
+        
+        let tooltipTimer: NodeJS.Timeout | null = null;
+        
+        // 显示tooltip
+        const showTooltip = (e: MouseEvent) => {
+          console.log('[Tooltip] mouseenter 事件触发', e.target, markEl);
+          if (tooltipTimer) {
+            clearTimeout(tooltipTimer);
+          }
+          
+          tooltipTimer = setTimeout(() => {
+            // 使用 markEl 而不是 e.target，因为 e.target 可能是子元素
+            const rect = markEl.getBoundingClientRect();
+            const iframeRect = iframe.getBoundingClientRect();
+            
+            // iframe 内元素的坐标需要加上 iframe 的偏移
+            // getBoundingClientRect() 在 iframe 中返回的是相对于 iframe 视口的坐标
+            // 需要加上 iframe 相对于外层窗口的位置
+            const x = rect.left + rect.width / 2 + iframeRect.left;
+            const y = rect.top + iframeRect.top;
+            
+            console.log('[Tooltip] 显示位置', { 
+              x, 
+              y, 
+              markRect: { left: rect.left, top: rect.top, width: rect.width, height: rect.height },
+              iframeRect: { left: iframeRect.left, top: iframeRect.top, width: iframeRect.width, height: iframeRect.height }
+            });
+            
+            tooltip.style.left = `${x}px`;
+            tooltip.style.top = `${y - 10}px`;
+            tooltip.style.transform = 'translate(-50%, -100%)';
+            tooltip.style.display = 'block';
+            tooltip.style.zIndex = '10000';
+            
+            // 延迟显示动画
+            setTimeout(() => {
+              tooltip.classList.add('show');
+              console.log('[Tooltip] 已显示，tooltip元素:', tooltip);
+            }, 10);
+          }, 200); // 延迟200ms显示
+        };
+        
+        // 隐藏tooltip
+        const hideTooltip = () => {
+          if (tooltipTimer) {
+            clearTimeout(tooltipTimer);
+            tooltipTimer = null;
+          }
+          tooltip.classList.remove('show');
+          setTimeout(() => {
+            tooltip.style.display = 'none';
+          }, 200);
+        };
+        
+        // 绑定事件（使用捕获阶段确保事件能触发）
+        const handleMouseEnter = (e: MouseEvent) => {
+          console.log('[Tooltip] handleMouseEnter 被调用', markEl, e.target);
+          e.stopPropagation();
+          e.preventDefault();
+          showTooltip(e);
+        };
+        const handleMouseLeave = (e: MouseEvent) => {
+          console.log('[Tooltip] handleMouseLeave 被调用');
+          e.stopPropagation();
+          hideTooltip();
+        };
+        
+        // 使用 mouseover/mouseout 替代 mouseenter/mouseleave，因为它们在 iframe 中更可靠
+        markEl.addEventListener('mouseover', handleMouseEnter, true);
+        markEl.addEventListener('mouseout', handleMouseLeave, true);
+        markEl.addEventListener('mouseenter', handleMouseEnter, true);
+        markEl.addEventListener('mouseleave', handleMouseLeave, true);
+        
+        if (footnoteEl) {
+          footnoteEl.addEventListener('mouseover', handleMouseEnter, true);
+          footnoteEl.addEventListener('mouseout', handleMouseLeave, true);
+          footnoteEl.addEventListener('mouseenter', handleMouseEnter, true);
+          footnoteEl.addEventListener('mouseleave', handleMouseLeave, true);
+        }
+        
+      };
+
+      // 添加笔记标记样式
+      const styleId = 'rk-note-mark-style';
+      let styleEl = iframeDoc.getElementById(styleId) as HTMLStyleElement;
+      if (!styleEl) {
+        styleEl = iframeDoc.createElement('style');
+        styleEl.id = styleId;
+        iframeDoc.head.appendChild(styleEl);
+      }
+      // 检测是否为移动设备
+      const isMobileDevice = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) || window.innerWidth <= 768;
+      
+      styleEl.textContent = `
+        .rk-note-mark {
+          border-bottom: 2px dashed rgba(33, 150, 243, 0.6);
+          cursor: pointer;
+          position: relative;
+          text-decoration: none !important;
+          display: inline;
+        }
+        .rk-note-mark:hover {
+          border-bottom-color: rgba(33, 150, 243, 0.9);
+          background-color: rgba(33, 150, 243, 0.1);
+        }
+        .rk-note-footnote {
+          display: inline;
+          font-size: 0.7em;
+          vertical-align: super;
+          color: rgba(33, 150, 243, 0.9);
+          margin-left: 0;
+          margin-right: 0;
+          padding-left: 0;
+          padding-right: 0;
+          cursor: pointer;
+          line-height: 0;
+          font-weight: normal;
+          position: relative;
+          top: -0.3em;
+        }
+        .rk-note-footnote::before {
+          content: "●";
+          display: inline;
+          font-size: 0.6em;
+        }
+        .rk-note-tooltip {
+          position: fixed;
+          z-index: 10000;
+          max-width: 320px;
+          padding: 8px 12px;
+          background-color: rgba(0, 0, 0, 0.85);
+          color: #fff;
+          border-radius: 6px;
+          font-size: 13px;
+          line-height: 1.5;
+          box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+          pointer-events: none;
+          opacity: 0;
+          transition: opacity 0.2s;
+        }
+        .rk-note-tooltip.show {
+          opacity: 1;
+        }
+        .rk-note-tooltip-quote {
+          font-style: italic;
+          color: rgba(255, 255, 255, 0.9);
+          margin-bottom: 6px;
+          padding-bottom: 6px;
+          border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        .rk-note-tooltip-content {
+          color: rgba(255, 255, 255, 0.95);
+          white-space: pre-wrap;
+          word-break: break-word;
+        }
+      `;
+
+      // 清除旧的笔记标记
+      iframeDoc.querySelectorAll('.rk-note-mark').forEach((el) => {
+        const parent = el.parentNode;
+        if (parent) {
+          const textContent = el.textContent || '';
+          // 移除脚注标记
+          const textWithoutFootnote = textContent.replace(/\[\d+\]$/, '');
+          parent.replaceChild(iframeDoc.createTextNode(textWithoutFootnote), el);
+        }
+      });
+
+      // 为每个有 selected_text 的笔记添加标记
+      notesRef.current.forEach((note, index) => {
+        if (!note.selected_text) {
+          return;
+        }
+        
+        const selectedText = note.selected_text.trim();
+        if (!selectedText) {
+          return;
+        }
+        
+        try {
+          let range: Range | null = null;
+          
+          // 优先使用 CFI 定位（如果存在且有效）
+          if (note.position && typeof note.position === 'string' && note.position.startsWith('epubcfi(')) {
+            try {
+              range = (rendition as any).getRange?.(note.position);
+              if (!range) {
+                console.log('[笔记标记] CFI 定位失败，尝试文本匹配:', note.position);
+              }
+            } catch (e) {
+              console.warn('[笔记标记] CFI 定位异常:', e, note.position);
+            }
+          }
+          
+          // 如果没有 range，通过文本匹配查找
+          if (!range) {
+            
+            // 简化匹配：直接在整个文档中查找文本
+            const bodyText = iframeDoc.body.textContent || '';
+            const bodyHtml = iframeDoc.body.innerHTML;
+            
+            // 检查文本是否存在
+            if (bodyText.includes(selectedText)) {
+              
+              // 使用更简单的方法：直接替换 HTML 中的文本
+              // 但需要确保不会破坏 HTML 结构
+              try {
+                // 转义特殊字符用于正则表达式
+                const escapedText = selectedText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                // 创建标记 HTML
+                const markHtml = `<span class="rk-note-mark" data-note-id="${note.id}">${selectedText.replace(/[&<>"']/g, (m) => {
+                  const map: Record<string, string> = {
+                    '&': '&amp;',
+                    '<': '&lt;',
+                    '>': '&gt;',
+                    '"': '&quot;',
+                    "'": '&#39;',
+                  };
+                  return map[m];
+                })}<sup class="rk-note-footnote" data-note-id="${note.id}" title="笔记 ${index + 1}"></sup></span>`;
+                
+                // 在 body 中查找并替换（只替换第一次出现）
+                const newHtml = bodyHtml.replace(new RegExp(`(${escapedText})`, 'g'), (match, p1) => {
+                  // 检查是否已经在标记内
+                  const beforeMatch = bodyHtml.substring(0, bodyHtml.indexOf(match));
+                  const lastOpenTag = beforeMatch.lastIndexOf('<span class="rk-note-mark"');
+                  const lastCloseTag = beforeMatch.lastIndexOf('</span>');
+                  if (lastOpenTag > lastCloseTag) {
+                    // 已经在标记内，不替换
+                    return match;
+                  }
+                  return markHtml;
+                });
+                
+                if (newHtml !== bodyHtml) {
+                  iframeDoc.body.innerHTML = newHtml;
+                  
+                  // 重新绑定事件
+                  const markEl = iframeDoc.querySelector(`.rk-note-mark[data-note-id="${note.id}"]`);
+                  const footnoteEl = iframeDoc.querySelector(`.rk-note-footnote[data-note-id="${note.id}"]`);
+                  
+                  const handleClick = (e: Event) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    e.stopImmediatePropagation();
+                    if (onNoteClick) {
+                      onNoteClick(note);
+                    }
+                    return false;
+                  };
+                  
+                  if (markEl) {
+                    markEl.addEventListener('click', handleClick, true);
+                    markEl.addEventListener('mousedown', (e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      e.stopImmediatePropagation();
+                    }, true);
+                    
+                    // 添加tooltip（PC端）
+                    addNoteTooltip(markEl as HTMLElement, footnoteEl as HTMLElement | null, note, iframe, iframeDoc);
+                  }
+                  if (footnoteEl) {
+                    footnoteEl.addEventListener('click', handleClick, true);
+                    footnoteEl.addEventListener('mousedown', (e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      e.stopImmediatePropagation();
+                    }, true);
+                  }
+                  
+                  return; // 已处理，跳过后续 range 处理
+                }
+              } catch (e) {
+                // console.warn('[笔记标记] HTML 替换失败:', e);
+              }
+            } else {
+              // console.log('[笔记标记] 文本未找到:', selectedText.substring(0, 30));
+            }
+          }
+          
+          // 如果找到了 range，添加标记
+          if (range) {
+            try {
+              const element = range.commonAncestorContainer;
+              
+              if (element.nodeType === Node.TEXT_NODE) {
+                const textNode = element as Text;
+                const parent = textNode.parentElement;
+                if (!parent || parent.classList.contains('rk-note-mark')) return;
+                
+                // 创建标记元素
+                const mark = iframeDoc.createElement('span');
+                mark.className = 'rk-note-mark';
+                mark.setAttribute('data-note-id', note.id);
+                
+                // 创建脚注标记（使用图标，不显示数字）
+                const footnote = iframeDoc.createElement('sup');
+                footnote.className = 'rk-note-footnote';
+                footnote.setAttribute('data-note-id', note.id);
+                footnote.setAttribute('title', `笔记 ${index + 1}`); // 鼠标悬停时显示编号
+                
+                // 提取文本内容
+                const textContent = textNode.textContent || '';
+                const textBefore = textContent.substring(0, range.startOffset);
+                const textSelected = textContent.substring(range.startOffset, range.endOffset);
+                const textAfter = textContent.substring(range.endOffset);
+                
+                // 替换文本节点
+                if (textBefore) {
+                  parent.insertBefore(iframeDoc.createTextNode(textBefore), textNode);
+                }
+                
+                mark.textContent = textSelected;
+                mark.appendChild(footnote);
+                parent.insertBefore(mark, textNode);
+                
+                if (textAfter) {
+                  parent.insertBefore(iframeDoc.createTextNode(textAfter), textNode);
+                }
+                
+                parent.removeChild(textNode);
+                
+                // 添加tooltip（PC端）
+                addNoteTooltip(mark, footnote, note, iframe, iframeDoc);
+                
+                // 添加点击事件（使用捕获阶段，确保优先处理）
+                const handleClick = (e: Event) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  e.stopImmediatePropagation(); // 阻止同一元素上的其他监听器
+                  if (onNoteClick) {
+                    onNoteClick(note);
+                  }
+                  return false; // 额外的保护
+                };
+                
+                mark.addEventListener('click', handleClick, true); // 使用捕获阶段
+                footnote.addEventListener('click', handleClick, true);
+                
+                // 同时阻止鼠标按下事件，防止触发其他交互
+                mark.addEventListener('mousedown', (e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  e.stopImmediatePropagation();
+                }, true);
+                footnote.addEventListener('mousedown', (e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  e.stopImmediatePropagation();
+                }, true);
+                
+              } else if (element.nodeType === Node.ELEMENT_NODE) {
+                // 如果是元素节点，尝试在元素内查找并替换
+                const el = element as HTMLElement;
+                const textContent = el.textContent || '';
+                
+                if (textContent.includes(selectedText)) {
+                  // 使用更安全的方式替换
+                  const markHtml = `<span class="rk-note-mark" data-note-id="${note.id}">${selectedText.replace(/[&<>"']/g, (m) => {
+                    const map: Record<string, string> = {
+                      '&': '&amp;',
+                      '<': '&lt;',
+                      '>': '&gt;',
+                      '"': '&quot;',
+                      "'": '&#39;',
+                    };
+                    return map[m];
+                  })}<sup class="rk-note-footnote" data-note-id="${note.id}" title="笔记 ${index + 1}"></sup></span>`;
+                  
+                  // 使用 textContent 查找并替换（更安全）
+                  const newHtml = el.innerHTML.replace(
+                    new RegExp(selectedText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'),
+                    markHtml
+                  );
+                  el.innerHTML = newHtml;
+                  
+                  // 重新绑定事件
+                  const markEl = el.querySelector(`.rk-note-mark[data-note-id="${note.id}"]`);
+                  const footnoteEl = el.querySelector(`.rk-note-footnote[data-note-id="${note.id}"]`);
+                  
+                  const handleClick = (e: Event) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    e.stopImmediatePropagation();
+                    if (onNoteClick) {
+                      onNoteClick(note);
+                    }
+                    return false;
+                  };
+                  
+                  if (markEl) {
+                    markEl.addEventListener('click', handleClick, true);
+                    markEl.addEventListener('mousedown', (e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      e.stopImmediatePropagation();
+                    }, true);
+                  }
+                  if (footnoteEl) {
+                    footnoteEl.addEventListener('click', handleClick, true);
+                    footnoteEl.addEventListener('mousedown', (e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      e.stopImmediatePropagation();
+                    }, true);
+                  }
+                  
+                }
+              }
+            } catch (e) {
+              // console.warn('[笔记标记] 处理 range 失败:', e, note);
+            }
+          } else {
+            // console.warn('[笔记标记] 无法定位文本:', note.id, selectedText.substring(0, 30));
+          }
+        } catch (e) {
+          // console.error('[笔记标记] 标记笔记异常:', e, note);
+        }
+      });
+    };
+
+    // 延迟确保内容加载完成
+    const timer = setTimeout(applyNoteMarks, 1000);
+    
+    // 监听 relocated 事件
+    const handleRelocated = () => {
+      setTimeout(applyNoteMarks, 200);
+    };
+    
+    rendition.on('relocated', handleRelocated);
+
+    return () => {
+      clearTimeout(timer);
+      if (rendition) {
+        rendition.off('relocated', handleRelocated);
+      }
+    };
+  }, [notes, loading, onNoteClick]);
+
+  // 在切后台/关闭页面时，强制 flush 一次最新位置，避免"最后一次 relocated 未落库"导致回退到上一页
   useEffect(() => {
     const flushNow = () => {
       try {
         if (isRestoringLayoutRef.current) return;
+        
+        // 如果处于书签浏览模式，不保存当前进度（保持原阅读进度不变）
+        // 如果存在 previousPosition，会在 ReaderContainer 的 onClose 中处理
+        if ((window as any).__isBookmarkBrowsingMode === true) {
+          // 检查是否有 previousPosition 需要保存
+          const previousPos = (window as any).__previousPositionForSave;
+          if (previousPos) {
+            // 保存之前的阅读位置
+            onProgressChange(previousPos.progress || 0, previousPos);
+            // 清除标志和临时数据
+            (window as any).__isBookmarkBrowsingMode = false;
+            (window as any).__previousPositionForSave = null;
+          }
+          return;
+        }
+        
         const rendition = epubjsRenditionRef.current;
         const bookInstance = epubjsBookRef.current;
         const cfi =
@@ -2823,7 +3968,8 @@ export default function ReaderEPUBPro({
           null;
 
         // 优先使用我们已经算好的 lastPositionRef
-        if (lastPositionRef.current && lastPositionRef.current.currentLocation) {
+        // 但如果处于书签浏览模式，不应该使用 lastPositionRef（因为它可能被书签位置更新了）
+        if (!(window as any).__isBookmarkBrowsingMode && lastPositionRef.current && lastPositionRef.current.currentLocation) {
           onProgressChange(lastProgressRef.current || lastPositionRef.current.progress || 0, lastPositionRef.current);
           return;
         }
@@ -2947,8 +4093,8 @@ export default function ReaderEPUBPro({
         try {
           const rendition = epubjsRenditionRef.current;
           const bookInstance = epubjsBookRef.current;
-          
-          // 清理 iframe 内的 MutationObserver 和事件监听器
+          // 循环所有 iframe，清理其中的 MutationObserver 和事件监听器将在下方统一处理
+          // 此处不需要直接操作 iframeDoc，iframeDoc 尚未定义
           try {
             const container = containerRef.current;
             if (container) {
@@ -3046,10 +4192,9 @@ export default function ReaderEPUBPro({
                   } else if (eventHandlers.relocated && typeof rendition.off === 'function') {
                     rendition.off('relocated', eventHandlers.relocated);
                   }
-                  if (eventHandlers.keyup && typeof rendition.removeListener === 'function') {
-                    rendition.removeListener('keyup', eventHandlers.keyup);
-                  } else if (eventHandlers.keyup && typeof rendition.off === 'function') {
-                    rendition.off('keyup', eventHandlers.keyup);
+                  // 移除 window 上的键盘事件监听器
+                  if (eventHandlers.keyup) {
+                    window.removeEventListener('keydown', eventHandlers.keyup);
                   }
                 } catch (e) {
                   // 忽略错误
@@ -3091,6 +4236,8 @@ export default function ReaderEPUBPro({
       
       // 清理全局函数
       delete (window as any).__epubGoToChapter;
+      delete (window as any).__epubClearSelection;
+      delete (window as any).__readerGoToProgress;
       
       // 延迟清理，确保 React 完成 DOM 操作后再清理
       if (typeof requestIdleCallback !== 'undefined') {
@@ -3137,6 +4284,13 @@ export default function ReaderEPUBPro({
         pageTurnStateRef.current.isTurningPage = true;
         pageTurnStateRef.current.lastPageTurnTime = now;
         
+        // 翻页时通知外层容器隐藏工具条
+        window.dispatchEvent(
+          new CustomEvent('__reader_page_turn', {
+            detail: { direction },
+          })
+        );
+        
         try {
           if (direction === 'prev') {
             epubjsRenditionRef.current.prev();
@@ -3160,6 +4314,37 @@ export default function ReaderEPUBPro({
         if (settings.pageTurnMethod !== 'click' || !settings.clickToTurn) return;
         if (loading || !epubjsRenditionRef.current) return;
         
+        // 优先检查并隐藏 UI 元素（工具条、选择等）
+        // 如果隐藏了 UI，则不翻页
+        const checkAndHideUI = (window as any).__readerCheckAndHideUI;
+        if (checkAndHideUI && typeof checkAndHideUI === 'function') {
+          const hasHiddenUI = checkAndHideUI();
+          if (hasHiddenUI) {
+            // 如果隐藏了 UI，不执行翻页
+            return;
+          }
+        }
+        
+        // 检查 iframe 内是否有选择，如果有则不翻页（让 checkAndHideUI 处理清除选择）
+        try {
+          const iframe = epubjsRenditionRef.current?.manager?.container?.querySelector('iframe');
+          if (iframe) {
+            const iframeDoc = iframe.contentDocument || (iframe as any).contentWindow?.document;
+            if (iframeDoc) {
+              const iframeWin = iframeDoc.defaultView || (iframe as any).contentWindow;
+              if (iframeWin) {
+                const sel = iframeWin.getSelection?.() || iframeDoc.getSelection?.();
+                if (sel && !sel.isCollapsed) {
+                  // 有选择，不翻页（让 checkAndHideUI 处理清除选择）
+                  return;
+                }
+              }
+            }
+          }
+        } catch (e) {
+          // ignore
+        }
+        
         const rect = containerRef.current?.getBoundingClientRect();
         if (!rect) return;
         
@@ -3176,6 +4361,17 @@ export default function ReaderEPUBPro({
         const height = rect.height;
         
         // 根据翻页模式决定翻页方向
+        const turnDirection = settings.pageTurnMode === 'horizontal'
+          ? (x < width / 2 ? 'prev' : 'next')
+          : (y < height / 2 ? 'prev' : 'next');
+        
+        // 翻页时通知外层容器隐藏工具条
+        window.dispatchEvent(
+          new CustomEvent('__reader_page_turn', {
+            detail: { direction: turnDirection },
+          })
+        );
+        
         if (settings.pageTurnMode === 'horizontal') {
           if (x < width / 2) {
             epubjsRenditionRef.current.prev();
@@ -3326,6 +4522,11 @@ export default function ReaderEPUBPro({
   
   // 保存阅读进度（独立于TTS进度）
   const saveReadingProgress = useCallback((location: any, source: string = 'unknown') => {
+    // 如果处于书签浏览模式，不保存阅读进度（保持原阅读进度不变）
+    if ((window as any).__isBookmarkBrowsingMode === true) {
+      return;
+    }
+    
     // 如果正在播放TTS，不更新阅读进度（TTS播放时的翻页会单独调用）
     // 但手动翻页时应该更新阅读进度
     if (ttsIsPlayingRef.current && source !== 'manual_page_turn' && source !== 'tts_page_turn' && source !== 'relocated_event') {
@@ -3342,7 +4543,7 @@ export default function ReaderEPUBPro({
       const chapterTotalPages = location?.start?.displayed?.total || 1;
       
       // 计算进度（使用totalChaptersRef）
-      const totalChapters = totalChaptersRef.current;
+      let totalChapters = totalChaptersRef.current;
       const withinChapter =
         typeof chapterTotalPages === 'number' &&
         chapterTotalPages > 1 &&
@@ -3351,14 +4552,53 @@ export default function ReaderEPUBPro({
           ? Math.min(1, Math.max(0, (chapterCurrentPage - 1) / chapterTotalPages))
           : 0;
       
+      // 如果totalChapters无效，尝试从spine重新计算
+      if (totalChapters <= 0 && bookInstance?.spine && spineIndex >= 0) {
+        try {
+          const spine = bookInstance.spine;
+          const spineItems = (spine as any).items || [];
+          if (spineItems.length > 0) {
+            totalChapters = spineItems.length;
+            totalChaptersRef.current = totalChapters;
+          } else {
+            // 尝试通过遍历获取
+            let maxIndex = -1;
+            try {
+              spine.each((item: any) => {
+                if (item.index !== undefined && item.index > maxIndex) {
+                  maxIndex = item.index;
+                }
+              });
+              if (maxIndex >= 0) {
+                totalChapters = maxIndex + 1;
+                totalChaptersRef.current = totalChapters;
+              }
+            } catch (e) {
+              // 遍历失败
+            }
+          }
+        } catch (e) {
+          // 忽略错误
+        }
+      }
+      
       let progress = 0;
       const percentage = location.start?.percentage;
       if (percentage !== undefined && percentage !== null && !isNaN(percentage) && percentage > 0) {
+        // 优先使用epubjs提供的percentage（这是全书进度）
         progress = Math.min(1, Math.max(0, percentage));
       } else if (totalChapters > 0 && spineIndex >= 0) {
-        const denom = totalChapters > 0 ? totalChapters : Math.max(1, spineIndex + 1);
+        // 使用章节索引和章节内进度计算全书进度
+        const denom = totalChapters;
         progress = Math.min(1, Math.max(0, (spineIndex + withinChapter) / denom));
+      } else if (spineIndex >= 0) {
+        // 如果无法获取总章节数，但至少知道当前章节索引，使用spineIndex+1作为估算分母
+        // 这样可以避免使用纯章节内进度，至少能反映章节在全书中的大致位置
+        const estimatedTotal = Math.max(spineIndex + 1, 1);
+        progress = Math.min(1, Math.max(0, (spineIndex + withinChapter) / estimatedTotal));
       } else {
+        // 完全无法获取章节信息时，才使用章节内进度作为最后兜底
+        // 但这种情况应该很少见
         progress = Math.min(1, Math.max(0, withinChapter));
       }
       
@@ -3417,11 +4657,15 @@ export default function ReaderEPUBPro({
         chapterTitle: chapterTitle || undefined,
       };
       
-      // 更新本地引用
-      lastProgressRef.current = finalProgress;
-      lastPositionRef.current = position;
-      if (cfi && typeof cfi === 'string' && cfi.startsWith('epubcfi(')) {
-        lastCfiRef.current = cfi;
+      // 如果处于书签浏览模式，不更新 lastPositionRef（保持原阅读位置）
+      const isBookmarkBrowsing = (window as any).__isBookmarkBrowsingMode === true;
+      if (!isBookmarkBrowsing) {
+        // 更新本地引用
+        lastProgressRef.current = finalProgress;
+        lastPositionRef.current = position;
+        if (cfi && typeof cfi === 'string' && cfi.startsWith('epubcfi(')) {
+          lastCfiRef.current = cfi;
+        }
       }
       
       // 更新最后保存的进度信息（用于防抖，但saveReadingProgress不直接使用，因为relocated事件有自己的防抖逻辑）
@@ -3601,7 +4845,8 @@ export default function ReaderEPUBPro({
       if (token) {
         try {
           const parsed = JSON.parse(token);
-          authToken = parsed.state?.token || '';
+          // Zustand persist stores state directly, but may also have a 'state' wrapper
+          authToken = parsed.state?.token || parsed.token || '';
         } catch (e) {
           // ignore
         }
@@ -3634,7 +4879,8 @@ export default function ReaderEPUBPro({
         
         try {
           // 生成音频
-          const synthesizeResponse = await fetch('/api/tts/synthesize', {
+          const synthesizeUrl = getFullApiUrl('/tts/synthesize');
+          const synthesizeResponse = await fetch(synthesizeUrl, {
             method: 'POST',
             headers,
             body: JSON.stringify({
@@ -3651,7 +4897,7 @@ export default function ReaderEPUBPro({
 
           if (synthesizeResponse.ok) {
             // 获取音频（生成时使用默认速度）
-            const audioUrl = `/api/tts/audio?bookId=${encodeURIComponent(book.id)}&chapterId=0&paragraphId=${encodeURIComponent(`next_page_${i}`)}&speed=${generateSpeed}&model=${encodeURIComponent(model)}&voice=${encodeURIComponent(voice)}&autoRole=${autoRole ? 'true' : 'false'}`;
+            const audioUrl = getFullApiUrl(`/tts/audio?bookId=${encodeURIComponent(book.id)}&chapterId=0&paragraphId=${encodeURIComponent(`next_page_${i}`)}&speed=${generateSpeed}&model=${encodeURIComponent(model)}&voice=${encodeURIComponent(voice)}&autoRole=${autoRole ? 'true' : 'false'}`);
             const audioResponse = await fetch(audioUrl, { headers });
 
             if (audioResponse.ok) {
@@ -4192,7 +5438,8 @@ export default function ReaderEPUBPro({
       if (token) {
         try {
           const parsed = JSON.parse(token);
-          authToken = parsed.state?.token || '';
+          // Zustand persist stores state directly, but may also have a 'state' wrapper
+          authToken = parsed.state?.token || parsed.token || '';
         } catch (e) {
           // ignore
         }
@@ -4282,7 +5529,8 @@ export default function ReaderEPUBPro({
         }
         
         // 生成音频
-        fetch('/api/tts/synthesize', {
+        const synthesizeUrl = getFullApiUrl('/tts/synthesize');
+        fetch(synthesizeUrl, {
           method: 'POST',
           headers,
           body: JSON.stringify({
@@ -4302,7 +5550,7 @@ export default function ReaderEPUBPro({
             }
 
             // 获取音频（生成时使用默认速度）
-            const audioUrl = `/api/tts/audio?bookId=${encodeURIComponent(book.id)}&chapterId=0&paragraphId=${encodeURIComponent(paragraphId)}&speed=${generateSpeed}&model=${encodeURIComponent(model)}&voice=${encodeURIComponent(voice)}&autoRole=${autoRole ? 'true' : 'false'}`;
+            const audioUrl = getFullApiUrl(`/tts/audio?bookId=${encodeURIComponent(book.id)}&chapterId=0&paragraphId=${encodeURIComponent(paragraphId)}&speed=${generateSpeed}&model=${encodeURIComponent(model)}&voice=${encodeURIComponent(voice)}&autoRole=${autoRole ? 'true' : 'false'}`);
             return fetch(audioUrl, { headers });
           })
           .then((audioResponse) => {
@@ -4454,20 +5702,23 @@ export default function ReaderEPUBPro({
             if (token) {
               try {
                 const parsed = JSON.parse(token);
-                authToken = parsed.state?.token || '';
+                // Zustand persist stores state directly, but may also have a 'state' wrapper
+                authToken = parsed.state?.token || parsed.token || '';
               } catch (err) {
                 // ignore
               }
             }
             
-            const headers: Record<string, string> = {
+            const headers: HeadersInit = {
               'Content-Type': 'application/json',
+              ...getApiKeyHeader(), // 添加 API Key
             };
             if (authToken) {
               headers['Authorization'] = `Bearer ${authToken}`;
             }
             
-            const synthesizeResponse = await fetch('/api/tts/synthesize', {
+            const synthesizeUrl = getFullApiUrl('/tts/synthesize');
+            const synthesizeResponse = await fetch(synthesizeUrl, {
               method: 'POST',
               headers,
               body: JSON.stringify({
@@ -4486,7 +5737,8 @@ export default function ReaderEPUBPro({
               throw new Error(`生成音频失败: HTTP ${synthesizeResponse.status}`);
             }
             
-            const audioUrl = `/api/tts/audio?bookId=${encodeURIComponent(book.id)}&chapterId=0&paragraphId=${encodeURIComponent(paragraphId)}&speed=${generateSpeed}&model=${encodeURIComponent(model)}&voice=${encodeURIComponent(voice)}&autoRole=${autoRole ? 'true' : 'false'}`;
+            // 使用统一的 API URL 配置
+            const audioUrl = getFullApiUrl(`/tts/audio?bookId=${encodeURIComponent(book.id)}&chapterId=0&paragraphId=${encodeURIComponent(paragraphId)}&speed=${generateSpeed}&model=${encodeURIComponent(model)}&voice=${encodeURIComponent(voice)}&autoRole=${autoRole ? 'true' : 'false'}`);
             const audioResponse = await fetch(audioUrl, { headers });
             
             if (!audioResponse.ok) {
@@ -4590,7 +5842,8 @@ export default function ReaderEPUBPro({
       if (token) {
         try {
           const parsed = JSON.parse(token);
-          authToken = parsed.state?.token || '';
+          // Zustand persist stores state directly, but may also have a 'state' wrapper
+          authToken = parsed.state?.token || parsed.token || '';
         } catch (e) {
           // ignore
         }
@@ -4616,7 +5869,8 @@ export default function ReaderEPUBPro({
       
       if (!audioObjectUrl) {
         // 生成音频（使用系统设置中的速度）
-        fetch('/api/tts/synthesize', {
+        const synthesizeUrl = getFullApiUrl('/tts/synthesize');
+        fetch(synthesizeUrl, {
           method: 'POST',
           headers,
           body: JSON.stringify({
@@ -4636,7 +5890,7 @@ export default function ReaderEPUBPro({
             }
 
             // 获取音频（生成时使用系统设置中的速度）
-            const audioUrl = `/api/tts/audio?bookId=${encodeURIComponent(book.id)}&chapterId=0&paragraphId=${encodeURIComponent(`current_page_${sentenceIndex}`)}&speed=${generateSpeed}&model=${encodeURIComponent(model)}&voice=${encodeURIComponent(voice)}&autoRole=${autoRole ? 'true' : 'false'}`;
+            const audioUrl = getFullApiUrl(`/tts/audio?bookId=${encodeURIComponent(book.id)}&chapterId=0&paragraphId=${encodeURIComponent(`current_page_${sentenceIndex}`)}&speed=${generateSpeed}&model=${encodeURIComponent(model)}&voice=${encodeURIComponent(voice)}&autoRole=${autoRole ? 'true' : 'false'}`);
             return fetch(audioUrl, { headers });
           })
           .then((audioResponse) => {
@@ -4988,7 +6242,8 @@ export default function ReaderEPUBPro({
               if (token) {
                 try {
                   const parsed = JSON.parse(token);
-                  authToken = parsed.state?.token || '';
+                  // Zustand persist stores state directly, but may also have a 'state' wrapper
+                  authToken = parsed.state?.token || parsed.token || '';
                 } catch (e) {}
               }
               
@@ -4999,7 +6254,8 @@ export default function ReaderEPUBPro({
                 headers['Authorization'] = `Bearer ${authToken}`;
               }
               
-              const synthesizeResponse = await fetch('/api/tts/synthesize', {
+              const synthesizeUrl = getFullApiUrl('/tts/synthesize');
+            const synthesizeResponse = await fetch(synthesizeUrl, {
                 method: 'POST',
                 headers,
                 body: JSON.stringify({
@@ -5027,7 +6283,8 @@ export default function ReaderEPUBPro({
               }
               
               if (synthesizeResponse.ok) {
-                const audioUrl = `/api/tts/audio?bookId=${encodeURIComponent(book.id)}&chapterId=0&paragraphId=${encodeURIComponent(paragraphId)}&speed=${generateSpeed}&model=${encodeURIComponent(model)}&voice=${encodeURIComponent(voice)}&autoRole=${autoRole ? 'true' : 'false'}`;
+                // 使用统一的 API URL 配置
+                const audioUrl = getFullApiUrl(`/tts/audio?bookId=${encodeURIComponent(book.id)}&chapterId=0&paragraphId=${encodeURIComponent(paragraphId)}&speed=${generateSpeed}&model=${encodeURIComponent(model)}&voice=${encodeURIComponent(voice)}&autoRole=${autoRole ? 'true' : 'false'}`);
                 const audioResponse = await fetch(audioUrl, { headers });
                 if (audioResponse.ok) {
                   const audioBlob = await audioResponse.blob();
@@ -5963,7 +7220,7 @@ export default function ReaderEPUBPro({
     const themeConfig = {
       light: {
         // 浅色主题：纯净、清爽
-        gradient: 'linear-gradient(145deg, rgba(255, 255, 255, 0.938) 0%, rgba(248, 250, 252, 0.5) 50%, rgba(241, 245, 249, 0.7) 100%)',
+        // gradient: 'linear-gradient(145deg, rgba(255, 255, 255, 0.938) 0%, rgba(248, 250, 252, 0.5) 50%, rgba(241, 245, 249, 0.7) 100%)',
         shadow: isCentered
           ? '0 20px 60px rgba(0, 0, 0, 0.08), 0 8px 24px rgba(0, 0, 0, 0.05), 0 2px 8px rgba(0, 0, 0, 0.03), inset 0 1px 0 rgba(255, 255, 255, 0.9), inset 0 -1px 0 rgba(0, 0, 0, 0.02)'
           : 'inset 0 0 40px rgba(0, 0, 0, 0.02), inset 0 1px 0 rgba(255, 255, 255, 0.3)',
@@ -5972,7 +7229,7 @@ export default function ReaderEPUBPro({
       },
       dark: {
         // 深色主题：沉稳、优雅
-        gradient: 'linear-gradient(145deg, rgba(28, 30, 34, 0.3) 0%, rgba(23, 25, 28, 0.5) 50%, rgba(18, 20, 23, 0.7) 100%)',
+        // gradient: 'linear-gradient(145deg, rgba(28, 30, 34, 0.3) 0%, rgba(23, 25, 28, 0.5) 50%, rgba(18, 20, 23, 0.7) 100%)',
         shadow: isCentered
           ? '0 20px 60px rgba(0, 0, 0, 0.35), 0 8px 24px rgba(0, 0, 0, 0.25), 0 2px 8px rgba(0, 0, 0, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.08), inset 0 -1px 0 rgba(0, 0, 0, 0.4)'
           : 'inset 0 0 40px rgba(0, 0, 0, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.05)',
@@ -5981,7 +7238,7 @@ export default function ReaderEPUBPro({
       },
       sepia: {
         // 护眼主题：温暖、柔和
-        gradient: 'linear-gradient(145deg, rgba(250, 247, 240, 0.3) 0%, rgba(245, 238, 225, 0.5) 50%, rgba(240, 232, 215, 0.7) 100%)',
+        // gradient: 'linear-gradient(145deg, rgba(250, 247, 240, 0.3) 0%, rgba(245, 238, 225, 0.5) 50%, rgba(240, 232, 215, 0.7) 100%)',
         shadow: isCentered
           ? '0 20px 60px rgba(92, 75, 55, 0.12), 0 8px 24px rgba(92, 75, 55, 0.08), 0 2px 8px rgba(92, 75, 55, 0.05), inset 0 1px 0 rgba(255, 248, 230, 0.9), inset 0 -1px 0 rgba(92, 75, 55, 0.05)'
           : 'inset 0 0 40px rgba(92, 75, 55, 0.03), inset 0 1px 0 rgba(255, 248, 230, 0.5)',
@@ -5990,7 +7247,7 @@ export default function ReaderEPUBPro({
       },
       green: {
         // 绿色主题：清新、自然
-        gradient: 'linear-gradient(145deg, rgba(245, 252, 245, 0.3) 0%, rgba(237, 247, 237, 0.5) 50%, rgba(232, 245, 233, 0.7) 100%)',
+        // gradient: 'linear-gradient(145deg, rgba(245, 252, 245, 0.3) 0%, rgba(237, 247, 237, 0.5) 50%, rgba(232, 245, 233, 0.7) 100%)',
         shadow: isCentered
           ? '0 20px 60px rgba(46, 125, 50, 0.08), 0 8px 24px rgba(46, 125, 50, 0.05), 0 2px 8px rgba(46, 125, 50, 0.03), inset 0 1px 0 rgba(240, 255, 240, 0.9), inset 0 -1px 0 rgba(46, 125, 50, 0.03)'
           : 'inset 0 0 40px rgba(46, 125, 50, 0.02), inset 0 1px 0 rgba(240, 255, 240, 0.4)',
@@ -5998,10 +7255,10 @@ export default function ReaderEPUBPro({
         innerPadding: isCentered ? '24px' : '16px',
       },
     }[settings.theme];
-
+// background: linear-gradient(145deg, rgba(245, 252, 245, 0.3) 0%, rgba(237, 247, 237, 0.5) 50%, rgba(232, 245, 233, 0.7) 100%); 
     return {
-      background: themeConfig.gradient,
-      boxShadow: themeConfig.shadow,
+      // background: themeConfig.gradient,
+      // boxShadow: themeConfig.shadow,
       borderRadius: isCentered ? '16px' : '0',
       border: themeConfig.border,
       padding: themeConfig.innerPadding,
@@ -6090,7 +7347,7 @@ export default function ReaderEPUBPro({
           <div className="absolute inset-0 flex items-center justify-center z-50" style={{ backgroundColor: themeStyles.bg }}>
             <div className="text-center">
               <div className="animate-spin rounded-full h-12 w-12 border-b-2 mx-auto mb-4" style={{ borderColor: themeStyles.text }} />
-              <p style={{ color: themeStyles.text }}>加载中...</p>
+              <p style={{ color: themeStyles.text }}>{t('common.loading')}</p>
             </div>
           </div>
         )}

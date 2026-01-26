@@ -25,8 +25,24 @@ export default function BookCover({ coverUrl, title, className = '', size = 'md'
     lg: 'w-24 h-24',
   };
 
-  const handleImageError = () => {
-    console.error('[BookCover] 图片加载失败:', coverUrl);
+  const handleImageError = (e: React.SyntheticEvent<HTMLImageElement, Event>) => {
+    const target = e.target as HTMLImageElement;
+    const imgSrc = target.src;
+    console.error('[BookCover] 图片加载失败:', {
+      originalUrl: coverUrl,
+      finalUrl: imgSrc,
+      title: title,
+    });
+    
+    // 尝试重新加载一次（可能是网络临时问题）
+    if (imageLoading) {
+      console.log('[BookCover] 尝试重新加载图片...');
+      setTimeout(() => {
+        target.src = imgSrc + (imgSrc.includes('?') ? '&' : '?') + '_retry=' + Date.now();
+      }, 1000);
+      return; // 不立即标记为错误，等待重试
+    }
+    
     setImageError(true);
     setImageLoading(false);
   };
@@ -37,6 +53,21 @@ export default function BookCover({ coverUrl, title, className = '', size = 'md'
 
   // 使用coverHelper处理封面URL（支持中文路径）
   const finalCoverUrl = getCoverUrl(coverUrl);
+
+  // 添加调试日志
+  if (finalCoverUrl && typeof window !== 'undefined') {
+    const isAPK = window.location.origin === 'null' || 
+                  window.location.origin.startsWith('file://') || 
+                  window.location.origin.startsWith('capacitor://') ||
+                  (window as any).Capacitor;
+    if (isAPK) {
+      console.log('[BookCover] APK环境封面URL:', {
+        original: coverUrl,
+        final: finalCoverUrl,
+        isAbsolute: finalCoverUrl.startsWith('http'),
+      });
+    }
+  }
 
   if (imageError || !finalCoverUrl) {
     return (
@@ -59,9 +90,11 @@ export default function BookCover({ coverUrl, title, className = '', size = 'md'
         className={`w-full h-full object-cover transition-opacity duration-300 ${
           imageLoading ? 'opacity-0' : 'opacity-100'
         }`}
+        onContextMenu={(e) => e.preventDefault()}
         onError={handleImageError}
         onLoad={handleImageLoad}
         loading="lazy"
+        crossOrigin="anonymous"
       />
     </div>
   );

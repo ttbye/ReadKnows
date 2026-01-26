@@ -69,7 +69,11 @@ function getTTSBaseUrl(): string {
   console.warn(`[TTS] 使用本地默认地址: ${defaultUrl} (Lite=${defaultPort === 5051})`);
   return defaultUrl;
 }
-const TTS_CACHE_DIR = process.env.TTS_CACHE_DIR || './data/tts-cache';
+
+import { ttsCacheDir } from '../config/paths';
+
+// TTS 缓存目录（统一放在 data/cache/tts 下）
+const TTS_CACHE_DIR = ttsCacheDir;
 
 // 将后端模型名称映射到 TTS API 模型名称
 function mapModelToTTSAPI(model: string): string {

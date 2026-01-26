@@ -1,0 +1,64 @@
+#!/bin/bash
+# 一键构建 ReadKnows Android release APK（支持多服务器配置）
+# 
+# 使用方法:
+#   ./apk.sh                    # 使用默认配置
+#   ./apk.sh server1            # 使用 server1 配置（从 apk-profiles.json）
+#   ./apk.sh server1 debug      # 构建 debug 版本
+#
+# 或者通过环境变量自定义:
+#   ANDROID_APPLICATION_ID="com.readknows.server1" \
+#   APP_NAME="ReadKnows Server1" \
+#   VITE_API_URL="https://server1.example.com" \
+#   VITE_API_KEY="your-key" \
+#   ./apk.sh
+
+set -e
+
+# 获取参数
+PROFILE_NAME=${1:-default}
+BUILD_TYPE=${2:-release}
+
+# 进入前端目录
+cd frontend || exit 1
+
+# 检查是否使用多配置脚本
+if [ -f "apk-profiles.json" ] && [ "$PROFILE_NAME" != "default" ]; then
+    # 使用多配置脚本
+    if [ -f "build-apk-multi.sh" ]; then
+        echo "🚀 使用多配置模式: $PROFILE_NAME"
+        ./build-apk-multi.sh "$PROFILE_NAME" "$BUILD_TYPE"
+        exit $?
+    fi
+fi
+
+# 默认配置（如果没有配置文件或使用 default）
+if [ "$PROFILE_NAME" = "default" ]; then
+    echo "🚀 使用默认配置构建 APK..."
+    VITE_API_URL="${VITE_API_URL:-https://your-server.com}" \
+    VITE_API_KEY="${VITE_API_KEY:-your-api-key}" \
+    ./build-apk.sh "$BUILD_TYPE"
+else
+    # 如果指定了配置名称但没有多配置脚本，尝试从环境变量读取
+    echo "🚀 使用环境变量配置构建 APK: $PROFILE_NAME"
+    
+    # 如果没有设置 ANDROID_APPLICATION_ID，根据配置名称生成
+    if [ -z "$ANDROID_APPLICATION_ID" ]; then
+        # 从配置名称生成包名（例如：server1 -> com.readknows.server1）
+        ANDROID_APPLICATION_ID="com.readknows.${PROFILE_NAME}"
+        echo "📦 自动生成包名: $ANDROID_APPLICATION_ID"
+    fi
+    
+    # 如果没有设置应用名称，使用配置名称
+    if [ -z "$APP_NAME" ]; then
+        APP_NAME="ReadKnows ${PROFILE_NAME^}"
+        echo "📱 自动生成应用名称: $APP_NAME"
+    fi
+    
+    # 构建 APK
+    ANDROID_APPLICATION_ID="$ANDROID_APPLICATION_ID" \
+    APP_NAME="$APP_NAME" \
+    VITE_API_URL="${VITE_API_URL:-https://your-server.com}" \
+    VITE_API_KEY="${VITE_API_KEY:-your-api-key}" \
+    ./build-apk.sh "$BUILD_TYPE"
+fi

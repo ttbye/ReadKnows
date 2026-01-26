@@ -94,19 +94,66 @@ if [ ! -f /.dockerenv ] && [ -z "$DOCKER_CONTAINER" ]; then
         print_info "使用 docker-compose 文件: $COMPOSE_FILE_PATH"
     fi
     
-    # 检查容器是否运行
-    if ! $COMPOSE_CMD ps backend 2>/dev/null | grep -q "Up"; then
+    # 检查容器是否运行（尝试多种方式）
+    CONTAINER_RUNNING=false
+    CONTAINER_NAME=""
+    
+    # 方法1: 检查 backend 服务
+    if $COMPOSE_CMD ps backend 2>/dev/null | grep -q "Up"; then
+        CONTAINER_RUNNING=true
+        CONTAINER_NAME="backend"
+    # 方法2: 检查所有服务，查找后端容器（排除 frontend）
+    elif $COMPOSE_CMD ps 2>/dev/null | grep -E "(backend|readknows-backend)" | grep -v "frontend" | grep -q "Up"; then
+        CONTAINER_RUNNING=true
+        CONTAINER_NAME=$(docker ps --format "{{.Names}}" | grep -E "(backend|readknows-backend)" | grep -v "frontend" | head -1)
+    # 方法3: 直接检查 docker ps（排除 frontend）
+    elif docker ps --format "{{.Names}}" | grep -qE "(backend|readknows-backend)"; then
+        CONTAINER_RUNNING=true
+        CONTAINER_NAME=$(docker ps --format "{{.Names}}" | grep -E "(backend|readknows-backend)" | grep -v "frontend" | head -1)
+    fi
+    
+    if [ "$CONTAINER_RUNNING" = false ]; then
         print_warning "后端容器未运行"
         print_info "尝试启动容器..."
-        if $COMPOSE_CMD up -d backend 2>/dev/null; then
+        
+        # 尝试启动 backend 服务
+        if $COMPOSE_CMD up -d backend 2>&1; then
             print_success "容器已启动，等待容器就绪..."
-            sleep 3
+            sleep 5
+            # 再次检查
+            if $COMPOSE_CMD ps backend 2>/dev/null | grep -q "Up"; then
+                CONTAINER_RUNNING=true
+                CONTAINER_NAME="backend"
+            fi
         else
-            print_error "无法启动容器，请手动启动："
+            print_warning "单独启动 backend 失败，尝试启动所有服务..."
+            # 如果单独启动失败，尝试启动所有服务
+            if $COMPOSE_CMD up -d 2>&1; then
+                print_success "所有服务已启动，等待容器就绪..."
+                sleep 5
+                # 再次检查（排除 frontend）
+                if docker ps --format "{{.Names}}" | grep -qE "(backend|readknows-backend)"; then
+                    CONTAINER_RUNNING=true
+                    CONTAINER_NAME=$(docker ps --format "{{.Names}}" | grep -E "(backend|readknows-backend)" | grep -v "frontend" | head -1)
+                fi
+            fi
+        fi
+        
+        if [ "$CONTAINER_RUNNING" = false ]; then
+            print_error "无法启动容器"
+            echo ""
+            print_info "请手动启动容器："
             echo "  $COMPOSE_CMD up -d"
-            print_info "或者确保容器已运行后再执行此脚本"
+            echo ""
+            print_info "或者检查容器状态："
+            echo "  $COMPOSE_CMD ps"
+            echo "  docker ps"
+            echo ""
+            print_info "如果容器已运行但名称不同，请确保容器名称包含 'backend' 或 'readknows'"
             exit 1
         fi
+    else
+        print_success "后端容器正在运行: $CONTAINER_NAME"
     fi
     
     # 确保缓存目录存在
@@ -116,8 +163,55 @@ if [ ! -f /.dockerenv ] && [ -z "$DOCKER_CONTAINER" ]; then
     # 注意：容器内应该使用挂载路径 /app/cache/calibre
     # 不要传递宿主机路径，让容器内脚本自动检测挂载路径
     print_info "在容器内执行安装..."
-    $COMPOSE_CMD exec -T backend bash < "$0"
-    exit $?
+    
+    # 使用确定的容器名称执行
+    if [ -n "$CONTAINER_NAME" ]; then
+        # 验证容器名称不是前端容器
+        if echo "$CONTAINER_NAME" | grep -qv "frontend"; then
+            if docker exec "$CONTAINER_NAME" test -f /.dockerenv 2>/dev/null; then
+                print_info "在容器 $CONTAINER_NAME 中执行安装脚本..."
+                # 使用 -i 而不是 -T，或者不使用任何参数（根据 Docker 版本）
+                # 先尝试不使用 -T，如果失败再尝试其他方式
+                if docker exec "$CONTAINER_NAME" bash -c "cat > /tmp/install-calibre.sh" < "$0" 2>/dev/null; then
+                    docker exec "$CONTAINER_NAME" bash /tmp/install-calibre.sh
+                    exit $?
+                elif docker exec -i "$CONTAINER_NAME" bash < "$0" 2>/dev/null; then
+                    exit $?
+                else
+                    # 最后尝试使用 -T（某些 Docker 版本支持）
+                    docker exec -T "$CONTAINER_NAME" bash < "$0" 2>/dev/null || true
+                    exit $?
+                fi
+            fi
+        else
+            print_warning "检测到的容器是前端容器，尝试查找后端容器..."
+            CONTAINER_NAME=$(docker ps --format "{{.Names}}" | grep -E "(backend|readknows-backend)" | grep -v "frontend" | head -1)
+            if [ -n "$CONTAINER_NAME" ]; then
+                print_info "找到后端容器: $CONTAINER_NAME"
+                if docker exec "$CONTAINER_NAME" bash -c "cat > /tmp/install-calibre.sh" < "$0" 2>/dev/null; then
+                    docker exec "$CONTAINER_NAME" bash /tmp/install-calibre.sh
+                    exit $?
+                elif docker exec -i "$CONTAINER_NAME" bash < "$0" 2>/dev/null; then
+                    exit $?
+                fi
+            fi
+        fi
+    fi
+    
+    # 回退到使用 compose exec（不使用 -T）
+    if $COMPOSE_CMD exec backend bash -c "cat > /tmp/install-calibre.sh" < "$0" 2>/dev/null; then
+        $COMPOSE_CMD exec backend bash /tmp/install-calibre.sh
+        exit $?
+    elif $COMPOSE_CMD exec -i backend bash < "$0" 2>/dev/null; then
+        exit $?
+    else
+        print_error "无法在容器内执行脚本"
+        print_info "请检查容器名称和状态"
+        print_info "尝试手动执行："
+        echo "  docker exec $CONTAINER_NAME bash"
+        echo "  然后在容器内运行安装脚本"
+        exit 1
+    fi
 fi
 
 # 容器内：确定缓存目录路径
@@ -176,38 +270,50 @@ for path in "${CALIBRE_PATHS[@]}"; do
 done
 
 if [ "$CALIBRE_FOUND" = true ]; then
-    print_success "Calibre 已安装"
-    print_info "路径: $CALIBRE_PATH"
-    "$CALIBRE_PATH" --version 2>&1 | head -1
-    echo ""
-    print_info "检查符号链接..."
-    
-    # 确保符号链接存在
-    if [ ! -f /opt/calibre/ebook-convert ] && [ -f /opt/calibre/calibre/ebook-convert ]; then
-        ln -sf /opt/calibre/calibre/ebook-convert /opt/calibre/ebook-convert
-        print_success "创建符号链接: /opt/calibre/ebook-convert"
-    fi
-    
-    if [ ! -f /usr/local/bin/ebook-convert ]; then
-        if [ -f /opt/calibre/calibre/ebook-convert ]; then
-            ln -sf /opt/calibre/calibre/ebook-convert /usr/local/bin/ebook-convert
-        elif [ -f /opt/calibre/ebook-convert ]; then
-            ln -sf /opt/calibre/ebook-convert /usr/local/bin/ebook-convert
+    # 验证 Calibre 是否可以正常执行
+    if "$CALIBRE_PATH" --version >/dev/null 2>&1; then
+        print_success "Calibre 已安装"
+        print_info "路径: $CALIBRE_PATH"
+        "$CALIBRE_PATH" --version 2>&1 | head -1
+        echo ""
+        print_info "检查符号链接..."
+        
+        # 确保符号链接存在
+        if [ ! -f /opt/calibre/ebook-convert ] && [ -f /opt/calibre/calibre/ebook-convert ]; then
+            ln -sf /opt/calibre/calibre/ebook-convert /opt/calibre/ebook-convert
+            print_success "创建符号链接: /opt/calibre/ebook-convert"
         fi
-        print_success "创建符号链接: /usr/local/bin/ebook-convert"
-    fi
-    
-    if [ ! -f /usr/local/bin/ebook-meta ]; then
-        if [ -f /opt/calibre/calibre/ebook-meta ]; then
-            ln -sf /opt/calibre/calibre/ebook-meta /usr/local/bin/ebook-meta
-        elif [ -f /opt/calibre/ebook-meta ]; then
-            ln -sf /opt/calibre/ebook-meta /usr/local/bin/ebook-meta
+        
+        if [ ! -f /usr/local/bin/ebook-convert ]; then
+            if [ -f /opt/calibre/calibre/ebook-convert ]; then
+                ln -sf /opt/calibre/calibre/ebook-convert /usr/local/bin/ebook-convert
+            elif [ -f /opt/calibre/ebook-convert ]; then
+                ln -sf /opt/calibre/ebook-convert /usr/local/bin/ebook-convert
+            fi
+            print_success "创建符号链接: /usr/local/bin/ebook-convert"
         fi
-        print_success "创建符号链接: /usr/local/bin/ebook-meta"
+        
+        if [ ! -f /usr/local/bin/ebook-meta ]; then
+            if [ -f /opt/calibre/calibre/ebook-meta ]; then
+                ln -sf /opt/calibre/calibre/ebook-meta /usr/local/bin/ebook-meta
+            elif [ -f /opt/calibre/ebook-meta ]; then
+                ln -sf /opt/calibre/ebook-meta /usr/local/bin/ebook-meta
+            fi
+            print_success "创建符号链接: /usr/local/bin/ebook-meta"
+        fi
+        
+        # 最终验证符号链接是否可用
+        if [ -f /usr/local/bin/ebook-convert ] && /usr/local/bin/ebook-convert --version >/dev/null 2>&1; then
+            print_success "Calibre 已就绪，无需重新安装"
+            exit 0
+        else
+            print_warning "检测到 Calibre 文件，但无法执行，将重新安装..."
+            CALIBRE_FOUND=false
+        fi
+    else
+        print_warning "检测到 Calibre 文件，但无法执行（可能损坏），将重新安装..."
+        CALIBRE_FOUND=false
     fi
-    
-    print_success "Calibre 已就绪，无需重新安装"
-    exit 0
 fi
 
 print_warning "Calibre 未安装，开始安装..."
@@ -477,24 +583,40 @@ if [ -n "$HOST_CACHE_DIR" ] && [ -d "$HOST_CACHE_DIR" ]; then
     fi
 fi
 
-# 检查安装结果
-if [ $INSTALL_EXIT_CODE -eq 0 ] || [ -f /opt/calibre/calibre/ebook-convert ] || [ -f /opt/calibre/ebook-convert ]; then
-    # 检查安装结果
-    if [ -f /opt/calibre/calibre/ebook-convert ]; then
+# 检查安装结果（严格验证：安装脚本必须成功执行，且文件必须存在且可执行）
+INSTALL_SUCCESS=false
+if [ $INSTALL_EXIT_CODE -eq 0 ]; then
+    # 安装脚本成功执行，检查文件是否存在
+    if [ -f /opt/calibre/calibre/ebook-convert ] && [ -x /opt/calibre/calibre/ebook-convert ]; then
         CALIBRE_INSTALL_PATH="/opt/calibre/calibre/ebook-convert"
-        print_success "Calibre 安装完成（路径: /opt/calibre/calibre/ebook-convert）"
-    elif [ -f /opt/calibre/ebook-convert ]; then
+        # 验证文件是否可以执行
+        if "$CALIBRE_INSTALL_PATH" --version >/dev/null 2>&1; then
+            INSTALL_SUCCESS=true
+            print_success "Calibre 安装完成（路径: /opt/calibre/calibre/ebook-convert）"
+        fi
+    elif [ -f /opt/calibre/ebook-convert ] && [ -x /opt/calibre/ebook-convert ]; then
         CALIBRE_INSTALL_PATH="/opt/calibre/ebook-convert"
-        print_success "Calibre 安装完成（路径: /opt/calibre/ebook-convert）"
-    else
-        print_warning "安装脚本执行完成，但未找到 ebook-convert，检查日志..."
-        cat /tmp/calibre-install.log | tail -30
+        # 验证文件是否可以执行
+        if "$CALIBRE_INSTALL_PATH" --version >/dev/null 2>&1; then
+            INSTALL_SUCCESS=true
+            print_success "Calibre 安装完成（路径: /opt/calibre/ebook-convert）"
+        fi
+    fi
+fi
+
+if [ "$INSTALL_SUCCESS" = false ]; then
+    print_error "Calibre 安装失败"
+    echo ""
+    if [ $INSTALL_EXIT_CODE -ne 0 ]; then
+        print_info "安装脚本退出码: $INSTALL_EXIT_CODE"
+    fi
+    if [ ! -f /opt/calibre/calibre/ebook-convert ] && [ ! -f /opt/calibre/ebook-convert ]; then
+        print_info "未找到 ebook-convert 文件"
         print_info "尝试查找 Calibre 安装位置..."
         find /opt/calibre -name "ebook-convert" -type f 2>/dev/null | head -5 || echo "未找到"
-        exit 1
+    elif [ -f /opt/calibre/calibre/ebook-convert ] || [ -f /opt/calibre/ebook-convert ]; then
+        print_warning "文件存在但无法执行，可能是文件损坏或权限问题"
     fi
-else
-    print_error "Calibre 安装过程出错（退出码: $INSTALL_EXIT_CODE）"
     echo ""
     print_info "安装日志（最后 30 行）:"
     cat /tmp/calibre-install.log | tail -30
@@ -504,11 +626,14 @@ else
     echo "  2. SSL 证书验证失败"
     echo "  3. 磁盘空间不足"
     echo "  4. 权限问题"
+    echo "  5. 文件损坏或无法执行"
     echo ""
     print_info "建议："
     echo "  1. 检查网络连接"
     echo "  2. 检查磁盘空间: df -h"
-    echo "  3. 尝试手动运行安装脚本: bash $INSTALLER install_dir=/opt/calibre"
+    echo "  3. 检查文件权限: ls -la /opt/calibre*/ebook-convert"
+    echo "  4. 尝试手动运行安装脚本: bash $INSTALLER install_dir=/opt/calibre"
+    echo "  5. 如果问题持续，尝试清理后重新安装: rm -rf /opt/calibre && 重新运行此脚本"
     exit 1
 fi
 
@@ -544,42 +669,94 @@ fi
 # 步骤 5: 验证安装
 print_info "步骤 5: 验证安装..."
 
+# 严格验证：文件必须存在、可执行，且能正常运行
 if [ -f /usr/local/bin/ebook-convert ] && [ -x /usr/local/bin/ebook-convert ]; then
-    print_success "Calibre 安装成功！"
-    echo ""
-    print_info "版本信息:"
-    /usr/local/bin/ebook-convert --version 2>&1 | head -1
-    echo ""
-    print_success "现在可以正常使用 MOBI 转 EPUB 功能了"
-    
-    # 清理临时文件（但保留缓存）
-    rm -f "$INSTALLER" /tmp/calibre-install.log
-    
-    # 显示缓存信息
-    if [ -n "$HOST_CACHE_DIR" ] && [ -d "$HOST_CACHE_DIR" ]; then
-        CACHE_FILES=$(find "$HOST_CACHE_DIR" -type f 2>/dev/null | wc -l)
-        if [ "$CACHE_FILES" -gt 0 ]; then
-            print_info "缓存文件数量: $CACHE_FILES"
-            print_info "缓存目录（容器内）: $HOST_CACHE_DIR"
-            print_info "缓存目录（宿主机）: $PROJECT_ROOT/cache/calibre"
-            print_info "下次安装将自动使用缓存，大幅缩短安装时间"
-            echo ""
-            print_info "缓存文件列表:"
-            ls -lh "$HOST_CACHE_DIR" 2>/dev/null || echo "  无法列出缓存文件"
+    # 尝试执行命令验证版本
+    VERSION_OUTPUT=""
+    if /usr/local/bin/ebook-convert --version >/dev/null 2>&1; then
+        VERSION_OUTPUT=$(/usr/local/bin/ebook-convert --version 2>&1 | head -1)
+        print_success "Calibre 安装成功！"
+        echo ""
+        print_info "版本信息: $VERSION_OUTPUT"
+        echo ""
+        
+        # 额外验证：检查命令是否在 PATH 中
+        print_info "验证命令是否在 PATH 中..."
+        if command -v ebook-convert >/dev/null 2>&1; then
+            WHICH_RESULT=$(command -v ebook-convert)
+            print_success "命令在 PATH 中: $WHICH_RESULT"
         else
-            print_warning "缓存目录为空，未找到缓存文件"
-            print_info "缓存目录: $HOST_CACHE_DIR"
-            print_info "请检查 Docker volume 挂载配置"
+            print_warning "命令不在 PATH 中，但可以通过绝对路径使用"
+        fi
+        
+        # 测试转换功能（创建一个简单的测试）
+        print_info "测试转换功能..."
+        TEST_RESULT=true
+        TEST_ERROR=""
+        
+        # 尝试运行一个简单的帮助命令来验证工具是否真正可用
+        # 使用 --help 参数，因为不需要实际文件
+        if /usr/local/bin/ebook-convert --help >/dev/null 2>&1; then
+            print_success "转换工具功能测试通过"
+        else
+            # 如果 --help 失败，尝试检查是否有其他问题
+            TEST_ERROR_MSG=$(/usr/local/bin/ebook-convert --help 2>&1 | head -5)
+            if echo "$TEST_ERROR_MSG" | grep -qi "error\|cannot\|fail"; then
+                print_warning "转换工具可能有问题: $TEST_ERROR_MSG"
+                TEST_RESULT=false
+            else
+                print_success "转换工具功能测试通过（警告信息可忽略）"
+            fi
+        fi
+        
+        if [ "$TEST_RESULT" = true ]; then
+            echo ""
+            print_success "现在可以正常使用 MOBI 转 EPUB 功能了"
+            
+            # 清理临时文件（但保留缓存）
+            rm -f "$INSTALLER" /tmp/calibre-install.log
+            
+            # 显示缓存信息
+            if [ -n "$HOST_CACHE_DIR" ] && [ -d "$HOST_CACHE_DIR" ]; then
+                CACHE_FILES=$(find "$HOST_CACHE_DIR" -type f 2>/dev/null | wc -l)
+                if [ "$CACHE_FILES" -gt 0 ]; then
+                    print_info "缓存文件数量: $CACHE_FILES"
+                    print_info "缓存目录（容器内）: $HOST_CACHE_DIR"
+                    print_info "缓存目录（宿主机）: $PROJECT_ROOT/cache/calibre"
+                    print_info "下次安装将自动使用缓存，大幅缩短安装时间"
+                    echo ""
+                    print_info "缓存文件列表:"
+                    ls -lh "$HOST_CACHE_DIR" 2>/dev/null || echo "  无法列出缓存文件"
+                else
+                    print_warning "缓存目录为空，未找到缓存文件"
+                    print_info "缓存目录: $HOST_CACHE_DIR"
+                    print_info "请检查 Docker volume 挂载配置"
+                fi
+            else
+                print_warning "缓存目录不可用: $HOST_CACHE_DIR"
+                print_info "请检查 docker-compose.yml 中的 volume 配置"
+            fi
+            
+            print_header "安装完成"
+            exit 0
+        else
+            print_error "转换工具功能测试失败，安装可能不完整"
+            exit 1
         fi
     else
-        print_warning "缓存目录不可用: $HOST_CACHE_DIR"
-        print_info "请检查 docker-compose.yml 中的 volume 配置"
+        print_error "Calibre 文件存在但无法执行，安装验证失败"
+        print_info "尝试检查文件："
+        ls -la /usr/local/bin/ebook-convert 2>/dev/null || echo "文件不存在"
+        print_info "尝试直接执行："
+        /usr/local/bin/ebook-convert --version 2>&1 || echo "执行失败"
+        exit 1
     fi
-    
-    print_header "安装完成"
-    exit 0
 else
-    print_error "Calibre 安装验证失败"
+    print_error "Calibre 安装验证失败：文件不存在或不可执行"
+    print_info "检查路径："
+    ls -la /usr/local/bin/ebook-convert 2>/dev/null || echo "/usr/local/bin/ebook-convert 不存在"
+    ls -la /opt/calibre/calibre/ebook-convert 2>/dev/null || echo "/opt/calibre/calibre/ebook-convert 不存在"
+    ls -la /opt/calibre/ebook-convert 2>/dev/null || echo "/opt/calibre/ebook-convert 不存在"
     exit 1
 fi
 

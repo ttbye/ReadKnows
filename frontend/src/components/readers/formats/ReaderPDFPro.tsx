@@ -10,8 +10,11 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { BookData, ReadingSettings, ReadingPosition, TOCItem } from '../../../types/reader';
 import { loadPdfJs } from '../../../utils/pdfLoader';
 import { offlineStorage } from '../../../utils/offlineStorage';
+import { getFullBookUrl } from '../../../utils/api';
+import api from '../../../utils/api';
 import toast from 'react-hot-toast';
-import { X, Clock, ZoomIn, ZoomOut, Maximize, Minimize, ChevronLeft, ChevronRight, Settings, Crop } from 'lucide-react';
+import { X, Clock, ZoomIn, ZoomOut, Maximize, Minimize, ChevronLeft, ChevronRight, Settings, Crop, Scan } from 'lucide-react';
+import { createWorker } from 'tesseract.js';
 
 interface ReaderPDFProProps {
   book: BookData;
@@ -31,6 +34,28 @@ interface PDFMetadata {
   producer?: string;
   creationDate?: string;
   modificationDate?: string;
+}
+
+/**
+ * OCR识别结果中的文字项
+ */
+interface OCRTextItem {
+  text: string;
+  bbox: {
+    x0: number;
+    y0: number;
+    x1: number;
+    y1: number;
+  };
+}
+
+/**
+ * OCR识别结果
+ */
+interface OCRResult {
+  text: string;
+  items: OCRTextItem[];
+  pageNum: number;
 }
 
 /**
@@ -652,11 +677,22 @@ export default function ReaderPDFPro({
   const longPressTimerRef = useRef<NodeJS.Timeout | null>(null);
   const longPressThreshold = 500; // 500ms长按阈值
   const mouseDownRef = useRef<{ x: number; y: number; time: number } | null>(null);
+  const imageViewLongPressTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const lastClickTimeRef = useRef<number>(0);
+  const clickCountRef = useRef<number>(0);
   
   // 定时器
   const hideBarsTimerRef = useRef<NodeJS.Timeout | null>(null);
   const progressSaveTimerRef = useRef<NodeJS.Timeout | null>(null);
   const timeUpdateTimerRef = useRef<NodeJS.Timeout | null>(null);
+  
+  // OCR相关状态
+  const [isScanningPDF, setIsScanningPDF] = useState<Map<number, boolean>>(new Map()); // 每页是否为扫描版
+  const [isOCRProcessing, setIsOCRProcessing] = useState(false); // 是否正在OCR识别
+  const [ocrResults, setOcrResults] = useState<Map<number, OCRResult>>(new Map()); // OCR识别结果缓存
+  const [showOCRTextLayer, setShowOCRTextLayer] = useState(true); // 是否显示OCR文字层
+  const textLayerRef = useRef<HTMLDivElement>(null); // OCR文字层引用
+  const ocrWorkerRef = useRef<any>(null); // Tesseract worker引用
 
   // 检测设备类型和PWA模式
   useEffect(() => {
@@ -733,8 +769,9 @@ export default function ReaderPDFPro({
       return { url: offlineStorage.createBlobURL(blob), blob };
     } catch (error) {
       console.error('离线存储失败，使用服务器URL', error);
-      // 如果离线存储失败，返回服务器URL，但无法检查文件大小
-      return { url: serverUrl };
+      // 如果离线存储失败，返回服务器URL（需要构建完整URL以支持自定义API URL）
+      const fullUrl = getFullBookUrl(serverUrl);
+      return { url: fullUrl };
     }
   };
 
@@ -755,9 +792,12 @@ export default function ReaderPDFPro({
         }
         
         // 如果是服务器URL，尝试先检查文件大小（通过HEAD请求）
-        if (!blob && bookUrl.startsWith('/')) {
+        // bookUrl 已经是完整URL（通过getFullBookUrl处理），可以直接使用
+        if (!blob && !bookUrl.startsWith('blob:')) {
           try {
-            const response = await fetch(bookUrl, { method: 'HEAD' });
+            const { getAuthHeaders } = await import('../../../utils/api');
+            const headers = getAuthHeaders();
+            const response = await fetch(bookUrl, { method: 'HEAD', headers });
             const contentLength = response.headers.get('content-length');
             if (contentLength && parseInt(contentLength) === 0) {
               throw new Error('服务器上的PDF文件为空（0字节），请检查文件是否完整上传');
@@ -768,9 +808,33 @@ export default function ReaderPDFPro({
           }
         }
         
+        // 配置PDF.js以支持中文显示
+        // 需要设置CMap来正确显示中文字符
+        // 使用本地资源（避免CDN依赖）
+        // 注意：CMap文件对于显示中文、日文、韩文等字符至关重要
+        const cMapUrl = '/pdfjs/cmaps/';
+        const standardFontDataUrl = '/pdfjs/standard_fonts/';
+        
+        console.log('[PDF.js] 配置CMap支持中文（使用本地资源）:', {
+          cMapUrl,
+          standardFontDataUrl,
+        });
+        
         const loadingTask = pdfjsLib.getDocument({
           url: bookUrl,
           withCredentials: false,
+          // 配置CMap以支持中文显示（必需）
+          cMapUrl: cMapUrl,
+          cMapPacked: true, // 使用压缩的CMap文件，体积更小
+          // 启用标准字体替换，提高中文显示兼容性
+          standardFontDataUrl: standardFontDataUrl,
+          // 禁用字体替换警告（某些PDF可能没有嵌入字体）
+          disableFontFace: false,
+          // 启用系统字体支持（对于没有嵌入字体的PDF很重要）
+          // 当PDF没有嵌入字体时，PDF.js会尝试使用系统字体
+          useSystemFonts: true,
+          // 启用字体缓存以提高性能
+          verbosity: 0, // 减少控制台输出
         });
         
         const pdf = await loadingTask.promise;
@@ -845,15 +909,16 @@ export default function ReaderPDFPro({
     const updateSize = () => {
       if (containerRef.current) {
         const rect = containerRef.current.getBoundingClientRect();
+        // 使用容器的实际高度，充分利用可用空间
         const newSize = { 
           width: rect.width || window.innerWidth, 
-          height: rect.height || (window.innerHeight - 140) 
+          height: rect.height || window.innerHeight 
         };
         setContainerSize(newSize);
       } else {
         const fallbackSize = { 
           width: window.innerWidth, 
-          height: window.innerHeight - 140 
+          height: window.innerHeight 
         };
         setContainerSize(fallbackSize);
       }
@@ -882,6 +947,297 @@ export default function ReaderPDFPro({
     };
   }, []);
 
+  /**
+   * 检测PDF页面是否为扫描版（文字内容过少）
+   */
+  const checkIfScanningPDF = useCallback(async (pageNum: number): Promise<boolean> => {
+    if (!pdfRef.current) return false;
+    
+    try {
+      const pdf = pdfRef.current;
+      const page = await pdf.getPage(pageNum);
+      const textContent = await page.getTextContent();
+      const items = textContent.items || [];
+      
+      // 如果文字项少于10个，或者总文字长度少于50个字符，认为是扫描版
+      if (items.length < 10) {
+        return true;
+      }
+      
+      const totalText = items.map((item: any) => item.str || '').join('').trim();
+      if (totalText.length < 50) {
+        return true;
+      }
+      
+      return false;
+    } catch (error) {
+      console.warn(`检测页面 ${pageNum} 是否为扫描版失败:`, error);
+      return false;
+    }
+  }, []);
+
+  /**
+   * 增强图像对比度以提高OCR识别率
+   */
+  const enhanceImageContrast = useCallback((canvas: HTMLCanvasElement): HTMLCanvasElement => {
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return canvas;
+    
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const data = imageData.data;
+    
+    // 增强对比度：将像素值向两端拉伸
+    const contrast = 1.2; // 对比度增强系数
+    const factor = (259 * (contrast * 255 + 255)) / (255 * (259 - contrast * 255));
+    
+    for (let i = 0; i < data.length; i += 4) {
+      // 增强 RGB 通道
+      data[i] = Math.min(255, Math.max(0, factor * (data[i] - 128) + 128));     // R
+      data[i + 1] = Math.min(255, Math.max(0, factor * (data[i + 1] - 128) + 128)); // G
+      data[i + 2] = Math.min(255, Math.max(0, factor * (data[i + 2] - 128) + 128)); // B
+      // Alpha 通道保持不变
+    }
+    
+    ctx.putImageData(imageData, 0, 0);
+    return canvas;
+  }, []);
+
+  /**
+   * 优化图像以提高OCR识别速度和准确率
+   * 降低分辨率、增强对比度、使用PNG格式保持文字清晰度
+   */
+  const optimizeImageForOCR = useCallback((canvas: HTMLCanvasElement, maxWidth: number = 1600): string => {
+    const originalWidth = canvas.width;
+    const originalHeight = canvas.height;
+    
+    // 计算缩放比例
+    const scale = originalWidth <= maxWidth ? 1 : maxWidth / originalWidth;
+    const targetWidth = Math.floor(originalWidth * scale);
+    const targetHeight = Math.floor(originalHeight * scale);
+    
+    // 创建优化后的canvas
+    const optimizedCanvas = document.createElement('canvas');
+    optimizedCanvas.width = targetWidth;
+    optimizedCanvas.height = targetHeight;
+    const optimizedCtx = optimizedCanvas.getContext('2d');
+    
+    if (!optimizedCtx) {
+      // 如果无法创建 context，返回原始图像（使用 PNG 格式保持清晰度）
+      return canvas.toDataURL('image/png');
+    }
+    
+    // 使用高质量缩放
+    optimizedCtx.imageSmoothingEnabled = true;
+    optimizedCtx.imageSmoothingQuality = 'high';
+    
+    // 绘制缩放后的图像
+    optimizedCtx.drawImage(canvas, 0, 0, targetWidth, targetHeight);
+    
+    // 增强对比度以提高OCR识别率
+    enhanceImageContrast(optimizedCanvas);
+    
+    // 使用 PNG 格式保持文字清晰度，避免 JPEG 压缩损失细节
+    // PNG 虽然文件较大，但对于 OCR 识别质量更重要
+    return optimizedCanvas.toDataURL('image/png');
+  }, [enhanceImageContrast]);
+
+  /**
+   * 初始化Tesseract Worker
+   */
+  const initOCRWorker = useCallback(async () => {
+    if (ocrWorkerRef.current) {
+      return ocrWorkerRef.current;
+    }
+    
+    try {
+      // 使用中英文混合识别
+      const worker = await createWorker('chi_sim+eng', 1, {
+        logger: (m) => {
+          // 显示OCR进度
+          if (m.status === 'recognizing text' && m.progress) {
+            const progress = Math.round(m.progress * 100);
+            toast.loading(`正在识别文字... ${progress}%`, { 
+              id: 'ocr-processing',
+              duration: 0,
+            });
+          }
+        },
+      });
+      
+      // 设置OCR参数以提高识别率和速度
+      try {
+        // PSM 模式：6 = 统一文本块（适合单列文本），11 = 稀疏文本（适合扫描版PDF）
+        // 先尝试 PSM 11，如果识别效果不好可以改为 PSM 6
+        await worker.setParameters({
+          tessedit_pageseg_mode: 11 as any, // PSM 11: 稀疏文本，适合扫描版PDF
+          tessedit_char_whitelist: '', // 不限制字符集，允许识别所有字符
+        });
+      } catch (paramError) {
+        console.warn('设置OCR参数失败，使用默认参数:', paramError);
+      }
+      
+      ocrWorkerRef.current = worker;
+      return worker;
+    } catch (error) {
+      console.error('初始化OCR Worker失败:', error);
+      throw error;
+    }
+  }, []);
+
+  /**
+   * 使用后端OCR API识别当前页面（优先使用后端，失败时回退到前端OCR）
+   */
+  const performOCR = useCallback(async (pageNum: number) => {
+    if (!canvasRef.current || !pdfRef.current) {
+      toast.error('无法进行OCR识别');
+      return;
+    }
+
+    // 检查是否已经识别过
+    if (ocrResults.has(pageNum)) {
+      toast.success('该页面已识别，显示文字层');
+      setShowOCRTextLayer(true);
+      return;
+    }
+
+    setIsOCRProcessing(true);
+    const startTime = Date.now();
+    toast.loading('正在识别文字，请稍候...', { id: 'ocr-processing', duration: 0 });
+
+    try {
+      // 优化图像
+      const canvas = canvasRef.current;
+      const maxWidth = canvas.width > 2000 ? 1600 : (canvas.width > 1500 ? 1200 : canvas.width);
+      const imageData = optimizeImageForOCR(canvas, maxWidth);
+      
+      console.log(`[OCR] 调用后端OCR API，图像尺寸: ${canvas.width}x${canvas.height} -> ${maxWidth}x${Math.floor(canvas.height * maxWidth / canvas.width)}`);
+      
+      // 优先尝试使用后端OCR API
+      try {
+        const response = await api.post('/ocr/recognize', {
+          image: imageData,
+          bookId: book.id,
+          pageNum: pageNum,
+          lang: 'ch', // 中英文混合
+        });
+        
+        if (!response.data.success) {
+          throw new Error(response.data.error || 'OCR识别失败');
+        }
+        
+        const elapsedTime = ((Date.now() - startTime) / 1000).toFixed(1);
+        console.log(`[OCR] 后端识别完成，耗时 ${elapsedTime}秒，找到 ${response.data.words.length} 个文字块，缓存: ${response.data.cached ? '是' : '否'}`);
+        
+        // 处理识别结果
+        const ocrResult: OCRResult = {
+          text: response.data.text,
+          items: response.data.words
+            .filter((word: any) => word.text && word.text.trim().length > 0)
+            .map((word: any) => {
+              // 将优化后的坐标转换回原始canvas坐标
+              const scaleX = canvas.width / maxWidth;
+              const scaleY = canvas.height / (canvas.height * maxWidth / canvas.width);
+              
+              return {
+                text: word.text.trim(),
+                bbox: {
+                  x0: word.bbox.x0 * scaleX,
+                  y0: word.bbox.y0 * scaleY,
+                  x1: word.bbox.x1 * scaleX,
+                  y1: word.bbox.y1 * scaleY,
+                },
+              };
+            }),
+          pageNum,
+        };
+        
+        if (ocrResult.items.length === 0) {
+          toast.error('未识别到文字，请确保PDF页面清晰', { id: 'ocr-processing' });
+          setIsOCRProcessing(false);
+          return;
+        }
+        
+        // 保存识别结果
+        setOcrResults(prev => new Map(prev).set(pageNum, ocrResult));
+        setShowOCRTextLayer(true);
+        
+        const cacheInfo = response.data.cached ? '（从缓存）' : '';
+        toast.success(`识别完成！找到 ${ocrResult.items.length} 个文字块（耗时 ${elapsedTime}秒）${cacheInfo}`, { 
+          id: 'ocr-processing',
+          duration: 3000,
+        });
+        return; // 成功，直接返回
+      } catch (backendError: any) {
+        // 如果后端OCR服务不可用，回退到前端OCR
+        if (backendError.response?.status === 503 || backendError.code === 'ECONNREFUSED' || backendError.message?.includes('OCR 服务不可用')) {
+          console.log('[OCR] 后端OCR服务不可用，回退到前端OCR');
+          toast.loading('后端OCR服务不可用，使用前端OCR识别...', { id: 'ocr-processing', duration: 0 });
+          
+          // 使用前端OCR作为备选方案
+          const worker = await initOCRWorker();
+          const { data } = await worker.recognize(imageData);
+          
+          const elapsedTime = ((Date.now() - startTime) / 1000).toFixed(1);
+          
+          // 处理前端OCR结果
+          let words = data.words || [];
+          if (!words || words.length === 0) {
+            // 尝试从其他数据源提取
+            if (data.lines && Array.isArray(data.lines) && data.lines.length > 0) {
+              words = data.lines.flatMap((line: any) => {
+                if (line.words && Array.isArray(line.words)) {
+                  return line.words;
+                }
+                if (line.text && line.bbox) {
+                  return [line];
+                }
+                return [];
+              });
+            }
+          }
+          
+          const ocrResult: OCRResult = {
+            text: data.text || '',
+            items: words
+              .filter((word: any) => word && word.text && word.text.trim().length > 0)
+              .map((word: any) => {
+                const scaleX = canvas.width / maxWidth;
+                const scaleY = canvas.height / (canvas.height * maxWidth / canvas.width);
+                const bbox = word.bbox || { x0: 0, y0: 0, x1: 0, y1: 0 };
+                return {
+                  text: word.text.trim(),
+                  bbox: {
+                    x0: bbox.x0 * scaleX,
+                    y0: bbox.y0 * scaleY,
+                    x1: bbox.x1 * scaleX,
+                    y1: bbox.y1 * scaleY,
+                  },
+                };
+              }),
+            pageNum,
+          };
+          
+          if (ocrResult.items.length > 0) {
+            setOcrResults(prev => new Map(prev).set(pageNum, ocrResult));
+            setShowOCRTextLayer(true);
+            toast.success(`识别完成（前端OCR）！找到 ${ocrResult.items.length} 个文字块（耗时 ${elapsedTime}秒）`, { id: 'ocr-processing' });
+          } else {
+            toast.error('未识别到文字', { id: 'ocr-processing' });
+          }
+          return;
+        }
+        
+        // 其他错误，继续抛出
+        throw backendError;
+      }
+    } catch (error: any) {
+      console.error('[OCR] 识别失败:', error);
+      toast.error(`OCR识别失败: ${error.response?.data?.error || error.message || '未知错误'}`, { id: 'ocr-processing' });
+    } finally {
+      setIsOCRProcessing(false);
+    }
+  }, [book.id, ocrResults, optimizeImageForOCR, initOCRWorker]);
+
   // 渲染PDF页面
   const renderPage = useCallback(async (pageNum: number, targetScale?: number) => {
     if (!pdfRef.current || !canvasRef.current) return;
@@ -899,6 +1255,10 @@ export default function ReaderPDFPro({
 
       const pdf = pdfRef.current;
       const canvas = canvasRef.current;
+      
+      // 检测是否为扫描版PDF
+      const isScanning = await checkIfScanningPDF(pageNum);
+      setIsScanningPDF(prev => new Map(prev).set(pageNum, isScanning));
       const ctx = canvas.getContext('2d', {
         alpha: false, // 不透明背景，提高性能
         desynchronized: true, // 允许异步渲染，提高性能
@@ -1307,7 +1667,7 @@ export default function ReaderPDFPro({
       console.error('渲染PDF页面失败', error);
       toast.error(`渲染页面失败: ${error.message || '未知错误'}`);
     }
-  }, [scale, containerSize, settings.margin, cropHorizontal, cropVertical, renderQuality, autoFit, autoRotate]);
+  }, [scale, containerSize, settings.margin, cropHorizontal, cropVertical, renderQuality, autoFit, autoRotate, checkIfScanningPDF]);
 
   // 同步 settings.fontSize 到 scale state
   // 使用 useRef 来避免循环依赖
@@ -1327,6 +1687,63 @@ export default function ReaderPDFPro({
       renderPage(currentPage);
     }
   }, [currentPage, scale, containerSize, renderPage, totalPages, loading, autoRotate]);
+
+  // 页面切换时，如果是扫描版且未识别，提示用户
+  useEffect(() => {
+    if (currentPage > 0 && currentPage <= totalPages && !loading) {
+      const isScanning = isScanningPDF.get(currentPage);
+      const hasOCRResult = ocrResults.has(currentPage);
+      
+      if (isScanning && !hasOCRResult && !isOCRProcessing) {
+        // 延迟提示，避免干扰用户阅读
+        // const timer = setTimeout(() => {
+        //   toast('检测到扫描版PDF，点击OCR按钮识别文字', {
+        //     icon: '📄',
+        //     duration: 4000,
+        //   });
+        // }, 1000);
+        
+        // return () => clearTimeout(timer);
+      }
+    }
+  }, [currentPage, isScanningPDF, ocrResults, isOCRProcessing, totalPages, loading]);
+
+  // 当canvas尺寸变化时，更新文字层位置（使用ResizeObserver）
+  useEffect(() => {
+    if (!canvasRef.current || !showOCRTextLayer || !ocrResults.has(currentPage)) {
+      return;
+    }
+
+    const canvas = canvasRef.current;
+    const updateTextLayer = () => {
+      // 触发重新渲染文字层
+      if (textLayerRef.current) {
+        // 强制重新渲染
+        setShowOCRTextLayer(false);
+        setTimeout(() => setShowOCRTextLayer(true), 0);
+      }
+    };
+
+    const resizeObserver = new ResizeObserver(() => {
+      updateTextLayer();
+    });
+
+    resizeObserver.observe(canvas);
+
+    return () => {
+      resizeObserver.disconnect();
+    };
+  }, [currentPage, showOCRTextLayer, ocrResults, scale]);
+
+  // 组件卸载时清理OCR Worker
+  useEffect(() => {
+    return () => {
+      if (ocrWorkerRef.current) {
+        ocrWorkerRef.current.terminate().catch(console.error);
+        ocrWorkerRef.current = null;
+      }
+    };
+  }, []);
 
   // 组件卸载时清理渲染任务
   useEffect(() => {
@@ -1543,6 +1960,25 @@ export default function ReaderPDFPro({
     return Math.sqrt(dx * dx + dy * dy);
   };
 
+  // 将canvas转换为图片URL并显示图片查看器
+  const showCanvasAsImage = useCallback(() => {
+    if (!canvasRef.current) return;
+    const canvas = canvasRef.current;
+    try {
+      // 将canvas转换为data URL
+      const imageUrl = canvas.toDataURL('image/png');
+      if (imageUrl) {
+        window.dispatchEvent(
+          new CustomEvent('__reader_view_image', {
+            detail: { imageUrl },
+          })
+        );
+      }
+    } catch (e) {
+      console.error('转换canvas为图片失败:', e);
+    }
+  }, []);
+
   // 触摸事件处理
   const handleTouchStart = useCallback((e: React.TouchEvent) => {
     // 双指捏合检测
@@ -1587,7 +2023,22 @@ export default function ReaderPDFPro({
     };
     
     // 移动端：在中心区域长按显示导航栏（PWA/浏览器保持一致）
-    if (isMobile && isInCenterArea) {
+    // 但如果长按canvas，则显示图片查看器
+    const isOnCanvas = canvasRef.current && (
+      e.target === canvasRef.current || 
+      canvasRef.current.contains(e.target as Node)
+    );
+    
+    if (isOnCanvas) {
+      // 长按canvas显示图片查看器
+      imageViewLongPressTimerRef.current = setTimeout(() => {
+        showCanvasAsImage();
+        // 触觉反馈（如果支持）
+        if (navigator.vibrate) {
+          navigator.vibrate(50);
+        }
+      }, longPressThreshold);
+    } else if (isMobile && isInCenterArea) {
       longPressTimerRef.current = setTimeout(() => {
         showBars();
         // 触觉反馈（如果支持）
@@ -1652,9 +2103,15 @@ export default function ReaderPDFPro({
     touchStartRef.current.distance = distance;
 
     // 如果移动距离超过阈值，取消长按检测
-    if (distance > 10 && longPressTimerRef.current) {
-      clearTimeout(longPressTimerRef.current);
-      longPressTimerRef.current = null;
+    if (distance > 10) {
+      if (longPressTimerRef.current) {
+        clearTimeout(longPressTimerRef.current);
+        longPressTimerRef.current = null;
+      }
+      if (imageViewLongPressTimerRef.current) {
+        clearTimeout(imageViewLongPressTimerRef.current);
+        imageViewLongPressTimerRef.current = null;
+      }
     }
 
     // 滑动翻页：只有在用户选择滑动翻页模式时才启用
@@ -1695,6 +2152,10 @@ export default function ReaderPDFPro({
       clearTimeout(longPressTimerRef.current);
       longPressTimerRef.current = null;
     }
+    if (imageViewLongPressTimerRef.current) {
+      clearTimeout(imageViewLongPressTimerRef.current);
+      imageViewLongPressTimerRef.current = null;
+    }
 
     if (!touchStartRef.current) return;
 
@@ -1724,6 +2185,17 @@ export default function ReaderPDFPro({
       // 点击翻页模式：处理点击翻页（移动距离很小，认为是点击）
       const target = e.target as HTMLElement;
       if (!target.closest('button') && !target.closest('input')) {
+        // 优先检查并隐藏 UI 元素（功能条、导航栏等）
+        // 如果隐藏了 UI，则不翻页
+        const checkAndHideUI = (window as any).__readerCheckAndHideUI;
+        if (checkAndHideUI && typeof checkAndHideUI === 'function') {
+          const hasHiddenUI = checkAndHideUI();
+          if (hasHiddenUI) {
+            // 如果隐藏了 UI，不执行翻页
+            return;
+          }
+        }
+        
         const rect = e.currentTarget.getBoundingClientRect();
         const x = touch.clientX - rect.left;
         const y = touch.clientY - rect.top;
@@ -1850,9 +2322,61 @@ export default function ReaderPDFPro({
       return;
     }
 
+    // 检查是否点击了功能条、导航栏等 UI 元素
+    if (target && (
+      target.closest('.text-selection-toolbar') ||
+      target.closest('[data-settings-panel]') ||
+      target.closest('[data-toc-panel]') ||
+      target.closest('[data-notes-panel]') ||
+      target.closest('[data-bookmarks-panel]')
+    )) {
+      return;
+    }
+
+    // 检测双击：双击canvas显示图片查看器
+    const now = Date.now();
+    const timeSinceLastClick = now - lastClickTimeRef.current;
+    if (target === canvasRef.current || canvasRef.current?.contains(target)) {
+      if (timeSinceLastClick < 300) {
+        // 双击
+        clickCountRef.current = 0;
+        lastClickTimeRef.current = 0;
+        e.preventDefault();
+        e.stopPropagation();
+        showCanvasAsImage();
+        return;
+      } else {
+        clickCountRef.current = 1;
+        lastClickTimeRef.current = now;
+        // 延迟检测是否为双击
+        setTimeout(() => {
+          if (clickCountRef.current === 1) {
+            // 这是单击，继续处理翻页逻辑
+            clickCountRef.current = 0;
+          }
+        }, 300);
+      }
+    }
+
     // 只有在用户选择点击翻页模式且启用了点击翻页时才处理
     if (settings.pageTurnMethod !== 'click' || !settings.clickToTurn) {
       return;
+    }
+
+    // 如果刚刚双击了，不处理翻页
+    if (timeSinceLastClick < 300 && clickCountRef.current === 0) {
+      return;
+    }
+
+    // 优先检查并隐藏 UI 元素（功能条、导航栏等）
+    // 如果隐藏了 UI，则不翻页
+    const checkAndHideUI = (window as any).__readerCheckAndHideUI;
+    if (checkAndHideUI && typeof checkAndHideUI === 'function') {
+      const hasHiddenUI = checkAndHideUI();
+      if (hasHiddenUI) {
+        // 如果隐藏了 UI，不执行翻页
+        return;
+      }
     }
 
     const rect = e.currentTarget.getBoundingClientRect();
@@ -1873,8 +2397,9 @@ export default function ReaderPDFPro({
       } else if (y > (height * 2) / 3) {
         turnPage('next');
       }
+
     }
-  }, [settings, turnPage, onSettingsChange]);
+  }, [settings, turnPage, onSettingsChange, showCanvasAsImage]);
 
   // 键盘快捷键
   useEffect(() => {
@@ -1980,7 +2505,12 @@ export default function ReaderPDFPro({
     <div
       ref={containerRef}
       className="relative h-full w-full overflow-auto"
-      style={{ backgroundColor: themeStyles.bg }}
+      style={{
+        backgroundColor: themeStyles.bg,
+        WebkitTouchCallout: 'none', // 屏蔽iOS长按系统菜单
+        WebkitUserSelect: 'none', // 阻止文本选择
+        userSelect: 'none'
+      }}
       onTouchStart={handleTouchStart}
       onTouchMove={handleTouchMove}
       onTouchEnd={handleTouchEnd}
@@ -1990,27 +2520,160 @@ export default function ReaderPDFPro({
       onMouseLeave={handleMouseUp}
       onWheel={handleWheel}
       onClick={handleClick}
+      onContextMenu={(e) => {
+        // 屏蔽浏览器默认右键菜单（阅读器内交互由应用接管）
+        e.preventDefault();
+      }}
     >
       {/* PDF 内容区域 */}
       <div
-        className={`flex items-center justify-center w-full min-h-full ${isMobile ? 'py-4' : 'pb-4'}`}
+        className="flex items-center justify-center w-full h-full"
         style={{
           transform: `translateX(${touchOffset}px)`,
           transition: touchOffset === 0 && pageTransition === 'none' ? 'transform 0.3s cubic-bezier(0.4, 0, 0.2, 1)' : 'none',
-          paddingBottom: showBottomBar ? '100px' : '20px',
+          paddingBottom: showBottomBar ? '88px' : '0',
+          paddingTop: '0',
+          boxSizing: 'border-box',
         }}
       >
         {totalPages > 0 && (
-          <div className="flex flex-col items-center">
-            <canvas
-              ref={canvasRef}
-              className="shadow-lg"
-              style={{
-                maxWidth: '100%',
-                height: 'auto',
-                display: 'block',
-              }}
-            />
+          <div className="flex flex-col items-center justify-center w-full h-full relative">
+            <div className="relative inline-block">
+              <canvas
+                ref={canvasRef}
+                className="shadow-lg"
+                style={{
+                  maxWidth: '100%',
+                  maxHeight: '100%',
+                  height: 'auto',
+                  width: 'auto',
+                  display: 'block',
+                  objectFit: 'contain',
+                }}
+              />
+              {/* OCR文字层 - 用于文字选择 */}
+              {showOCRTextLayer && ocrResults.has(currentPage) && canvasRef.current && (() => {
+                const canvas = canvasRef.current;
+                if (!canvas) return null;
+                
+                // 获取canvas的实际显示尺寸
+                const canvasRect = canvas.getBoundingClientRect();
+                const canvasDisplayWidth = canvasRect.width;
+                const canvasDisplayHeight = canvasRect.height;
+                const canvasActualWidth = canvas.width;
+                const canvasActualHeight = canvas.height;
+                
+                // 计算缩放比例
+                const scaleX = canvasDisplayWidth / canvasActualWidth;
+                const scaleY = canvasDisplayHeight / canvasActualHeight;
+                
+                return (
+                  <div
+                    ref={textLayerRef}
+                    className="absolute pointer-events-auto"
+                    style={{
+                      top: 0,
+                      left: 0,
+                      width: `${canvasDisplayWidth}px`,
+                      height: `${canvasDisplayHeight}px`,
+                      userSelect: 'text',
+                      WebkitUserSelect: 'text',
+                      MozUserSelect: 'text',
+                      msUserSelect: 'text',
+                      color: 'transparent',
+                      fontSize: '1px',
+                      lineHeight: '1px',
+                      fontFamily: 'sans-serif',
+                      overflow: 'hidden',
+                      pointerEvents: 'auto',
+                    }}
+                  >
+                    {ocrResults.get(currentPage)?.items.map((item, index) => {
+                      const left = item.bbox.x0 * scaleX;
+                      const top = item.bbox.y0 * scaleY;
+                      const width = (item.bbox.x1 - item.bbox.x0) * scaleX;
+                      const height = (item.bbox.y1 - item.bbox.y0) * scaleY;
+                      
+                      // 过滤掉太小的文字块（可能是误识别）
+                      if (width < 5 || height < 5) {
+                        return null;
+                      }
+                      
+                      // 计算合适的字体大小
+                      // 优先基于bbox高度计算，然后根据文字宽度和bbox宽度进行微调
+                      // 使用更精确的比例：对于中文字符，字体大小约为bbox高度的85-90%
+                      const heightRatio = height < 15 ? 0.92 : height > 50 ? 0.82 : 0.88;
+                      let baseFontSize = Math.max(6, Math.min(80, height * heightRatio));
+                      
+                      // 根据文字宽度和bbox宽度进行微调
+                      // 估算：中文字符平均宽度约为字体大小的0.95倍，英文字符约为0.6倍
+                      if (item.text && item.text.length > 0 && width > 0) {
+                        // 统计中文字符和英文字符数量
+                        const chineseChars = (item.text.match(/[\u4e00-\u9fa5]/g) || []).length;
+                        const totalChars = item.text.length;
+                        const englishChars = totalChars - chineseChars;
+                        
+                        // 估算字符平均宽度比例（加权平均）
+                        const avgCharWidthRatio = chineseChars > 0 
+                          ? (chineseChars * 0.95 + englishChars * 0.6) / totalChars
+                          : 0.6;
+                        
+                        // 估算文字宽度
+                        const estimatedTextWidth = baseFontSize * avgCharWidthRatio * totalChars;
+                        
+                        // 如果估算宽度超过bbox宽度，按比例缩小字体
+                        if (estimatedTextWidth > width * 0.98) { // 0.98留一点边距
+                          const scaleFactor = (width * 0.98) / estimatedTextWidth;
+                          baseFontSize = Math.max(6, baseFontSize * scaleFactor);
+                        }
+                      }
+                      
+                      // 计算垂直对齐
+                      // lineHeight设置为bbox高度，确保文字在bbox内垂直居中
+                      const lineHeight = height;
+                      
+                      return (
+                        <span
+                          key={index}
+                          style={{
+                            position: 'absolute',
+                            left: `${left}px`,
+                            top: `${top}px`,
+                            width: `${width}px`,
+                            height: `${height}px`,
+                            fontSize: `${baseFontSize}px`,
+                            lineHeight: `${lineHeight}px`,
+                            color: 'rgba(0, 0, 0, 0.01)', // 几乎透明，但足够让浏览器识别为可选择的文字
+                            cursor: 'text',
+                            whiteSpace: 'nowrap',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            fontFamily: 'sans-serif',
+                            fontWeight: 'normal',
+                            fontStyle: 'normal',
+                            textAlign: 'left',
+                            verticalAlign: 'top',
+                            display: 'flex',
+                            alignItems: 'center',
+                            textRendering: 'optimizeLegibility',
+                            boxSizing: 'border-box',
+                            padding: 0,
+                            margin: 0,
+                            userSelect: 'text',
+                            WebkitUserSelect: 'text',
+                            MozUserSelect: 'text',
+                            msUserSelect: 'text',
+                          }}
+                          title={item.text}
+                        >
+                          {item.text}
+                        </span>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
+            </div>
           </div>
         )}
       </div>
@@ -2093,6 +2756,39 @@ export default function ReaderPDFPro({
             </div>
 
             <div className="flex items-center gap-2">
+              {/* OCR按钮 - 始终显示，方便用户使用OCR功能 */}
+              <button
+                onClick={() => {
+                  if (isOCRProcessing) {
+                    toast('正在识别中，请稍候...');
+                    return;
+                  }
+                  if (ocrResults.has(currentPage)) {
+                    // 切换文字层显示/隐藏
+                    setShowOCRTextLayer(!showOCRTextLayer);
+                    toast(showOCRTextLayer ? '已隐藏文字层' : '已显示文字层');
+                  } else {
+                    // 执行OCR识别
+                    performOCR(currentPage);
+                  }
+                }}
+                disabled={isOCRProcessing}
+                className={`p-2 rounded-lg transition-colors hover:bg-opacity-10 hover:bg-black dark:hover:bg-white dark:hover:bg-opacity-10 ${
+                  ocrResults.has(currentPage) && showOCRTextLayer ? 'bg-blue-500 bg-opacity-20' : ''
+                } ${isOCRProcessing ? 'opacity-50 cursor-not-allowed' : ''}`}
+                style={{ 
+                  color: ocrResults.has(currentPage) && showOCRTextLayer ? '#1890ff' : themeStyles.text 
+                }}
+                aria-label={ocrResults.has(currentPage) ? '切换文字层' : 'OCR识别文字'}
+                title={ocrResults.has(currentPage) ? (showOCRTextLayer ? '隐藏文字层' : '显示文字层') : 'OCR识别文字（点击识别当前页面的文字）'}
+              >
+                {isOCRProcessing ? (
+                  <div className="w-5 h-5 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                ) : (
+                  <Scan className="w-5 h-5" />
+                )}
+              </button>
+              
               <button
                 onClick={() => {
                   const newValue = !cropHorizontal;
@@ -2289,4 +2985,5 @@ export default function ReaderPDFPro({
     </div>
   );
 }
+
 

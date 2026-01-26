@@ -4,10 +4,12 @@
  * 仿Kindle/微信读书风格，点击阅读内容时显示，包含各种功能按钮
  */
 
-import { BookOpen, Type, StickyNote, Volume2, Bookmark, BookmarkCheck, Play, Pause, SkipBack, SkipForward, X } from 'lucide-react';
+import { BookOpen, Type, StickyNote, Volume2, Bookmark, BookmarkCheck, Play, Pause, SkipBack, SkipForward, X, Navigation } from 'lucide-react';
 import { BookData, ReadingPosition, ReadingSettings } from '../../types/reader';
-import { useState, useEffect, forwardRef } from 'react';
+import { useState, useEffect, forwardRef, useRef, useCallback } from 'react';
 import api from '../../utils/api';
+import { useTranslation } from 'react-i18next';
+import i18n from '../../i18n/config';
 
 interface BottomNavigationProps {
   book: BookData;
@@ -38,6 +40,7 @@ interface BottomNavigationProps {
   onTTSSpeedChange?: (speed: number) => void;
   onClose?: () => void; // 关闭按钮回调
   isSettingsMode?: boolean; // 是否为设置模式
+  onToggleJump?: () => void; // 跳转按钮回调
 }
 
 const BottomNavigation = forwardRef<HTMLDivElement, BottomNavigationProps>(function BottomNavigation({
@@ -68,7 +71,11 @@ const BottomNavigation = forwardRef<HTMLDivElement, BottomNavigationProps>(funct
   onTTSSpeedChange,
   onClose,
   isSettingsMode = false,
+  onToggleJump,
 }, ref) {
+  const { t } = useTranslation();
+  const bookmarkClickTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const bookmarkDoubleClickRef = useRef(false);
   const [currentTime, setCurrentTime] = useState(new Date());
   const [infoBarHeight, setInfoBarHeight] = useState(34); // 默认移动端高度
   const [models, setModels] = useState<Array<{ id: string; name: string; description: string; type: string; available: boolean }>>([]);
@@ -90,7 +97,6 @@ const BottomNavigation = forwardRef<HTMLDivElement, BottomNavigationProps>(funct
   
   const currentModel = getLocalStorageValue('tts_default_model', settingsAny.tts_default_model?.value || 'edge');
   const currentVoice = getLocalStorageValue('tts_default_voice', settingsAny.tts_default_voice?.value || 'zh-CN-XiaoxiaoNeural');
-  // 默认播放速度为1.0倍速，如果检测到旧版本默认值0.5，则使用1.0
   const speedValue = parseFloat(getLocalStorageValue('tts_default_speed', settingsAny.tts_default_speed?.value || '1.0')) || 1.0;
   const currentSpeed = (speedValue === 0.5 || speedValue <= 0 || isNaN(speedValue)) ? 1.0 : speedValue;
 
@@ -164,7 +170,7 @@ const BottomNavigation = forwardRef<HTMLDivElement, BottomNavigationProps>(funct
         console.warn('[BottomNavigation] 获取系统语言设置失败，使用默认值（中文）', e);
       }
       
-      console.log(`[BottomNavigation] 获取音色列表: model=${modelId}, lang=${systemLang}`);
+      // console.log(`[BottomNavigation] 获取音色列表: model=${modelId}, lang=${systemLang}`);
       const resp = await api.get('/tts/voices', { 
         params: { 
           model: modelId,
@@ -175,7 +181,7 @@ const BottomNavigation = forwardRef<HTMLDivElement, BottomNavigationProps>(funct
       console.log(`[BottomNavigation] 成功获取 ${voicesList.length} 个音色（已根据系统语言 ${systemLang} 筛选）`);
       setVoices(voicesList);
     } catch (e: any) {
-      console.error('[BottomNavigation] 获取 voices 失败', e);
+      // console.error('[BottomNavigation] 获取 voices 失败', e);
       setVoices([]);
     } finally {
       setLoadingVoices(false);
@@ -188,7 +194,7 @@ const BottomNavigation = forwardRef<HTMLDivElement, BottomNavigationProps>(funct
     try {
       localStorage.setItem('tts_default_model', model);
     } catch (e) {
-      console.warn('[BottomNavigation] 保存TTS引擎到本地存储失败:', e);
+      // console.warn('[BottomNavigation] 保存TTS引擎到本地存储失败:', e);
     }
     
     // 切换模型时，立即从API获取新的音色列表
@@ -209,7 +215,7 @@ const BottomNavigation = forwardRef<HTMLDivElement, BottomNavigationProps>(funct
     try {
       localStorage.setItem('tts_default_voice', voice);
     } catch (e) {
-      console.warn('[BottomNavigation] 保存TTS音色到本地存储失败:', e);
+      // console.warn('[BottomNavigation] 保存TTS音色到本地存储失败:', e);
     }
     
     if (onTTSVoiceChange) {
@@ -229,9 +235,9 @@ const BottomNavigation = forwardRef<HTMLDivElement, BottomNavigationProps>(funct
     // 保存到本地存储
     try {
       localStorage.setItem('tts_default_speed', validSpeed.toString());
-      console.log('[BottomNavigation] 播放速度已保存到本地存储:', validSpeed);
+      // console.log('[BottomNavigation] 播放速度已保存到本地存储:', validSpeed);
     } catch (e) {
-      console.warn('[BottomNavigation] 保存播放速度到本地存储失败:', e);
+      // console.warn('[BottomNavigation] 保存播放速度到本地存储失败:', e);
     }
     
     if (onTTSSpeedChange) {
@@ -291,7 +297,7 @@ const BottomNavigation = forwardRef<HTMLDivElement, BottomNavigationProps>(funct
             console.warn('[BottomNavigation] 更新播放速度失败:', e);
           }
         } else if (!isNaN(speed) && speed > 0 && speed !== currentSpeed) {
-          console.log('[BottomNavigation] 从本地存储加载播放速度:', speed);
+          // console.log('[BottomNavigation] 从本地存储加载播放速度:', speed);
           if (onTTSSpeedChange) {
             onTTSSpeedChange(speed);
           } else {
@@ -307,11 +313,11 @@ const BottomNavigation = forwardRef<HTMLDivElement, BottomNavigationProps>(funct
         try {
           localStorage.setItem('tts_default_speed', '1.0');
         } catch (e) {
-          console.warn('[BottomNavigation] 保存默认播放速度失败:', e);
+          // console.warn('[BottomNavigation] 保存默认播放速度失败:', e);
         }
       }
     } catch (e) {
-      console.warn('[BottomNavigation] 从本地存储加载TTS设置失败:', e);
+      // console.warn('[BottomNavigation] 从本地存储加载TTS设置失败:', e);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // 只在组件挂载时执行一次
@@ -337,6 +343,8 @@ const BottomNavigation = forwardRef<HTMLDivElement, BottomNavigationProps>(funct
         isVisible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-full pointer-events-none'
       }`}
       style={{
+        // 强制固定定位，确保不受父容器影响
+        position: 'fixed',
         // 定位在底部信息栏上方
         // 底部信息栏外层容器有paddingBottom处理安全区域，所以实际高度 = infoBarHeight + 安全区域
         // 所以这里需要定位在 infoBarHeight + 安全区域 的位置
@@ -345,6 +353,7 @@ const BottomNavigation = forwardRef<HTMLDivElement, BottomNavigationProps>(funct
           : '0',
         left: '0',
         right: '0',
+        width: '100%',
         backgroundColor: themeStyles.bg,
         borderTop: `1px solid ${themeStyles.border}`,
         boxShadow: isVisible ? '0 -2px 8px rgba(0, 0, 0, 0.08)' : 'none',
@@ -353,6 +362,9 @@ const BottomNavigation = forwardRef<HTMLDivElement, BottomNavigationProps>(funct
           ? '0px' 
           : 'clamp(10px, env(safe-area-inset-bottom, 10px), 34px)',
         margin: '0', // 确保没有margin
+        // 确保不受父容器的 transform、perspective、filter 等属性影响
+        transform: isVisible ? 'translateY(0)' : 'translateY(100%)',
+        willChange: 'transform, opacity',
       }}
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
@@ -364,7 +376,7 @@ const BottomNavigation = forwardRef<HTMLDivElement, BottomNavigationProps>(funct
           <div className="flex items-center justify-between px-3 pt-2 pb-1">
             <div className="flex items-center gap-2">
               <Volume2 className="w-4 h-4" style={{ color: themeStyles.text }} />
-              <span className="text-xs font-medium" style={{ color: themeStyles.text }}>语音朗读</span>
+              <span className="text-xs font-medium" style={{ color: themeStyles.text }}>{t('reader.tts')}</span>
             </div>
             {onTTSClose && (
               <button
@@ -384,7 +396,7 @@ const BottomNavigation = forwardRef<HTMLDivElement, BottomNavigationProps>(funct
           {/* TTS播放进度条 */}
           <div className="px-3 pb-2">
             <div className="flex items-center justify-between text-xs mb-1" style={{ color: themeStyles.text, opacity: 0.75 }}>
-              <span>播放进度</span>
+              <span>{t('tts.playbackProgress')}</span>
               <span className="font-medium">
                 {ttsCurrentIndex >= 0 ? `${ttsCurrentIndex + 1} / ${ttsTotalParagraphs}` : '0 / 0'}
               </span>
@@ -410,7 +422,7 @@ const BottomNavigation = forwardRef<HTMLDivElement, BottomNavigationProps>(funct
                 color: themeStyles.text,
                 backgroundColor: ttsCurrentIndex > 0 ? (settings.theme === 'dark' ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.05)') : 'transparent',
               }}
-              aria-label="上一段"
+              aria-label={t('tts.previousParagraph')}
             >
               <SkipBack className="w-5 h-5" />
             </button>
@@ -421,7 +433,7 @@ const BottomNavigation = forwardRef<HTMLDivElement, BottomNavigationProps>(funct
                 backgroundColor: settings.theme === 'dark' ? '#4a9eff' : '#1890ff',
                 color: '#ffffff',
               }}
-              aria-label={isTTSPlaying ? '暂停' : '播放'}
+              aria-label={isTTSPlaying ? t('tts.pause') : t('tts.play')}
             >
               {isTTSPlaying ? <Pause className="w-5 h-5" /> : <Play className="w-5 h-5" />}
             </button>
@@ -433,7 +445,7 @@ const BottomNavigation = forwardRef<HTMLDivElement, BottomNavigationProps>(funct
                 color: themeStyles.text,
                 backgroundColor: ttsCurrentIndex < ttsTotalParagraphs - 1 ? (settings.theme === 'dark' ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.05)') : 'transparent',
               }}
-              aria-label="下一段"
+              aria-label={t('tts.nextParagraph')}
             >
               <SkipForward className="w-5 h-5" />
             </button>
@@ -443,7 +455,7 @@ const BottomNavigation = forwardRef<HTMLDivElement, BottomNavigationProps>(funct
           <div className="px-3 pb-2 border-t" style={{ borderColor: themeStyles.border }}>
             <div className="flex items-center justify-between pt-2">
               <label className="text-xs font-medium" style={{ color: themeStyles.text, opacity: 0.8 }}>
-                播放速度:
+                {t('tts.playbackSpeed')}:
               </label>
               <select
                 value={currentSpeed}
@@ -478,7 +490,7 @@ const BottomNavigation = forwardRef<HTMLDivElement, BottomNavigationProps>(funct
                 backgroundColor: settings.theme === 'dark' ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.03)',
               }}
             >
-              {showTTSOptions ? '收起选项 ▲' : '展开选项 ▼'}
+              {showTTSOptions ? t('tts.collapseOptions') : t('tts.expandOptions')}
             </button>
           </div>
 
@@ -488,7 +500,7 @@ const BottomNavigation = forwardRef<HTMLDivElement, BottomNavigationProps>(funct
               {/* TTS引擎选择 */}
               <div className="pt-2">
                 <label className="text-xs font-medium mb-1 block" style={{ color: themeStyles.text, opacity: 0.8 }}>
-                  TTS引擎
+                  {t('tts.ttsEngine')}
                 </label>
                 <select
                   value={currentModel}
@@ -504,7 +516,7 @@ const BottomNavigation = forwardRef<HTMLDivElement, BottomNavigationProps>(funct
                 >
                   {models.filter(m => m.available).map((m) => (
                     <option key={m.id} value={m.id}>
-                      {m.name} ({m.type === 'online' ? '在线' : '离线'})
+                      {m.name} ({m.type === 'online' ? t('tts.online') : t('tts.offline')})
                     </option>
                   ))}
                 </select>
@@ -513,7 +525,7 @@ const BottomNavigation = forwardRef<HTMLDivElement, BottomNavigationProps>(funct
               {/* 音色选择 */}
               <div>
                 <label className="text-xs font-medium mb-1 block" style={{ color: themeStyles.text, opacity: 0.8 }}>
-                  音色
+                  {t('tts.voice')}
                 </label>
                 <select
                   value={currentVoice}
@@ -528,13 +540,13 @@ const BottomNavigation = forwardRef<HTMLDivElement, BottomNavigationProps>(funct
                   disabled={loadingVoices}
                 >
                   {loadingVoices ? (
-                    <option value="">加载中...</option>
+                    <option value="">{t('common.loading')}</option>
                   ) : voices.length === 0 ? (
-                    <option value="">暂无可用音色</option>
+                    <option value="">{t('tts.noAvailableVoices')}</option>
                   ) : (
                     voices.map((v) => (
                     <option key={v.id} value={v.id}>
-                      {v.name} {v.gender ? `(${v.gender === 'male' ? '男' : '女'})` : ''}
+                      {v.name} {v.gender ? `(${v.gender === 'male' ? t('tts.male') : t('tts.female')})` : ''}
                     </option>
                     ))
                   )}
@@ -546,9 +558,14 @@ const BottomNavigation = forwardRef<HTMLDivElement, BottomNavigationProps>(funct
       ) : (
         <>
           {/* 正常导航模式 */}
-      {/* 进度条 */}
+      {/* 进度条 - 可点击跳转 */}
       <div className="px-3 pt-2 pb-1.5">
-        <div className="w-full h-0.5 rounded-full overflow-hidden" style={{ backgroundColor: themeStyles.border }}>
+        <div 
+          className={`w-full h-0.5 rounded-full overflow-hidden relative ${onToggleJump ? 'cursor-pointer' : ''}`}
+          style={{ backgroundColor: themeStyles.border }}
+          onClick={onToggleJump || undefined}
+          title={onToggleJump ? t('reader.clickToJump', '点击跳转到位置') : undefined}
+        >
           <div
             className="h-full transition-all duration-300"
             style={{
@@ -565,10 +582,10 @@ const BottomNavigation = forwardRef<HTMLDivElement, BottomNavigationProps>(funct
           {book.title || book.file_name}
         </span>
         <span className="mx-2">
-          第 {position.currentPage} / {position.totalPages} 页
+          {t('reader.pageNumberFormat', { current: position.currentPage, total: position.totalPages })}
         </span>
         <span>
-          {currentTime.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}
+          {currentTime.toLocaleTimeString(i18n.language === 'zh' ? 'zh-CN' : 'en-US', { hour: '2-digit', minute: '2-digit' })}
         </span>
       </div>
 
@@ -586,10 +603,10 @@ const BottomNavigation = forwardRef<HTMLDivElement, BottomNavigationProps>(funct
           onMouseLeave={(e) => {
             e.currentTarget.style.backgroundColor = 'transparent';
           }}
-          aria-label="目录"
+          aria-label={t('reader.toc')}
         >
           <BookOpen className="w-4 h-4" />
-          <span className="text-xs" style={{ fontSize: '10px' }}>目录</span>
+          <span className="text-xs" style={{ fontSize: '10px' }}>{t('reader.toc')}</span>
         </button>
 
         <button
@@ -604,11 +621,32 @@ const BottomNavigation = forwardRef<HTMLDivElement, BottomNavigationProps>(funct
           onMouseLeave={(e) => {
             e.currentTarget.style.backgroundColor = 'transparent';
           }}
-          aria-label="设置"
+          aria-label={t('common.settings')}
         >
           <Type className="w-4 h-4" />
-          <span className="text-xs" style={{ fontSize: '10px' }}>设置</span>
+          <span className="text-xs" style={{ fontSize: '10px' }}>{t('common.settings')}</span>
         </button>
+
+        {onToggleJump && (
+          <button
+            onClick={onToggleJump}
+            className="flex flex-col items-center gap-0.5 p-2 rounded-lg transition-colors"
+            style={{
+              color: themeStyles.text,
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.backgroundColor = themeStyles.hover;
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.backgroundColor = 'transparent';
+            }}
+            aria-label={t('reader.jumpToPosition', '跳转到位置')}
+            title={t('reader.jumpToPosition', '跳转到位置')}
+          >
+            <Navigation className="w-4 h-4" />
+            <span className="text-xs" style={{ fontSize: '10px' }}>{t('reader.jump', '跳转')}</span>
+          </button>
+        )}
 
         {onToggleNotes && (
           <button
@@ -623,10 +661,10 @@ const BottomNavigation = forwardRef<HTMLDivElement, BottomNavigationProps>(funct
             onMouseLeave={(e) => {
               e.currentTarget.style.backgroundColor = 'transparent';
             }}
-            aria-label="笔记"
+            aria-label={t('reader.notes')}
           >
             <StickyNote className="w-4 h-4" />
-            <span className="text-xs" style={{ fontSize: '10px' }}>笔记</span>
+            <span className="text-xs" style={{ fontSize: '10px' }}>{t('reader.notes')}</span>
           </button>
         )}
 
@@ -643,22 +681,47 @@ const BottomNavigation = forwardRef<HTMLDivElement, BottomNavigationProps>(funct
             onMouseLeave={(e) => {
               e.currentTarget.style.backgroundColor = 'transparent';
             }}
-            aria-label="朗读"
+            aria-label={t('reader.tts')}
           >
             <Volume2 className="w-4 h-4" />
-            <span className="text-xs" style={{ fontSize: '10px' }}>朗读</span>
+            <span className="text-xs" style={{ fontSize: '10px' }}>{t('reader.tts')}</span>
           </button>
         )}
 
         {onToggleBookmark && (
           <button
-            onClick={onToggleBookmark}
+            onClick={(e) => {
+              // 如果是双击，不执行单击操作
+              if (bookmarkDoubleClickRef.current) {
+                bookmarkDoubleClickRef.current = false;
+                return;
+              }
+              
+              // 延迟执行，等待是否会有双击
+              bookmarkClickTimerRef.current = setTimeout(() => {
+                if (!bookmarkDoubleClickRef.current) {
+                  onToggleBookmark();
+                }
+                bookmarkClickTimerRef.current = null;
+              }, 200);
+            }}
             onDoubleClick={(e) => {
               e.preventDefault();
+              e.stopPropagation();
+              bookmarkDoubleClickRef.current = true;
+              if (bookmarkClickTimerRef.current) {
+                clearTimeout(bookmarkClickTimerRef.current);
+                bookmarkClickTimerRef.current = null;
+              }
               onToggleBookmarkPanel?.();
             }}
             onContextMenu={(e) => {
               e.preventDefault();
+              e.stopPropagation();
+              if (bookmarkClickTimerRef.current) {
+                clearTimeout(bookmarkClickTimerRef.current);
+                bookmarkClickTimerRef.current = null;
+              }
               onToggleBookmarkPanel?.();
             }}
             className="flex flex-col items-center gap-0.5 p-2 rounded-lg transition-colors"
@@ -671,15 +734,15 @@ const BottomNavigation = forwardRef<HTMLDivElement, BottomNavigationProps>(funct
             onMouseLeave={(e) => {
               e.currentTarget.style.backgroundColor = 'transparent';
             }}
-            aria-label={hasBookmark ? "删除书签" : "添加书签"}
-            title="单击：添加/删除书签 | 双击/右键：打开书签列表"
+            aria-label={hasBookmark ? t('reader.deleteBookmark') : t('reader.addBookmark')}
+            title={t('reader.bookmarkTooltip')}
           >
             {hasBookmark ? (
               <BookmarkCheck className="w-4 h-4" />
             ) : (
               <Bookmark className="w-4 h-4" />
             )}
-            <span className="text-xs" style={{ fontSize: '10px' }}>书签</span>
+            <span className="text-xs" style={{ fontSize: '10px' }}>{t('reader.bookmark')}</span>
           </button>
         )}
       </div>

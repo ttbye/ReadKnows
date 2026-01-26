@@ -6,6 +6,7 @@
 
 import { Play, Pause, SkipBack, SkipForward, Volume2, X, Settings } from 'lucide-react';
 import { ReadingSettings } from '../../types/reader';
+import { useTranslation } from 'react-i18next';
 
 interface TTSControlBarProps {
   settings: ReadingSettings;
@@ -48,6 +49,7 @@ export default function TTSControlBar({
   availableVoices,
   isVisible,
 }: TTSControlBarProps) {
+  const { t } = useTranslation();
   const themeStyles = {
     light: { bg: '#ffffff', text: '#000000', border: '#e0e0e0', hover: 'rgba(0, 0, 0, 0.05)' },
     dark: { bg: '#1a1a1a', text: '#ffffff', border: '#404040', hover: 'rgba(255, 255, 255, 0.1)' },
@@ -97,7 +99,7 @@ export default function TTSControlBar({
           />
         </div>
         <div className="flex items-center justify-between mt-0.5 text-xs" style={{ color: themeStyles.text, opacity: 0.7 }}>
-          <span>段落 {currentIndex + 1} / {totalParagraphs}</span>
+          <span>{t('tts.paragraph', { current: currentIndex + 1, total: totalParagraphs })}</span>
           <span>{speed.toFixed(1)}x</span>
         </div>
       </div>
@@ -194,7 +196,7 @@ export default function TTSControlBar({
         >
           {availableVoices.map((v) => (
             <option key={v.id} value={v.id}>
-              {v.name} {v.gender ? `(${v.gender === 'male' ? '男' : '女'})` : ''}
+              {v.name} {v.gender ? `(${v.gender === 'male' ? t('tts.male') : t('tts.female')})` : ''}
             </option>
           ))}
         </select>
@@ -250,6 +252,7 @@ export default function TTSControlBar({
     </div>
   );
 }
+
 
 
 

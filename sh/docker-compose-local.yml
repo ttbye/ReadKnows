@@ -1,0 +1,53 @@
+services:
+  # 后端服务（本地开发版本）
+  backend:
+    image: ttbye/readknows-backend:latest
+    platform: linux/amd64
+    build:
+      context: ..  # 项目根目录，用于读取 package.json
+      dockerfile: backend/Dockerfile.debian
+    container_name: readknows-backend
+    restart: unless-stopped
+    user: "0:0"
+    ports:
+      - "1281:1281"
+    environment:
+      - NODE_ENV=production
+      - PORT=1281
+      - JWT_SECRET=${JWT_SECRET:-gDKI70dyQwnmILUTsCBJAtU4ooh259Vy7wzXd+Uk+0M=}
+      - JWT_EXPIRES_IN=${JWT_EXPIRES_IN:-7d}
+      - DB_PATH=./data/database.db
+      - BOOKS_DIR=./books
+      - DOUBAN_API_BASE=${DOUBAN_API_BASE:-}
+      - AI_PROVIDER=${AI_PROVIDER:-ollama}
+      - AI_API_URL=${AI_API_URL:-http://frontend:1280/ollama-proxy}
+      - AI_API_KEY=${AI_API_KEY:-}
+      - AI_MODEL=${AI_MODEL:-llama2}
+      - API_KEY=${API_KEY:-}
+    volumes:
+      # 使用相对路径，适用于本地开发（macOS/Windows）
+      # 统一挂载 data 目录，所有子目录都在其中
+      - ../data:/app/data
+      # Calibre 安装缓存（用于加速重复安装）
+      # 注意：相对路径是相对于 docker-compose 文件所在目录（sh/）
+      # 确保项目根目录下有 cache/calibre 目录，或创建它
+      - ../cache/calibre:/app/cache/calibre:rw
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - readknows-network
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:1281/api/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+networks:
+  readknows-network:
+    name: readknows-network
+    driver: bridge
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.20.0.0/16

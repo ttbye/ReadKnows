@@ -53,8 +53,8 @@ username=${username:-books}
 read -p "请输入管理员邮箱 (默认: admin@readknows.local): " email
 email=${email:-admin@readknows.local}
 
-read -sp "请输入管理员密码 (默认: books): " password
-password=${password:-books}
+read -sp "请输入管理员密码 (默认: readknows): " password
+password=${password:-readknows}
 echo ""
 
 print_info "正在初始化管理员账户..."

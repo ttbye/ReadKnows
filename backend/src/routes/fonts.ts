@@ -13,7 +13,7 @@ import { db } from '../db';
 import { authenticateToken, AuthRequest } from '../middleware/auth';
 
 const router = express.Router();
-const fontsDir = process.env.FONTS_DIR || './fonts';
+import { fontsDir } from '../config/paths';
 
 // 确保字体目录存在
 if (!fs.existsSync(fontsDir)) {

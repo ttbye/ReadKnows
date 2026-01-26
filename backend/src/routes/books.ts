@@ -22,6 +22,8 @@ import { convertOfficeToPdf, checkLibreOfficeAvailable } from '../utils/officeTo
 import { extractPdfMetadata } from '../utils/pdfMetadataExtractor';
 import nodemailer from 'nodemailer';
 import { calculateFileHash } from '../utils/fileHash';
+import { booksDir } from '../config/paths';
+import { downloadCoverToLocal } from '../utils/coverDownloader';
 import {
   generateBookPath,
   generateBookFileName,
@@ -38,6 +40,7 @@ import {
 const getCurrentUTCTime = () => new Date().toISOString();
 import { extractTagsFromDouban, mergeTags } from '../utils/tagHelper';
 import * as iconv from 'iconv-lite';
+import { logActionFromRequest } from '../utils/logger';
 
 // 修复文件名编码问题（处理中文乱码）
 function fixFileNameEncoding(fileName: string): string {
@@ -135,9 +138,8 @@ function fixFileNameEncoding(fileName: string): string {
 
 const router = express.Router();
 
-// Office 文档类型列表
-const OFFICE_TYPES = ['.docx', '.doc', '.xlsx', '.xls', '.pptx'];
-const booksDir = process.env.BOOKS_DIR || './books';
+// Office 文档类型列表（仅支持新格式）
+const OFFICE_TYPES = ['.docx', '.xlsx', '.pptx'];
 
 // 配置multer用于文件上传（临时存储，后续会移动到正确位置）
 const storage = multer.diskStorage({
@@ -156,12 +158,17 @@ const upload = multer({
   storage,
   limits: { fileSize: 500 * 1024 * 1024 }, // 500MB
   fileFilter: (req, file, cb) => {
-    const allowedTypes = ['.epub', '.pdf', '.txt', '.mobi', '.docx', '.doc', '.xlsx', '.xls', '.pptx', '.md'];
+    const allowedTypes = ['.epub', '.pdf', '.txt', '.mobi', '.docx', '.xlsx', '.pptx', '.md'];
     const ext = path.extname(file.originalname).toLowerCase();
     if (allowedTypes.includes(ext)) {
       cb(null, true);
     } else {
-      cb(new Error('不支持的文件格式'));
+      // 特别提示旧版Office格式不被支持
+      if (['.doc', '.xls', '.ppt'].includes(ext)) {
+        cb(new Error('不支持旧版Office格式（.doc、.xls、.ppt），请使用新格式（.docx、.xlsx、.pptx）'));
+      } else {
+        cb(new Error('不支持的文件格式'));
+      }
     }
   },
 });
@@ -216,7 +223,69 @@ router.post('/upload', authenticateToken, upload.single('file'), async (req: Aut
     
     // 获取用户信息
     const userId = req.userId!;
-    const username = db.prepare('SELECT username FROM users WHERE id = ?').get(userId) as any;
+    const user = db.prepare('SELECT username, role, can_upload_private, max_private_books, can_upload_books FROM users WHERE id = ?').get(userId) as any;
+    if (!user) {
+      return res.status(404).json({ error: '用户不存在' });
+    }
+
+    // 检查上传书籍权限（管理员不受限制）
+    if (user.role !== 'admin') {
+      const canUploadBooks = user.can_upload_books !== undefined && user.can_upload_books !== null
+        ? user.can_upload_books === 1
+        : true; // 默认为true（向后兼容）
+      
+      if (!canUploadBooks) {
+        console.log(`[上传书籍] 权限被拒绝: 用户 ${userId} 尝试上传书籍，但上传权限已被禁用`);
+        return res.status(403).json({ error: '您没有权限上传书籍，请联系管理员开启此权限' });
+      }
+    }
+    
+    // 检查上传私有书籍权限（管理员不受限制）
+    if (!isPublic && user.role !== 'admin') {
+      // 检查 can_upload_private 字段
+      // SQLite 中 INTEGER 类型：null/undefined 默认为 true（向后兼容），0 表示禁用，1 表示启用
+      // 注意：SQLite 返回的 INTEGER 值可能是数字类型，需要正确比较
+      const canUploadPrivateValue = user.can_upload_private;
+      let canUploadPrivate = true; // 默认允许（向后兼容）
+      
+      // 明确检查：如果值存在且不为 null，则根据值判断
+      if (canUploadPrivateValue !== undefined && canUploadPrivateValue !== null) {
+        // 转换为数字进行比较（处理字符串 "0"、"1" 的情况）
+        const numValue = typeof canUploadPrivateValue === 'string' 
+          ? parseInt(canUploadPrivateValue, 10) 
+          : Number(canUploadPrivateValue);
+        canUploadPrivate = numValue === 1;
+      }
+      
+      console.log(`[上传书籍] 用户权限检查: userId=${userId}, can_upload_private=${canUploadPrivateValue} (类型: ${typeof canUploadPrivateValue}), 计算结果=${canUploadPrivate}, isPublic=${isPublic}, role=${user.role}`);
+      
+      if (!canUploadPrivate) {
+        console.log(`[上传书籍] 权限被拒绝: 用户 ${userId} 尝试上传私有书籍，但权限已被禁用 (can_upload_private=${canUploadPrivateValue})`);
+        return res.status(403).json({ error: '您没有权限上传私人书籍，请联系管理员开启此权限' });
+      }
+      
+      // 检查私人书籍数量限制（0表示不限制）
+      const maxPrivateBooks = user.max_private_books !== undefined && user.max_private_books !== null 
+        ? user.max_private_books 
+        : 30; // 默认为30（向后兼容）
+      
+      if (maxPrivateBooks > 0) {
+        // 统计用户已上传的私人书籍数量（只统计主书籍，不包括多格式版本）
+        const privateBookCount = db.prepare(`
+          SELECT COUNT(*) as count 
+          FROM books 
+          WHERE uploader_id = ? AND is_public = 0 AND parent_book_id IS NULL
+        `).get(userId) as any;
+        
+        const currentCount = privateBookCount?.count || 0;
+        
+        if (currentCount >= maxPrivateBooks) {
+          return res.status(403).json({ 
+            error: `您已达到私人书籍上传上限（${maxPrivateBooks}本），无法继续上传私人书籍。请联系管理员增加限制或删除部分私人书籍。` 
+          });
+        }
+      }
+    }
 
     let filePath = req.file.path;
     // 修复文件名编码问题（处理乱码）- 对所有文件类型生效
@@ -497,7 +566,7 @@ router.post('/upload', authenticateToken, upload.single('file'), async (req: Aut
       finalAuthor, 
       category,
       isPublic,
-      username?.username
+      user?.username
     );
     ensureDirectoryExists(bookDir);
 
@@ -601,6 +670,20 @@ router.post('/upload', authenticateToken, upload.single('file'), async (req: Aut
       }
     }
 
+    // 如果封面是远程URL，自动下载到本地
+    if (metadata.cover_url && (metadata.cover_url.startsWith('http://') || metadata.cover_url.startsWith('https://'))) {
+      console.log('[上传] 检测到远程封面URL，开始下载到本地:', metadata.cover_url);
+      const localCoverUrl = await downloadCoverToLocal(metadata.cover_url, bookDir, booksDir);
+      if (localCoverUrl) {
+        metadata.cover_url = localCoverUrl;
+        console.log('[上传] 远程封面已下载到本地:', localCoverUrl);
+      } else {
+        console.warn('[上传] 远程封面下载失败，保留原始URL:', metadata.cover_url);
+        // 如果下载失败，可以选择保留原始URL或设置为null
+        // 这里选择保留原始URL，以便后续可以手动下载
+      }
+    }
+
     // 保存到数据库
     const bookId = uuidv4();
     const now = getCurrentUTCTime();
@@ -648,6 +731,23 @@ router.post('/upload', authenticateToken, upload.single('file'), async (req: Aut
         '上传成功',
         bookId
       );
+
+      // 记录书籍上传日志
+      logActionFromRequest(req, {
+        action_type: 'book_upload',
+        action_category: 'book',
+        description: `上传书籍《${finalTitle}》(${fileName})`,
+        metadata: {
+          book_id: bookId,
+          book_title: finalTitle,
+          book_author: finalAuthor,
+          file_name: fileName,
+          file_size: fileSize,
+          file_type: fileExt.substring(1),
+          is_public: isPublic,
+          category: category,
+        }
+      });
     } catch (dbError: any) {
       // 如果数据库插入失败，尝试删除已移动的文件
       if (fs.existsSync(filePath) && filePath !== req.file.path) {
@@ -998,6 +1098,180 @@ router.post('/upload', authenticateToken, upload.single('file'), async (req: Aut
   }
 });
 
+// 从文件路径上传书籍（用于从消息附件直接上传）
+router.post('/upload-from-path', authenticateToken, async (req: AuthRequest, res) => {
+  try {
+    const { filePath, fileName, isPublic, autoConvertTxt, autoConvertMobi, autoFetchDouban, category } = req.body;
+
+    if (!filePath) {
+      return res.status(400).json({ error: '请提供文件路径' });
+    }
+
+    // 将相对路径转换为实际文件路径
+    // 文件路径格式可能是: /messages/files/filename.epub 或 /api/messages/files/filename.epub
+    let actualFilePath = filePath;
+    const { messagesDir } = require('../config/paths');
+    
+    // 处理不同的路径格式
+    if (filePath.startsWith('/messages/files/')) {
+      // 从消息文件路径转换为实际路径
+      const filename = filePath.replace('/messages/files/', '');
+      actualFilePath = path.join(messagesDir, 'files', filename);
+    } else if (filePath.startsWith('/api/messages/files/')) {
+      // 处理 /api/messages/files/ 格式
+      const filename = filePath.replace('/api/messages/files/', '');
+      actualFilePath = path.join(messagesDir, 'files', filename);
+    } else if (!path.isAbsolute(filePath)) {
+      // 如果是相对路径，基于消息目录解析
+      // 如果路径包含文件名，提取文件名
+      const filename = path.basename(filePath);
+      actualFilePath = path.join(messagesDir, 'files', filename);
+    }
+
+    console.log('[从路径上传书籍] 原始路径:', filePath);
+    console.log('[从路径上传书籍] 解析后路径:', actualFilePath);
+    console.log('[从路径上传书籍] messagesDir:', messagesDir);
+
+    // 检查文件是否存在
+    if (!fs.existsSync(actualFilePath)) {
+      console.error('[从路径上传书籍] 文件不存在:', actualFilePath);
+      // 列出目录中的文件，帮助调试
+      const filesDir = path.join(messagesDir, 'files');
+      if (fs.existsSync(filesDir)) {
+        const files = fs.readdirSync(filesDir);
+        console.log('[从路径上传书籍] 目录中的文件:', files.slice(0, 10)); // 只显示前10个
+      }
+      return res.status(400).json({ error: `文件路径不存在: ${actualFilePath}` });
+    }
+
+    // 检查文件是否可读
+    try {
+      fs.accessSync(actualFilePath, fs.constants.R_OK);
+    } catch (accessError) {
+      console.error('[从路径上传书籍] 文件不可读:', actualFilePath, accessError);
+      return res.status(403).json({ error: `文件不可读: ${actualFilePath}` });
+    }
+
+    // 获取用户信息
+    const userId = req.userId!;
+    const user = db.prepare('SELECT username, role, can_upload_private, max_private_books, can_upload_books FROM users WHERE id = ?').get(userId) as any;
+    if (!user) {
+      return res.status(404).json({ error: '用户不存在' });
+    }
+
+    // 检查上传书籍权限（管理员不受限制）
+    if (user.role !== 'admin') {
+      const canUploadBooks = user.can_upload_books !== undefined && user.can_upload_books !== null
+        ? user.can_upload_books === 1
+        : true; // 默认为true（向后兼容）
+      
+      if (!canUploadBooks) {
+        console.log(`[上传书籍] 权限被拒绝: 用户 ${userId} 尝试上传书籍，但上传权限已被禁用`);
+        return res.status(403).json({ error: '您没有权限上传书籍，请联系管理员开启此权限' });
+      }
+    }
+
+    const isPublicValue = isPublic === true || isPublic === 'true';
+    const autoConvertTxtValue = autoConvertTxt !== 'false' && autoConvertTxt !== false;
+    const autoConvertMobiValue = autoConvertMobi !== 'false' && autoConvertMobi !== false;
+    const autoFetchDoubanValue = autoFetchDouban !== undefined 
+      ? (autoFetchDouban === 'true' || autoFetchDouban === true)
+      : (() => {
+          const autoFetchDoubanSetting = db.prepare('SELECT value FROM system_settings WHERE key = ?').get('auto_fetch_douban') as any;
+          return autoFetchDoubanSetting?.value === 'true';
+        })();
+    const selectedCategory = category || '未分类';
+
+    // 检查上传私有书籍权限（管理员不受限制）
+    if (!isPublicValue && user.role !== 'admin') {
+      const canUploadPrivateValue = user.can_upload_private;
+      let canUploadPrivate = true; // 默认允许（向后兼容）
+      
+      if (canUploadPrivateValue !== undefined && canUploadPrivateValue !== null) {
+        const numValue = typeof canUploadPrivateValue === 'string' 
+          ? parseInt(canUploadPrivateValue, 10) 
+          : Number(canUploadPrivateValue);
+        canUploadPrivate = numValue === 1;
+      }
+      
+      if (!canUploadPrivate) {
+        return res.status(403).json({ error: '您没有权限上传私人书籍，请联系管理员开启此权限' });
+      }
+      
+      // 检查私人书籍数量限制
+      const maxPrivateBooks = user.max_private_books !== undefined && user.max_private_books !== null 
+        ? user.max_private_books 
+        : 30;
+      
+      if (maxPrivateBooks > 0) {
+        const privateBookCount = db.prepare(`
+          SELECT COUNT(*) as count 
+          FROM books 
+          WHERE uploader_id = ? AND is_public = 0 AND parent_book_id IS NULL
+        `).get(userId) as any;
+        
+        const currentCount = privateBookCount?.count || 0;
+        
+        if (currentCount >= maxPrivateBooks) {
+          return res.status(403).json({ 
+            error: `您已达到私人书籍上传上限（${maxPrivateBooks}本），无法继续上传私人书籍。请联系管理员增加限制或删除部分私人书籍。` 
+          });
+        }
+      }
+    }
+
+    // 使用 scanAndImportFile 函数导入书籍
+    const { scanAndImportFile } = require('./scan');
+    const storagePath = db.prepare('SELECT value FROM system_settings WHERE key = ?').get('books_storage_path') as any;
+    const finalStoragePath = storagePath?.value || './books';
+
+    console.log('[从路径上传书籍] 开始导入:', {
+      actualFilePath,
+      fileName: fileName || path.basename(actualFilePath),
+      finalStoragePath,
+      userId,
+      username: user.username,
+      isPublic: isPublicValue,
+      category: selectedCategory,
+    });
+
+    const result = await scanAndImportFile(
+      actualFilePath,
+      fileName || path.basename(actualFilePath),
+      finalStoragePath,
+      autoConvertTxtValue,
+      autoConvertMobiValue,
+      autoFetchDoubanValue,
+      userId,
+      user.username,
+      isPublicValue,
+      selectedCategory,
+      false // 不删除源文件
+    );
+
+    console.log('[从路径上传书籍] 导入结果:', result);
+
+    if (result.success) {
+      res.status(201).json({
+        message: '书籍上传成功',
+        bookId: result.bookId || result.book?.id,
+        book: result.book || { title: result.title, author: result.author },
+      });
+    } else if (result.skipped) {
+      res.status(400).json({ error: result.reason || '书籍已存在' });
+    } else {
+      res.status(500).json({ error: result.reason || '上传失败' });
+    }
+  } catch (error: any) {
+    console.error('[从路径上传书籍] 发生错误:', error.message || error);
+    console.error('[从路径上传书籍] 错误堆栈:', error.stack);
+    res.status(500).json({ 
+      error: error.message || '从路径上传书籍失败',
+      details: process.env.NODE_ENV === 'development' ? error.stack : undefined,
+    });
+  }
+});
+
 // 从豆瓣搜索书籍信息
 router.get('/:id/search-douban', authenticateToken, async (req: AuthRequest, res) => {
   try {
@@ -1326,19 +1600,38 @@ router.get('/', async (req, res) => {
     const { page = 1, limit = 20, search, sort = 'created_at', order = 'desc', scope, category } = req.query;
     const offset = (Number(page) - 1) * Number(limit);
 
-    // 从Authorization头获取用户ID（如果有）
+    // 从Authorization头获取用户ID和角色（如果有）
     let userId: string | null = null;
+    let userRole: string = 'user';
     try {
       const authHeader = req.headers.authorization;
       if (authHeader && authHeader.startsWith('Bearer ')) {
         const token = authHeader.substring(7);
         const jwt = require('jsonwebtoken');
-        const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key');
+        const secret = process.env.JWT_SECRET;
+        if (!secret || secret === 'your-secret-key' || secret === 'change-this-secret-key-in-production') {
+          throw new Error('JWT_SECRET未正确配置');
+        }
+        const decoded = jwt.verify(token, secret);
         userId = decoded.userId;
+        // 获取用户角色
+        const user = db.prepare('SELECT role FROM users WHERE id = ?').get(userId) as any;
+        userRole = user?.role || 'user';
       }
     } catch (e) {
       // 忽略token验证错误，未登录用户也可以查看公开书籍
     }
+
+    // 调试日志：记录查询参数
+    console.log('[书籍列表] 查询参数:', {
+      userId,
+      userRole,
+      scope: req.query.scope,
+      category: req.query.category,
+      search: req.query.search,
+      page: req.query.page,
+      limit: req.query.limit,
+    });
 
     // 使用 LEFT JOIN 获取上传者用户名和昵称
     let query = `
@@ -1357,23 +1650,106 @@ router.get('/', async (req, res) => {
     // 只查询主书籍（没有parent_book_id的书籍），避免多格式重复显示
     conditions.push('b.parent_book_id IS NULL');
 
-    // 根据scope参数筛选
+    // 隐私：图书馆列表不展示他人私有书籍，管理员也仅通过 /books/admin/all 管理
     if (scope === 'public') {
       // 仅公开书籍
-      conditions.push('b.is_public = 1');
+      conditions.push('b.is_public = 1 AND (b.group_only = 0 OR b.group_only IS NULL)');
     } else if (scope === 'private' && userId) {
       // 仅用户的私有书籍
-      conditions.push('b.is_public = 0 AND b.uploader_id = ?');
+      conditions.push('b.is_public = 0 AND b.uploader_id = ? AND (b.group_only = 0 OR b.group_only IS NULL)');
+      params.push(userId);
+      countParams.push(userId);
+    } else if (scope === 'shared' && userId) {
+      // 仅分享给用户的书籍
+      conditions.push(`(
+        EXISTS (
+          SELECT 1 FROM book_shares bs 
+          WHERE bs.book_id = b.id 
+            AND bs.to_user_id = ?
+            AND (bs.expires_at IS NULL OR bs.expires_at > datetime('now'))
+        )
+        OR EXISTS (
+          SELECT 1 FROM book_shares bs
+          INNER JOIN group_members gm ON bs.to_group_id = gm.group_id
+          WHERE bs.book_id = b.id
+            AND gm.user_id = ?
+            AND (bs.expires_at IS NULL OR bs.expires_at > datetime('now'))
+        )
+      )`);
+      params.push(userId, userId);
+      countParams.push(userId, userId);
+    } else if (scope === 'group' && userId) {
+      // 仅群组可见的书籍（用户所在的群组）
+      conditions.push(`(
+        b.group_only = 1 
+        AND EXISTS (
+          SELECT 1 FROM book_group_visibility bgv
+          INNER JOIN group_members gm ON bgv.group_id = gm.group_id
+          WHERE bgv.book_id = b.id AND gm.user_id = ?
+        )
+      )`);
       params.push(userId);
       countParams.push(userId);
     } else if (userId) {
-      // 所有公开书籍 + 用户的私有书籍
-      conditions.push('(b.is_public = 1 OR b.uploader_id = ?)');
-      params.push(userId);
-      countParams.push(userId);
+      // 所有可见的书籍（简化查询逻辑，减少嵌套EXISTS）：
+      // 1. 公开书籍（非群组专用）
+      // 2. 用户的私有书籍（非群组专用）
+      // 3. 群组可见的书籍（用户在群组中）
+      // 4. 分享给用户的书籍
+      // 5. 分享给用户所在群组的书籍
+      // 管理员：若系统设置 admin_can_see_all_books=true，则可见所有书籍；否则与普通用户一致。
+
+      console.log('[书籍列表] 登录用户查询，userId:', userId);
+
+      const adminCanSeeAll = (userRole === 'admin') && ((db.prepare("SELECT value FROM system_settings WHERE key = 'admin_can_see_all_books'").get() as any)?.value === 'true');
+      if (!adminCanSeeAll) {
+        // 临时修复：为了确保权限安全，先只返回公开书籍和用户自己的私有书籍
+        // 后续可以逐步启用分享和群组功能
+        conditions.push(`(
+          (b.is_public = 1 AND (b.group_only = 0 OR b.group_only IS NULL))
+          OR (b.is_public = 0 AND b.uploader_id = ? AND (b.group_only = 0 OR b.group_only IS NULL))
+        )`);
+        params.push(userId);
+        countParams.push(userId);
+      } else {
+        console.log('[书籍列表] 管理员且已开启「管理员可见所有书籍」，返回全部');
+      }
+
+      // 注释掉复杂的分享和群组查询，避免权限泄露
+      /*
+      // 使用UNION优化：先分别查询不同类型的书籍，然后合并（性能更好）
+      // 但为了保持API兼容性，仍然使用OR条件，但优化EXISTS子查询
+      conditions.push(`(
+        (b.is_public = 1 AND (b.group_only = 0 OR b.group_only IS NULL))
+        OR (b.is_public = 0 AND b.uploader_id = ? AND (b.group_only = 0 OR b.group_only IS NULL))
+        OR (
+          b.group_only = 1
+          AND EXISTS (
+            SELECT 1 FROM book_group_visibility bgv
+            INNER JOIN group_members gm ON bgv.group_id = gm.group_id
+            WHERE bgv.book_id = b.id AND gm.user_id = ?
+          )
+        )
+        OR EXISTS (
+          SELECT 1 FROM book_shares bs
+          WHERE bs.book_id = b.id
+            AND bs.to_user_id = ?
+            AND (bs.expires_at IS NULL OR bs.expires_at > datetime('now'))
+        )
+        OR EXISTS (
+          SELECT 1 FROM book_shares bs
+          INNER JOIN group_members gm ON bs.to_group_id = gm.group_id
+          WHERE bs.book_id = b.id
+            AND gm.user_id = ?
+            AND (bs.expires_at IS NULL OR bs.expires_at > datetime('now'))
+        )
+      )`);
+      params.push(userId, userId, userId, userId);
+      countParams.push(userId, userId, userId, userId);
+      */
     } else {
-      // 未登录用户只能看公开书籍
-      conditions.push('b.is_public = 1');
+      // 未登录用户只能看公开书籍（非群组专用）
+      conditions.push('b.is_public = 1 AND (b.group_only = 0 OR b.group_only IS NULL)');
     }
 
     // 书籍分类筛选
@@ -1405,24 +1781,78 @@ router.get('/', async (req, res) => {
     query += ` ORDER BY b.${sortField} ${sortOrder} LIMIT ? OFFSET ?`;
     params.push(Number(limit), offset);
 
-    const books = db.prepare(query).all(...params) as any[];
-    const total = db.prepare(countQuery).get(...countParams) as any;
+    // 执行查询（使用事务提高性能）
+    const transaction = db.transaction(() => {
+      const books = db.prepare(query).all(...params) as any[];
+      const total = db.prepare(countQuery).get(...countParams) as any;
+      
+      // 对于MOBI格式的书籍，批量查找EPUB版本的封面（优化性能）
+      const mobiBooks = books.filter((b: any) => b.file_type && b.file_type.toLowerCase() === 'mobi');
+      if (mobiBooks.length > 0) {
+        const mobiBookIds = mobiBooks.map((b: any) => b.id);
+        const epubBooks = db.prepare(`
+          SELECT parent_book_id, cover_url FROM books 
+          WHERE parent_book_id IN (${mobiBookIds.map(() => '?').join(',')}) 
+            AND file_type = 'epub'
+        `).all(...mobiBookIds) as any[];
+        
+        const epubCoverMap = new Map(epubBooks.map((eb: any) => [eb.parent_book_id, eb.cover_url]));
+        
+        books.forEach((book: any) => {
+          if (book.file_type && book.file_type.toLowerCase() === 'mobi') {
+            const epubCover = epubCoverMap.get(book.id);
+            if (epubCover) {
+              book.cover_url = epubCover;
+            }
+          }
+        });
+      }
+      
+      return { books, total };
+    });
+    
+    const { books, total } = transaction();
+    
+    // 调试日志：检查返回的书籍权限
+    if (books.length > 0) {
+      const publicBooks = books.filter((b: any) => b.is_public === 1);
+      const privateBooks = books.filter((b: any) => b.is_public === 0);
+      const ownPrivateBooks = privateBooks.filter((b: any) => b.uploader_id === userId);
+      const otherPrivateBooks = privateBooks.filter((b: any) => b.uploader_id !== userId);
 
-    // 对于MOBI格式的书籍，优先使用EPUB版本的封面
-    const processedBooks = books.map((book: any) => {
-      if (book.file_type && book.file_type.toLowerCase() === 'mobi') {
-        // 查找EPUB格式的版本
-        const epubBook = db.prepare('SELECT * FROM books WHERE parent_book_id = ? AND file_type = ?').get(book.id, 'epub') as any;
-        if (epubBook && epubBook.cover_url) {
-          // 使用EPUB版本的封面
-          book.cover_url = epubBook.cover_url;
+      console.log('[书籍列表] 返回结果统计:', {
+        total: books.length,
+        publicBooks: publicBooks.length,
+        privateBooks: privateBooks.length,
+        ownPrivateBooks: ownPrivateBooks.length,
+        otherPrivateBooks: otherPrivateBooks.length,
+        userId,
+        userRole,
+      });
+
+      if (otherPrivateBooks.length > 0) {
+        console.warn('[书籍列表] 警告：返回了其他用户的私有书籍!', otherPrivateBooks.map((b: any) => ({
+          id: b.id,
+          title: b.title,
+          uploader_id: b.uploader_id,
+          is_public: b.is_public,
+        })));
+      }
+    }
+
+    // 验证封面文件是否存在，如果不存在则设置为null（避免404错误）
+    books.forEach((book: any) => {
+      if (book.cover_url && book.cover_url.startsWith('/books/')) {
+        const coverPath = path.join(booksDir, book.cover_url.replace('/books/', ''));
+        if (!fs.existsSync(coverPath)) {
+          // 封面文件不存在，设置为null
+          book.cover_url = null;
         }
       }
-      return book;
     });
 
     res.json({
-      books: processedBooks,
+      books,
       pagination: {
         page: Number(page),
         limit: Number(limit),
@@ -1445,42 +1875,99 @@ router.get('/categories', async (req, res) => {
       if (authHeader && authHeader.startsWith('Bearer ')) {
         const token = authHeader.substring(7);
         const jwt = require('jsonwebtoken');
-        const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key');
+        const secret = process.env.JWT_SECRET;
+        if (!secret || secret === 'your-secret-key' || secret === 'change-this-secret-key-in-production') {
+          throw new Error('JWT_SECRET未正确配置');
+        }
+        const decoded = jwt.verify(token, secret);
         userId = decoded.userId;
       }
     } catch (e) {
       // 忽略token验证错误
     }
 
-    // 构建基础查询条件（与GET /books保持一致）
-    const conditions: string[] = ['parent_book_id IS NULL'];
+    // 构建基础查询条件（与GET /books保持一致，但简化查询以提高性能）
+    // 使用表别名 b 以保持一致性
+    const conditions: string[] = ['b.parent_book_id IS NULL'];
     const params: any[] = [];
 
-    // 根据用户权限筛选
+    // 根据用户权限筛选（与GET /books保持一致的逻辑）
     if (userId) {
-      // 所有公开书籍 + 用户的私有书籍
-      conditions.push('(is_public = 1 OR uploader_id = ?)');
-      params.push(userId);
+      // 登录用户：所有可见的书籍
+      // 1. 公开书籍（非群组专用）
+      // 2. 用户的私有书籍（非群组专用）
+      // 3. 群组可见的书籍（用户在群组中）
+      // 4. 分享给用户的书籍
+      // 5. 分享给用户所在群组的书籍
+      conditions.push(`(
+        (b.is_public = 1 AND (b.group_only = 0 OR b.group_only IS NULL))
+        OR (b.is_public = 0 AND b.uploader_id = ? AND (b.group_only = 0 OR b.group_only IS NULL))
+        OR (
+          b.group_only = 1 
+          AND EXISTS (
+            SELECT 1 FROM book_group_visibility bgv
+            INNER JOIN group_members gm ON bgv.group_id = gm.group_id
+            WHERE bgv.book_id = b.id AND gm.user_id = ?
+          )
+        )
+        OR EXISTS (
+          SELECT 1 FROM book_shares bs 
+          WHERE bs.book_id = b.id 
+            AND bs.to_user_id = ?
+            AND (bs.expires_at IS NULL OR bs.expires_at > datetime('now'))
+        )
+        OR EXISTS (
+          SELECT 1 FROM book_shares bs
+          INNER JOIN group_members gm ON bs.to_group_id = gm.group_id
+          WHERE bs.book_id = b.id
+            AND gm.user_id = ?
+            AND (bs.expires_at IS NULL OR bs.expires_at > datetime('now'))
+        )
+      )`);
+      params.push(userId, userId, userId, userId);
     } else {
-      // 未登录用户只能看公开书籍
-      conditions.push('is_public = 1');
+      // 未登录用户只能看公开书籍（非群组专用）
+      conditions.push('b.is_public = 1 AND (b.group_only = 0 OR b.group_only IS NULL)');
     }
 
     const whereClause = conditions.length > 0 ? ' WHERE ' + conditions.join(' AND ') : '';
 
-    // 按书籍分类分组统计
-    const categoryStats = db.prepare(`
-      SELECT 
-        category,
-        COUNT(*) as count
-      FROM books
-      ${whereClause}
-      GROUP BY category
-      HAVING COUNT(*) > 0
-      ORDER BY count DESC, category ASC
-    `).all(...params) as Array<{ category: string; count: number }>;
+    try {
+      // 按书籍分类分组统计
+      // 使用表别名 b 以保持一致性
+      const categoryStats = db.prepare(`
+        SELECT 
+          COALESCE(b.category, '未分类') as category,
+          COUNT(*) as count
+        FROM books b
+        ${whereClause}
+        GROUP BY COALESCE(b.category, '未分类')
+        HAVING COUNT(*) > 0
+        ORDER BY count DESC, category ASC
+      `).all(...params) as Array<{ category: string; count: number }>;
 
-    res.json({ categories: categoryStats });
+      // 返回包含count的对象数组，前端需要使用count信息
+      // 确保count是数字类型（SQLite可能返回字符串）
+      const categories = categoryStats.map(item => ({
+        category: item.category || '未分类',
+        count: typeof item.count === 'number' ? item.count : (typeof item.count === 'string' ? parseInt(item.count, 10) || 0 : 0)
+      })).filter(cat => cat.category);
+      
+      // 调试日志：输出统计结果
+      console.log('[分类统计] 查询结果:', {
+        userId: userId || '未登录',
+        whereClause,
+        params,
+        totalCategories: categories.length,
+        categories: categories.map(c => `${c.category}(${c.count})`)
+      });
+      
+      res.json({ categories });
+    } catch (error: any) {
+      console.error('查询书籍分类统计失败:', error);
+      // 返回空数组而不是错误
+      res.json({ categories: [] });
+    }
   } catch (error: any) {
     console.error('获取书籍分类统计错误:', error);
     res.status(500).json({ error: '获取书籍分类统计失败' });
@@ -1499,7 +1986,11 @@ router.get('/recent', async (req, res) => {
       if (authHeader && authHeader.startsWith('Bearer ')) {
         const token = authHeader.substring(7);
         const jwt = require('jsonwebtoken');
-        const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key');
+        const secret = process.env.JWT_SECRET;
+        if (!secret || secret === 'your-secret-key' || secret === 'change-this-secret-key-in-production') {
+          throw new Error('JWT_SECRET未正确配置');
+        }
+        const decoded = jwt.verify(token, secret);
         userId = decoded.userId;
       }
     } catch (e) {
@@ -1523,20 +2014,40 @@ router.get('/recent', async (req, res) => {
 
     const books = db.prepare(query).all(...params) as any[];
     
-    // 对于MOBI格式的书籍，优先使用EPUB版本的封面
-    const processedBooks = books.map((book: any) => {
-      if (book.file_type && book.file_type.toLowerCase() === 'mobi') {
-        // 查找EPUB格式的版本
-        const epubBook = db.prepare('SELECT * FROM books WHERE parent_book_id = ? AND file_type = ?').get(book.id, 'epub') as any;
-        if (epubBook && epubBook.cover_url) {
-          // 使用EPUB版本的封面
-          book.cover_url = epubBook.cover_url;
+    // 对于MOBI格式的书籍，批量查找EPUB版本的封面（优化性能）
+    const mobiBooks = books.filter((b: any) => b.file_type && b.file_type.toLowerCase() === 'mobi');
+    if (mobiBooks.length > 0) {
+      const mobiBookIds = mobiBooks.map((b: any) => b.id);
+      const epubBooks = db.prepare(`
+        SELECT parent_book_id, cover_url FROM books 
+        WHERE parent_book_id IN (${mobiBookIds.map(() => '?').join(',')}) 
+          AND file_type = 'epub'
+      `).all(...mobiBookIds) as any[];
+      
+      const epubCoverMap = new Map(epubBooks.map((eb: any) => [eb.parent_book_id, eb.cover_url]));
+      
+      books.forEach((book: any) => {
+        if (book.file_type && book.file_type.toLowerCase() === 'mobi') {
+          const epubCover = epubCoverMap.get(book.id);
+          if (epubCover) {
+            book.cover_url = epubCover;
+          }
+        }
+      });
+    }
+    
+    // 验证封面文件是否存在，如果不存在则设置为null（避免404错误）
+    books.forEach((book: any) => {
+      if (book.cover_url && book.cover_url.startsWith('/books/')) {
+        const coverPath = path.join(booksDir, book.cover_url.replace('/books/', ''));
+        if (!fs.existsSync(coverPath)) {
+          // 封面文件不存在，设置为null
+          book.cover_url = null;
         }
       }
-      return book;
     });
     
-    res.json({ books: processedBooks });
+    res.json({ books });
   } catch (error: any) {
     console.error('获取最近新增书籍错误:', error);
     res.status(500).json({ error: '获取失败' });
@@ -1555,7 +2066,11 @@ router.get('/recommended', async (req, res) => {
       if (authHeader && authHeader.startsWith('Bearer ')) {
         const token = authHeader.substring(7);
         const jwt = require('jsonwebtoken');
-        const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key');
+        const secret = process.env.JWT_SECRET;
+        if (!secret || secret === 'your-secret-key' || secret === 'change-this-secret-key-in-production') {
+          throw new Error('JWT_SECRET未正确配置');
+        }
+        const decoded = jwt.verify(token, secret);
         userId = decoded.userId;
       }
     } catch (e) {
@@ -1579,20 +2094,40 @@ router.get('/recommended', async (req, res) => {
 
     const books = db.prepare(query).all(...params) as any[];
     
-    // 对于MOBI格式的书籍，优先使用EPUB版本的封面
-    const processedBooks = books.map((book: any) => {
-      if (book.file_type && book.file_type.toLowerCase() === 'mobi') {
-        // 查找EPUB格式的版本
-        const epubBook = db.prepare('SELECT * FROM books WHERE parent_book_id = ? AND file_type = ?').get(book.id, 'epub') as any;
-        if (epubBook && epubBook.cover_url) {
-          // 使用EPUB版本的封面
-          book.cover_url = epubBook.cover_url;
+    // 对于MOBI格式的书籍，批量查找EPUB版本的封面（优化性能）
+    const mobiBooks = books.filter((b: any) => b.file_type && b.file_type.toLowerCase() === 'mobi');
+    if (mobiBooks.length > 0) {
+      const mobiBookIds = mobiBooks.map((b: any) => b.id);
+      const epubBooks = db.prepare(`
+        SELECT parent_book_id, cover_url FROM books 
+        WHERE parent_book_id IN (${mobiBookIds.map(() => '?').join(',')}) 
+          AND file_type = 'epub'
+      `).all(...mobiBookIds) as any[];
+      
+      const epubCoverMap = new Map(epubBooks.map((eb: any) => [eb.parent_book_id, eb.cover_url]));
+      
+      books.forEach((book: any) => {
+        if (book.file_type && book.file_type.toLowerCase() === 'mobi') {
+          const epubCover = epubCoverMap.get(book.id);
+          if (epubCover) {
+            book.cover_url = epubCover;
+          }
+        }
+      });
+    }
+    
+    // 验证封面文件是否存在，如果不存在则设置为null（避免404错误）
+    books.forEach((book: any) => {
+      if (book.cover_url && book.cover_url.startsWith('/books/')) {
+        const coverPath = path.join(booksDir, book.cover_url.replace('/books/', ''));
+        if (!fs.existsSync(coverPath)) {
+          // 封面文件不存在，设置为null
+          book.cover_url = null;
         }
       }
-      return book;
     });
     
-    res.json({ books: processedBooks });
+    res.json({ books });
   } catch (error: any) {
     console.error('获取推荐书籍错误:', error);
     res.status(500).json({ error: '获取失败' });
@@ -2008,6 +2543,8 @@ router.post('/:id/extract-cover', authenticateToken, async (req: AuthRequest, re
 router.get('/:id/download', authenticateToken, async (req: AuthRequest, res) => {
   try {
     const { id } = req.params;
+    const userId = req.userId!;
+    const userRole = req.userRole || 'user';
     const { formatId } = req.query; // 支持指定格式ID下载
     
     let book: any;
@@ -2029,7 +2566,42 @@ router.get('/:id/download', authenticateToken, async (req: AuthRequest, res) => 
       return res.status(404).json({ error: '书籍文件不存在' });
     }
 
+    // 检查下载权限（管理员不受限制）
+    if (userRole !== 'admin') {
+      // 检查用户是否有下载权限
+      const user = db.prepare('SELECT can_download FROM users WHERE id = ?').get(userId) as any;
+      if (user) {
+        const canDownload = user.can_download !== undefined && user.can_download !== null
+          ? user.can_download === 1
+          : true; // 默认为true（向后兼容）
+        
+        if (!canDownload) {
+          console.log(`[下载书籍] 权限被拒绝: 用户 ${userId} 尝试下载书籍，但下载权限已被禁用`);
+          return res.status(403).json({ error: '您没有权限下载书籍，请联系管理员开启此权限' });
+        }
+      }
+      
+      // 检查书籍访问权限：私有书籍只有上传者和管理员可下载
+      if (book.is_public === 0 && book.uploader_id !== userId) {
+        return res.status(403).json({ error: '无权访问此书籍' });
+      }
+    }
+
     const fileName = book.file_name || `${book.title}.${book.file_type}`;
+
+    // 记录书籍下载日志（在下载开始前记录）
+    logActionFromRequest(req, {
+      action_type: 'book_download',
+      action_category: 'book',
+      description: `下载书籍《${book.title}》(${fileName})`,
+      metadata: {
+        book_id: id,
+        book_title: book.title,
+        file_name: fileName,
+        file_size: book.file_size,
+      }
+    });
+
     res.download(book.file_path, fileName, (err) => {
       if (err) {
         console.error('下载文件错误:', err);
@@ -2048,8 +2620,9 @@ router.get('/:id/download', authenticateToken, async (req: AuthRequest, res) => 
 router.post('/:id/push', authenticateToken, async (req: AuthRequest, res) => {
   try {
     const { id } = req.params;
-    const { email, formatId } = req.body; // 支持指定格式ID推送
+    const userId = req.userId!;
     const userRole = req.userRole || 'user';
+    const { email, formatId } = req.body; // 支持指定格式ID推送
 
     // 检查是否启用邮件推送功能
     const emailPushEnabled = db.prepare('SELECT value FROM system_settings WHERE key = ?').get('email_push_enabled') as any;
@@ -2057,7 +2630,21 @@ router.post('/:id/push', authenticateToken, async (req: AuthRequest, res) => {
       return res.status(403).json({ error: '邮件推送功能未启用' });
     }
 
-    // 所有已登录用户都可以推送（不再限制为管理员）
+    // 检查推送权限（管理员不受限制）
+    if (userRole !== 'admin') {
+      // 检查用户是否有推送权限
+      const user = db.prepare('SELECT can_push FROM users WHERE id = ?').get(userId) as any;
+      if (user) {
+        const canPush = user.can_push !== undefined && user.can_push !== null
+          ? user.can_push === 1
+          : true; // 默认为true（向后兼容）
+        
+        if (!canPush) {
+          console.log(`[推送书籍] 权限被拒绝: 用户 ${userId} 尝试推送书籍，但推送权限已被禁用`);
+          return res.status(403).json({ error: '您没有权限推送书籍，请联系管理员开启此权限' });
+        }
+      }
+    }
 
     if (!email || !email.includes('@')) {
       return res.status(400).json({ error: '请提供有效的邮箱地址' });
@@ -2215,6 +2802,25 @@ router.post('/:id/convert', authenticateToken, async (req: AuthRequest, res) => 
 router.get('/:id', async (req, res) => {
   try {
     const { id } = req.params;
+
+    // 可选：从 Authorization 解析 userId、userRole（与 GET /books 一致）
+    let userId: string | null = null;
+    let userRole: string = 'user';
+    try {
+      const authHeader = req.headers.authorization;
+      if (authHeader && authHeader.startsWith('Bearer ')) {
+        const token = authHeader.substring(7);
+        const jwt = require('jsonwebtoken');
+        const secret = process.env.JWT_SECRET;
+        if (secret && secret !== 'your-secret-key' && secret !== 'change-this-secret-key-in-production') {
+          const decoded = jwt.verify(token, secret) as any;
+          userId = decoded.userId;
+          const user = db.prepare('SELECT role FROM users WHERE id = ?').get(userId) as any;
+          userRole = user?.role || 'user';
+        }
+      }
+    } catch (_e) {}
+
     // 使用 LEFT JOIN 获取上传者用户名和昵称
     const book = db.prepare(`
       SELECT 
@@ -2230,6 +2836,24 @@ router.get('/:id', async (req, res) => {
       return res.status(404).json({ error: '书籍不存在' });
     }
 
+    // 隐私：主书籍的 is_public/uploader_id/group_only 决定可见性
+    const mainId = book.parent_book_id || book.id;
+    const mainBook = db.prepare('SELECT is_public, group_only, uploader_id FROM books WHERE id = ?').get(mainId) as any;
+    if (!mainBook) {
+      return res.status(404).json({ error: '书籍不存在' });
+    }
+    const isPublic = mainBook.is_public === 1;
+    const groupOnly = mainBook.group_only === 1;
+    const uploaderId = mainBook.uploader_id;
+
+    // 管理员可见全部；否则仅：公开且非群组专用，或 私有且本人上传
+    if (userRole !== 'admin') {
+      const allowed = (isPublic && !groupOnly) || (!isPublic && uploaderId === userId && !groupOnly);
+      if (!allowed) {
+        return res.status(404).json({ error: '书籍不存在' });
+      }
+    }
+
     // 获取所有格式
     const formats = findAllBookFormats(db, id);
 
@@ -2237,7 +2861,6 @@ router.get('/:id', async (req, res) => {
     if (book.file_type && book.file_type.toLowerCase() === 'mobi') {
       const epubFormat = formats.find((f: any) => f.file_type && f.file_type.toLowerCase() === 'epub');
       if (epubFormat) {
-        console.log('[书籍详情] MOBI格式书籍，使用EPUB版本的元数据');
         // 使用EPUB版本的元数据（但保留MOBI的file_path和file_type）
         book.title = epubFormat.title || book.title;
         book.author = epubFormat.author || book.author;
@@ -2254,22 +2877,34 @@ router.get('/:id', async (req, res) => {
 
     // 检查封面文件是否真实存在
     if (book.cover_url && book.cover_url.startsWith('/books/')) {
-      const coverPath = path.join(booksDir, book.cover_url.replace('/books/', ''));
+      // 移除开头的 /books/，获取相对路径
+      const relativePath = book.cover_url.replace(/^\/books\//, '');
+      // 构建完整路径（支持绝对路径和相对路径）
+      let coverPath: string;
+      if (path.isAbsolute(booksDir)) {
+        coverPath = path.join(booksDir, relativePath);
+      } else {
+        // 如果booksDir是相对路径，需要解析为绝对路径
+        const resolvedBooksDir = path.resolve(booksDir);
+        coverPath = path.join(resolvedBooksDir, relativePath);
+      }
+      
+      // 规范化路径（处理 .. 和 . 等）
+      coverPath = path.normalize(coverPath);
+      
       if (!fs.existsSync(coverPath)) {
-        console.warn(`[书籍详情] 封面文件不存在: ${coverPath}，重置cover_url`);
         book.cover_url = null;
         // 同时更新数据库
         try {
           db.prepare('UPDATE books SET cover_url = NULL WHERE id = ?').run(id);
         } catch (updateError) {
-          console.error('[书籍详情] 更新cover_url失败:', updateError);
+          // console.error('[书籍详情] 更新cover_url失败:', updateError);
         }
       }
     }
 
     res.json({ book, formats });
   } catch (error: any) {
-    console.error('获取书籍详情错误:', error);
     res.status(500).json({ error: '获取书籍详情失败' });
   }
 });
@@ -2278,6 +2913,8 @@ router.get('/:id', async (req, res) => {
 router.put('/:id', authenticateToken, async (req: AuthRequest, res) => {
   try {
     const { id } = req.params;
+    const userId = req.userId!;
+    const userRole = req.userRole || 'user';
     const {
       title,
       author,
@@ -2296,6 +2933,27 @@ router.put('/:id', authenticateToken, async (req: AuthRequest, res) => {
     const existingBook = db.prepare('SELECT * FROM books WHERE id = ?').get(id) as any;
     if (!existingBook) {
       return res.status(404).json({ error: '书籍不存在' });
+    }
+
+    // 检查编辑权限（管理员不受限制，上传者需要检查权限）
+    if (userRole !== 'admin') {
+      // 只有上传者可以编辑自己的书籍
+      if (existingBook.uploader_id !== userId) {
+        return res.status(403).json({ error: '您没有权限编辑此书籍' });
+      }
+      
+      // 检查用户是否有编辑权限
+      const user = db.prepare('SELECT can_edit_books FROM users WHERE id = ?').get(userId) as any;
+      if (user) {
+        const canEditBooks = user.can_edit_books !== undefined && user.can_edit_books !== null
+          ? user.can_edit_books === 1
+          : true; // 默认为true（向后兼容）
+        
+        if (!canEditBooks) {
+          console.log(`[编辑书籍] 权限被拒绝: 用户 ${userId} 尝试编辑书籍，但编辑权限已被禁用`);
+          return res.status(403).json({ error: '您没有权限编辑书籍信息，请联系管理员开启此权限' });
+        }
+      }
     }
 
     // 直接使用用户输入的数据，不再从豆瓣API自动检索
@@ -2399,7 +3057,20 @@ router.put('/:id', authenticateToken, async (req: AuthRequest, res) => {
       ).run(...values);
     }
 
-    const book = db.prepare('SELECT * FROM books WHERE id = ?').get(id);
+    const book = db.prepare('SELECT * FROM books WHERE id = ?').get(id) as any;
+
+    // 记录书籍编辑日志
+    logActionFromRequest(req, {
+      action_type: 'book_edit',
+      action_category: 'book',
+      description: `编辑书籍《${book.title}》`,
+      metadata: {
+        book_id: id,
+        book_title: book.title,
+        changes: updateData,
+      }
+    });
+
     res.json({ message: '更新成功', book });
   } catch (error: any) {
     console.error('更新书籍错误:', error);
@@ -2408,6 +3079,435 @@ router.put('/:id', authenticateToken, async (req: AuthRequest, res) => {
 });
 
 // 更新书籍公有/私有状态（仅管理员）
+// 设置书籍群组可见性
+router.post('/:id/group-visibility', authenticateToken, async (req: AuthRequest, res) => {
+  try {
+    const { id } = req.params;
+    const userId = req.userId!;
+    const { groupIds, groupOnly } = req.body;
+
+    // 检查书籍是否存在
+    const book = db.prepare('SELECT uploader_id FROM books WHERE id = ?').get(id) as any;
+    if (!book) {
+      return res.status(404).json({ error: '书籍不存在' });
+    }
+
+    // 检查用户是否有权限（上传者或管理员）
+    const user = db.prepare('SELECT role FROM users WHERE id = ?').get(userId) as any;
+    if (book.uploader_id !== userId && user.role !== 'admin') {
+      return res.status(403).json({ error: '您没有权限设置此书籍的群组可见性' });
+    }
+
+    // 开始事务
+    try {
+      const transaction = db.transaction(() => {
+        // 更新书籍的 group_only 字段
+        if (groupOnly !== undefined) {
+          db.prepare('UPDATE books SET group_only = ? WHERE id = ?').run(groupOnly ? 1 : 0, id);
+        }
+
+        // 删除现有的群组可见性设置
+        try {
+          db.prepare('DELETE FROM book_group_visibility WHERE book_id = ?').run(id);
+        } catch (deleteError: any) {
+          // 如果表不存在，忽略错误（向后兼容）
+          if (deleteError.message && deleteError.message.includes('no such table')) {
+            console.warn('群组可见性表不存在，跳过删除操作');
+          } else {
+            throw deleteError;
+          }
+        }
+
+        // 如果设置了群组ID，添加新的群组可见性设置
+        if (groupIds && Array.isArray(groupIds) && groupIds.length > 0) {
+          // 验证用户是否是这些群组的成员
+          for (const groupId of groupIds) {
+            const membership = db.prepare(`
+              SELECT id FROM group_members 
+              WHERE group_id = ? AND user_id = ?
+            `).get(groupId, userId) as any;
+            
+            if (!membership && user.role !== 'admin') {
+              throw new Error(`您不是群组 ${groupId} 的成员`);
+            }
+
+            const visibilityId = uuidv4();
+            try {
+              db.prepare(`
+                INSERT INTO book_group_visibility (id, book_id, group_id)
+                VALUES (?, ?, ?)
+              `).run(visibilityId, id, groupId);
+            } catch (insertError: any) {
+              // 如果表不存在，忽略错误（向后兼容）
+              if (insertError.message && insertError.message.includes('no such table')) {
+                console.warn('群组可见性表不存在，跳过插入操作');
+              } else {
+                throw insertError;
+              }
+            }
+          }
+          
+          // 自动将该书籍的所有笔记和高亮也共享到这些群组
+          // 如果书籍共享到多个群组，我们共享到第一个群组（或者可以改为支持多个群组）
+          const targetGroupId = groupIds[0];
+          
+          try {
+            // 先检查该书籍有多少笔记和高亮
+            const notesCountBefore = db.prepare(`
+              SELECT COUNT(*) as count FROM notes WHERE book_id = ? AND user_id = ?
+            `).get(id, userId) as any;
+            
+            const highlightsCountBefore = db.prepare(`
+              SELECT COUNT(*) as count FROM highlights WHERE book_id = ? AND user_id = ? AND deleted_at IS NULL
+            `).get(id, userId) as any;
+            
+            // 更新该书籍的所有笔记，将 share_to_group_id 设置为目标群组ID
+            // 更新用户自己的所有笔记（包括已经共享到其他群组的，强制更新到新群组）
+            const notesResult = db.prepare(`
+              UPDATE notes 
+              SET share_to_group_id = ?
+              WHERE book_id = ? AND user_id = ?
+            `).run(targetGroupId, id, userId);
+            
+            // 更新该书籍的所有高亮，将 share_to_group_id 设置为目标群组ID
+            // 更新用户自己的所有高亮（包括已经共享到其他群组的，强制更新到新群组）
+            const highlightsResult = db.prepare(`
+              UPDATE highlights 
+              SET share_to_group_id = ?
+              WHERE book_id = ? AND user_id = ? AND deleted_at IS NULL
+            `).run(targetGroupId, id, userId);
+            
+            console.log(`[群组共享] 书籍 ${id} 共享到群组 ${targetGroupId}:`);
+            console.log(`  - 笔记: ${notesCountBefore?.count || 0} 条，已更新 ${notesResult.changes || 0} 条`);
+            console.log(`  - 高亮: ${highlightsCountBefore?.count || 0} 条，已更新 ${highlightsResult.changes || 0} 条`);
+            
+            // 验证更新结果
+            const notesWithGroupShare = db.prepare(`
+              SELECT COUNT(*) as count FROM notes 
+              WHERE book_id = ? AND user_id = ? AND share_to_group_id = ?
+            `).get(id, userId, targetGroupId) as any;
+            
+            const highlightsWithGroupShare = db.prepare(`
+              SELECT COUNT(*) as count FROM highlights 
+              WHERE book_id = ? AND user_id = ? AND share_to_group_id = ? AND deleted_at IS NULL
+            `).get(id, userId, targetGroupId) as any;
+            
+            console.log(`  - 验证: ${notesWithGroupShare?.count || 0} 条笔记已共享，${highlightsWithGroupShare?.count || 0} 条高亮已共享`);
+          } catch (shareError: any) {
+            console.error('[群组共享] 自动共享笔记和高亮失败:', shareError);
+            console.error('错误详情:', shareError.message);
+            console.error('错误堆栈:', shareError.stack);
+            // 不抛出错误，因为书籍共享已经成功
+          }
+        } else {
+          // 如果移除了群组共享，可以选择清除笔记和高亮的群组共享
+          // 这里我们保留笔记和高亮的共享设置，让用户手动管理
+        }
+      });
+
+      transaction();
+      
+      // 如果设置了群组ID，自动将该书籍的所有笔记和高亮也共享到这些群组
+      if (groupIds && Array.isArray(groupIds) && groupIds.length > 0) {
+        try {
+          // 获取书籍的上传者ID
+          const bookInfo = db.prepare('SELECT uploader_id FROM books WHERE id = ?').get(id) as any;
+          if (bookInfo && bookInfo.uploader_id === userId) {
+            // 将该书籍的所有笔记共享到这些群组
+            // 如果书籍共享到多个群组，我们需要为每个群组创建共享
+            // 但为了简化，我们只共享到第一个群组（或者可以改为支持多个群组）
+            const targetGroupId = groupIds[0]; // 使用第一个群组ID
+            
+            // 更新该书籍的所有笔记，将 share_to_group_id 设置为目标群组ID
+            // 只更新用户自己的笔记
+            db.prepare(`
+              UPDATE notes 
+              SET share_to_group_id = ?
+              WHERE book_id = ? AND user_id = ? AND (share_to_group_id IS NULL OR share_to_group_id = '')
+            `).run(targetGroupId, id, userId);
+            
+            // 更新该书籍的所有高亮，将 share_to_group_id 设置为目标群组ID
+            // 只更新用户自己的高亮
+            db.prepare(`
+              UPDATE highlights 
+              SET share_to_group_id = ?
+              WHERE book_id = ? AND user_id = ? AND (share_to_group_id IS NULL OR share_to_group_id = '') AND deleted_at IS NULL
+            `).run(targetGroupId, id, userId);
+            
+            console.log(`已将书籍 ${id} 的笔记和高亮共享到群组 ${targetGroupId}`);
+          }
+        } catch (shareError: any) {
+          console.error('自动共享笔记和高亮失败:', shareError);
+          // 不抛出错误，因为书籍共享已经成功
+        }
+      }
+    } catch (transactionError: any) {
+      // 如果表不存在，只更新 group_only 字段
+      if (transactionError.message && transactionError.message.includes('no such table')) {
+        console.warn('群组可见性表不存在，仅更新 group_only 字段');
+        if (groupOnly !== undefined) {
+          db.prepare('UPDATE books SET group_only = ? WHERE id = ?').run(groupOnly ? 1 : 0, id);
+        }
+      } else {
+        throw transactionError;
+      }
+    }
+
+    // 获取更新后的群组可见性信息
+    let visibility: any[] = [];
+    try {
+      visibility = db.prepare(`
+        SELECT 
+          bgv.group_id,
+          g.name as group_name
+        FROM book_group_visibility bgv
+        INNER JOIN user_groups g ON bgv.group_id = g.id
+        WHERE bgv.book_id = ?
+      `).all(id) as any[];
+    } catch (dbError: any) {
+      // 如果表不存在，返回空数组
+      if (dbError.message && dbError.message.includes('no such table')) {
+        console.warn('群组可见性表不存在，返回空数组');
+        visibility = [];
+      } else {
+        throw dbError;
+      }
+    }
+
+    const bookInfo = db.prepare('SELECT group_only FROM books WHERE id = ?').get(id) as any;
+
+    res.json({ 
+      message: '群组可见性设置成功',
+      groupOnly: bookInfo?.group_only === 1 || false,
+      groups: visibility || [] 
+    });
+  } catch (error: any) {
+    console.error('设置群组可见性失败:', error);
+    res.status(500).json({ error: error.message || '设置群组可见性失败' });
+  }
+});
+
+// 取消书籍的群组共享
+router.delete('/:id/group-visibility/:groupId', authenticateToken, async (req: AuthRequest, res) => {
+  try {
+    const { id, groupId } = req.params;
+    const userId = req.userId!;
+
+    // 检查书籍是否存在
+    const book = db.prepare('SELECT uploader_id FROM books WHERE id = ?').get(id) as any;
+    if (!book) {
+      return res.status(404).json({ error: '书籍不存在' });
+    }
+
+    // 检查用户是否有权限（上传者或管理员）
+    const user = db.prepare('SELECT role FROM users WHERE id = ?').get(userId) as any;
+    if (book.uploader_id !== userId && user.role !== 'admin') {
+      return res.status(403).json({ error: '您没有权限取消此书籍的群组共享' });
+    }
+
+    // 删除群组可见性设置
+    try {
+      const result = db.prepare(`
+        DELETE FROM book_group_visibility 
+        WHERE book_id = ? AND group_id = ?
+      `).run(id, groupId);
+      
+      if (result.changes === 0) {
+        return res.status(404).json({ error: '该群组共享不存在' });
+      }
+      
+      // 同时清除该书籍的笔记和高亮在该群组的共享
+      db.prepare(`
+        UPDATE notes 
+        SET share_to_group_id = NULL
+        WHERE book_id = ? AND user_id = ? AND share_to_group_id = ?
+      `).run(id, userId, groupId);
+      
+      db.prepare(`
+        UPDATE highlights 
+        SET share_to_group_id = NULL
+        WHERE book_id = ? AND user_id = ? AND share_to_group_id = ? AND deleted_at IS NULL
+      `).run(id, userId, groupId);
+      
+      console.log(`已取消书籍 ${id} 在群组 ${groupId} 的共享`);
+      
+      res.json({ message: '群组共享已取消' });
+    } catch (deleteError: any) {
+      if (deleteError.message && deleteError.message.includes('no such table')) {
+        return res.status(404).json({ error: '群组可见性表不存在' });
+      }
+      throw deleteError;
+    }
+  } catch (error: any) {
+    console.error('取消群组共享失败:', error);
+    res.status(500).json({ error: error.message || '取消群组共享失败' });
+  }
+});
+
+// 获取书籍的群组可见性信息
+router.get('/:id/group-visibility', authenticateToken, async (req: AuthRequest, res) => {
+  try {
+    const { id } = req.params;
+    const userId = req.userId!;
+
+    if (!userId) {
+      return res.status(401).json({ error: '未认证' });
+    }
+
+    // 检查书籍是否存在
+    const book = db.prepare('SELECT uploader_id, group_only FROM books WHERE id = ?').get(id) as any;
+    if (!book) {
+      return res.status(404).json({ error: '书籍不存在' });
+    }
+
+    // 检查用户是否有权限查看（上传者、管理员或群组成员）
+    const user = db.prepare('SELECT role FROM users WHERE id = ?').get(userId) as any;
+    if (!user) {
+      return res.status(401).json({ error: '用户不存在' });
+    }
+
+    if (book.uploader_id !== userId && user.role !== 'admin') {
+      // 检查用户是否是可见群组的成员
+      try {
+        const isMember = db.prepare(`
+          SELECT 1 FROM book_group_visibility bgv
+          INNER JOIN group_members gm ON bgv.group_id = gm.group_id
+          WHERE bgv.book_id = ? AND gm.user_id = ?
+          LIMIT 1
+        `).get(id, userId) as any;
+        
+        if (!isMember) {
+          return res.status(403).json({ error: '您没有权限查看此书籍的群组可见性信息' });
+        }
+      } catch (dbError: any) {
+        // 如果表不存在，允许查看（向后兼容）
+        if (dbError.message && dbError.message.includes('no such table')) {
+          console.warn('群组可见性表不存在，返回默认值');
+          return res.json({ 
+            groupOnly: false,
+            groups: [] 
+          });
+        }
+        throw dbError;
+      }
+    }
+
+    // 获取群组可见性信息
+    try {
+      const visibility = db.prepare(`
+        SELECT 
+          bgv.group_id,
+          g.name as group_name,
+          g.description as group_description
+        FROM book_group_visibility bgv
+        INNER JOIN user_groups g ON bgv.group_id = g.id
+        WHERE bgv.book_id = ?
+      `).all(id) as any[];
+
+      res.json({ 
+        groupOnly: book.group_only === 1,
+        groups: visibility || [] 
+      });
+    } catch (dbError: any) {
+      // 如果表不存在，返回默认值
+      if (dbError.message && dbError.message.includes('no such table')) {
+        console.warn('群组可见性表不存在，返回默认值');
+        return res.json({ 
+          groupOnly: false,
+          groups: [] 
+        });
+      }
+      throw dbError;
+    }
+  } catch (error: any) {
+    console.error('获取群组可见性失败:', error);
+    console.error('错误堆栈:', error.stack);
+    res.status(500).json({ error: '获取群组可见性失败: ' + (error.message || '未知错误') });
+  }
+});
+
+// 批量更新书籍公有/私有状态（仅管理员）- 必须放在 /:id/visibility 之前，否则 /batch/visibility 会被 :id 匹配
+router.patch('/batch/visibility', authenticateToken, requireAdmin, async (req: AuthRequest, res) => {
+  try {
+    const { bookIds, isPublic } = req.body;
+
+    if (!Array.isArray(bookIds) || bookIds.length === 0) {
+      return res.status(400).json({ error: '必须提供书籍ID数组' });
+    }
+
+    if (typeof isPublic !== 'boolean') {
+      return res.status(400).json({ error: '必须提供isPublic参数（boolean类型）' });
+    }
+
+    const results = {
+      success: [] as string[],
+      failed: [] as { id: string; error: string }[],
+    };
+
+    for (const id of bookIds) {
+      try {
+        const existingBook = db.prepare('SELECT * FROM books WHERE id = ?').get(id) as any;
+        if (!existingBook) {
+          results.failed.push({ id, error: '书籍不存在' });
+          continue;
+        }
+
+        const uploader = db.prepare('SELECT username FROM users WHERE id = ?').get(existingBook.uploader_id) as any;
+
+        // 更新状态
+        db.prepare('UPDATE books SET is_public = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+          .run(isPublic ? 1 : 0, id);
+
+        // 移动文件（简化处理，不阻塞批量操作）
+        if ((isPublic && existingBook.is_public === 0) || (!isPublic && existingBook.is_public === 1)) {
+          if (fs.existsSync(existingBook.file_path)) {
+            try {
+              const newPath = generateBookPath(
+                booksDir,
+                existingBook.title,
+                existingBook.author,
+                existingBook.category,
+                isPublic,
+                uploader?.username
+              );
+              ensureDirectoryExists(newPath);
+
+              const newFilePath = path.join(newPath, existingBook.file_name);
+              let finalPath = newFilePath;
+              
+              if (fs.existsSync(finalPath)) {
+                const hashSuffix = existingBook.file_hash ? existingBook.file_hash.substring(0, 8) : uuidv4().substring(0, 8);
+                const fileExt = path.extname(finalPath);
+                const nameWithoutExt = path.basename(finalPath, fileExt);
+                finalPath = path.join(path.dirname(finalPath), `${nameWithoutExt}_${hashSuffix}${fileExt}`);
+              }
+
+              moveFile(existingBook.file_path, finalPath);
+              db.prepare('UPDATE books SET file_path = ?, file_name = ? WHERE id = ?')
+                .run(finalPath, path.basename(finalPath), id);
+            } catch (fileError) {
+              console.error(`移动书籍文件失败 (${id}):`, fileError);
+              // 继续处理，不影响其他书籍
+            }
+          }
+        }
+
+        results.success.push(id);
+      } catch (error: any) {
+        results.failed.push({ id, error: error.message });
+      }
+    }
+
+    res.json({
+      message: `批量更新完成：成功 ${results.success.length} 个，失败 ${results.failed.length} 个`,
+      results
+    });
+  } catch (error: any) {
+    console.error('批量更新书籍可见性错误:', error);
+    res.status(500).json({ error: '批量更新失败' });
+  }
+});
+
 router.patch('/:id/visibility', authenticateToken, requireAdmin, async (req: AuthRequest, res) => {
   try {
     const { id } = req.params;
@@ -2516,88 +3616,6 @@ router.patch('/:id/visibility', authenticateToken, requireAdmin, async (req: Aut
   } catch (error: any) {
     console.error('更新书籍可见性错误:', error);
     res.status(500).json({ error: '更新失败' });
-  }
-});
-
-// 批量更新书籍公有/私有状态（仅管理员）
-router.patch('/batch/visibility', authenticateToken, requireAdmin, async (req: AuthRequest, res) => {
-  try {
-    const { bookIds, isPublic } = req.body;
-
-    if (!Array.isArray(bookIds) || bookIds.length === 0) {
-      return res.status(400).json({ error: '必须提供书籍ID数组' });
-    }
-
-    if (typeof isPublic !== 'boolean') {
-      return res.status(400).json({ error: '必须提供isPublic参数（boolean类型）' });
-    }
-
-    const results = {
-      success: [] as string[],
-      failed: [] as { id: string; error: string }[],
-    };
-
-    for (const id of bookIds) {
-      try {
-        const existingBook = db.prepare('SELECT * FROM books WHERE id = ?').get(id) as any;
-        if (!existingBook) {
-          results.failed.push({ id, error: '书籍不存在' });
-          continue;
-        }
-
-        const uploader = db.prepare('SELECT username FROM users WHERE id = ?').get(existingBook.uploader_id) as any;
-
-        // 更新状态
-        db.prepare('UPDATE books SET is_public = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
-          .run(isPublic ? 1 : 0, id);
-
-        // 移动文件（简化处理，不阻塞批量操作）
-        if ((isPublic && existingBook.is_public === 0) || (!isPublic && existingBook.is_public === 1)) {
-          if (fs.existsSync(existingBook.file_path)) {
-            try {
-              const newPath = generateBookPath(
-                booksDir,
-                existingBook.title,
-                existingBook.author,
-                existingBook.category,
-                isPublic,
-                uploader?.username
-              );
-              ensureDirectoryExists(newPath);
-
-              const newFilePath = path.join(newPath, existingBook.file_name);
-              let finalPath = newFilePath;
-              
-              if (fs.existsSync(finalPath)) {
-                const hashSuffix = existingBook.file_hash ? existingBook.file_hash.substring(0, 8) : uuidv4().substring(0, 8);
-                const fileExt = path.extname(finalPath);
-                const nameWithoutExt = path.basename(finalPath, fileExt);
-                finalPath = path.join(path.dirname(finalPath), `${nameWithoutExt}_${hashSuffix}${fileExt}`);
-              }
-
-              moveFile(existingBook.file_path, finalPath);
-              db.prepare('UPDATE books SET file_path = ?, file_name = ? WHERE id = ?')
-                .run(finalPath, path.basename(finalPath), id);
-            } catch (fileError) {
-              console.error(`移动书籍文件失败 (${id}):`, fileError);
-              // 继续处理，不影响其他书籍
-            }
-          }
-        }
-
-        results.success.push(id);
-      } catch (error: any) {
-        results.failed.push({ id, error: error.message });
-      }
-    }
-
-    res.json({
-      message: `批量更新完成：成功 ${results.success.length} 个，失败 ${results.failed.length} 个`,
-      results
-    });
-  } catch (error: any) {
-    console.error('批量更新书籍可见性错误:', error);
-    res.status(500).json({ error: '批量更新失败' });
   }
 });
 
@@ -3095,7 +4113,6 @@ router.get('/:id/html', authenticateToken, async (req: AuthRequest, res) => {
     const { convertDocxToHtml, extractBookText } = await import('../utils/bookTextExtractor');
     
     // 获取文件路径
-    const booksDir = process.env.BOOKS_DIR || './books';
     let filePath: string | null = null;
     
     if (book.file_path) {
@@ -3148,7 +4165,6 @@ router.get('/:id/markdown', authenticateToken, async (req: AuthRequest, res) => 
     const { convertDocxToMarkdown } = await import('../utils/bookTextExtractor');
     
     // 获取文件路径
-    const booksDir = process.env.BOOKS_DIR || './books';
     let filePath: string | null = null;
     
     if (book.file_path) {
@@ -3169,6 +4185,27 @@ router.get('/:id/markdown', authenticateToken, async (req: AuthRequest, res) => 
   } catch (error: any) {
     console.error('获取书籍Markdown错误:', error);
     res.status(500).json({ error: error.message || '获取Markdown失败' });
+  }
+});
+
+// 管理员专用：获取所有书籍（无分页，无权限限制）
+router.get('/admin/all', authenticateToken, requireAdmin, async (req: AuthRequest, res) => {
+  try {
+    const query = `
+      SELECT
+        b.*,
+        u.username as uploader_username,
+        u.nickname as uploader_nickname
+      FROM books b
+      LEFT JOIN users u ON b.uploader_id = u.id
+      ORDER BY b.created_at DESC
+    `;
+
+    const books = db.prepare(query).all();
+    res.json({ books });
+  } catch (error: any) {
+    console.error('获取所有书籍失败:', error);
+    res.status(500).json({ error: error.message || '获取书籍列表失败' });
   }
 });
 

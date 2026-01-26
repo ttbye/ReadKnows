@@ -7,38 +7,114 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../store/authStore';
-import { 
-  Upload, Users, Clock, Settings, User, BookOpen, Book, HelpCircle, Info, 
-  LogOut, Shield, Grid3x3, Sparkles, RefreshCw 
+import {
+  Upload, Users, Clock, Settings, User, BookOpen, Book, HelpCircle, Info,
+  LogOut, Shield, Grid3x3, Sparkles, RefreshCw, MessageCircle, ChevronDown, ChevronUp,
+  StickyNote, Music, Sun, Moon, Monitor, FileText, CheckCircle, Calendar, Pencil
 } from 'lucide-react';
-import api from '../utils/api';
+import api, { getAvatarUrl } from '../utils/api';
 import toast from 'react-hot-toast';
 import { usePullToRefresh } from '../hooks/usePullToRefresh';
 import PullToRefreshIndicator from '../components/PullToRefresh';
+import { useTranslation } from 'react-i18next';
+import i18n from '../i18n/config';
+import { useTheme } from '../hooks/useTheme';
 
 export default function Profile() {
-  const { user, logout } = useAuthStore();
+  const { t } = useTranslation();
+  const { user, setUser, logout } = useAuthStore();
   const navigate = useNavigate();
+  const { theme, setTheme } = useTheme();
   const [bookStats, setBookStats] = useState({ total: 0, reading: 0, finished: 0 });
   const [loading, setLoading] = useState(true);
   const [backendVersion, setBackendVersion] = useState<string>('');
   const [backendBuildTime, setBackendBuildTime] = useState<string>('');
+  const [showAboutSystem, setShowAboutSystem] = useState(false);
+  const [showUsageHelp, setShowUsageHelp] = useState(false);
+  const [checkinToday, setCheckinToday] = useState<{ checked: boolean }>({ checked: false });
+  const [checkinStreak, setCheckinStreak] = useState(0);
+  const [checkinLoading, setCheckinLoading] = useState(false);
+  const [achievements, setAchievements] = useState<any[]>([]);
+  const [achievementStats, setAchievementStats] = useState({
+    unlockedCount: 0,
+    totalAchievements: 0,
+    totalPoints: 0,
+  });
+  const [achievementsLoading, setAchievementsLoading] = useState(false);
 
   useEffect(() => {
     if (user) {
-      fetchUserStats();
-      fetchBackendVersion();
+      const timer1 = setTimeout(() => fetchUserStats(), 300);
+      const timer2 = setTimeout(() => fetchBackendVersion(), 500);
+      const timer3 = setTimeout(() => fetchCheckin(), 400);
+      const timer4 = setTimeout(() => fetchAchievements(), 450);
+      api.get('/users/me').then((r) => setUser(r.data.user)).catch(() => {});
+      return () => {
+        clearTimeout(timer1);
+        clearTimeout(timer2);
+        clearTimeout(timer3);
+        clearTimeout(timer4);
+      };
     }
   }, [user]);
+
+  const fetchCheckin = async () => {
+    try {
+      const [todayRes, listRes] = await Promise.all([
+        api.get('/reading-checkins/today'),
+        api.get('/reading-checkins?limit=365')
+      ]);
+      setCheckinToday({ checked: !!todayRes.data?.checked });
+      setCheckinStreak(listRes.data?.streak ?? 0);
+    } catch {
+      setCheckinToday({ checked: false });
+      setCheckinStreak(0);
+    }
+  };
+
+  const fetchAchievements = async () => {
+    try {
+      setAchievementsLoading(true);
+      const response = await api.get('/achievements');
+      setAchievements(response.data?.achievements || []);
+      setAchievementStats({
+        unlockedCount: response.data?.stats?.unlockedCount || 0,
+        totalAchievements: response.data?.stats?.totalAchievements || 0,
+        totalPoints: response.data?.stats?.totalPoints || 0,
+      });
+    } catch (error) {
+      console.error('获取成就失败:', error);
+      setAchievements([]);
+      setAchievementStats({ unlockedCount: 0, totalAchievements: 0, totalPoints: 0 });
+    } finally {
+      setAchievementsLoading(false);
+    }
+  };
+
+  const doCheckin = async () => {
+    if (checkinToday.checked) return;
+    try {
+      setCheckinLoading(true);
+      await api.post('/reading-checkins', {});
+      setCheckinToday({ checked: true });
+      setCheckinStreak((s) => s + 1);
+      fetchAchievements();
+      toast.success('今日打卡成功');
+    } catch (e: any) {
+      toast.error(e.response?.data?.error || '打卡失败');
+    } finally {
+      setCheckinLoading(false);
+    }
+  };
 
   const fetchBackendVersion = async () => {
     try {
       const response = await api.get('/settings/version');
-      setBackendVersion(response.data.version || '未知版本');
+      setBackendVersion(response.data.version || t('reader.unknownVersion'));
       setBackendBuildTime(response.data.buildTime || '');
     } catch (error) {
       console.error('获取后端版本号失败:', error);
-      setBackendVersion('未知版本');
+      setBackendVersion(t('reader.unknownVersion'));
       setBackendBuildTime('');
     }
   };
@@ -46,20 +122,26 @@ export default function Profile() {
   const fetchUserStats = async () => {
     try {
       setLoading(true);
-      // 获取用户书籍统计
-      const booksResponse = await api.get('/books?limit=1000');
-      const allBooks = booksResponse.data.books || [];
-      const userBooks = allBooks.filter((book: any) => book.uploader_id === user?.id);
+      // 获取书架书籍统计（我的书架中的书籍数量）
+      const shelfResponse = await api.get('/shelf/my', {
+        params: { limit: 1000 },
+        timeout: 5000, // 5秒超时
+      });
+      const shelfBooks = shelfResponse.data.books || [];
+      const total = shelfBooks.length;
       
-      // 获取阅读进度
-      const progressResponse = await api.get('/reading/progress?limit=1000');
+      // 获取阅读进度（使用较小的limit）
+      const progressResponse = await api.get('/reading/progress', {
+        params: { limit: 100 },
+        timeout: 5000, // 5秒超时
+      });
       const progresses = progressResponse.data.progresses || [];
       
       const reading = progresses.filter((p: any) => p.progress > 0 && p.progress < 1).length;
       const finished = progresses.filter((p: any) => p.progress >= 1).length;
       
       setBookStats({
-        total: userBooks.length,
+        total, // 书架中的书籍数量
         reading,
         finished,
       });
@@ -73,7 +155,7 @@ export default function Profile() {
   };
 
   const handleLogout = () => {
-    if (confirm('确定要退出登录吗？')) {
+    if (confirm(t('auth.confirmLogout'))) {
       logout();
       navigate('/login');
     }
@@ -82,15 +164,17 @@ export default function Profile() {
   // 下拉刷新
   const handleRefresh = async () => {
     await fetchUserStats();
+    await fetchAchievements();
+    try { const r = await api.get('/users/me'); setUser(r.data.user); } catch (_) {}
     toast.success(
-      (t) => (
+      (_toast) => (
         <div className="flex items-center gap-3">
           <div className="flex-shrink-0 w-8 h-8 rounded-full bg-white/20 flex items-center justify-center">
             <RefreshCw className="w-5 h-5 text-white animate-spin" style={{ animationDuration: '0.5s' }} />
           </div>
           <div>
-            <div className="font-semibold text-white">刷新成功</div>
-            <div className="text-xs text-white/80 mt-0.5">数据已更新</div>
+            <div className="font-semibold text-white">{t('common.refreshSuccess')}</div>
+            <div className="text-xs text-white/80 mt-0.5">{t('common.dataUpdated')}</div>
           </div>
         </div>
       ),
@@ -116,19 +200,27 @@ export default function Profile() {
     onRefresh: handleRefresh,
   });
 
+  // 检查导入有声小说的权限
+  const canImportAudiobook = (user as any)?.can_import_audiobook !== undefined
+    ? (user as any).can_import_audiobook === true || (user as any).can_import_audiobook === 1 || (user as any).can_import_audiobook === '1'
+    : user?.role === 'admin'; // 默认：只有管理员可以导入（向后兼容）
+
   // 功能菜单项
   const menuItems = [
-    { path: '/upload', label: '上传书籍', icon: Upload, color: 'bg-blue-500', adminOnly: false },
-    { path: '/history', label: '阅读历史', icon: Clock, color: 'bg-orange-500', adminOnly: false },
-    { path: '/ai-reading', label: 'AI阅读', icon: Sparkles, color: 'bg-teal-500', adminOnly: false },
-    { path: '/settings', label: '系统设置', icon: Settings, color: 'bg-green-500', adminOnly: false },
+    { path: '/upload', label: t('profile.uploadBooks'), icon: Upload, color: 'bg-blue-500', adminOnly: false, show: true },
+    { path: '/history', label: t('profile.readingHistory'), icon: Clock, color: 'bg-orange-500', adminOnly: false, show: true },
+    { path: '/ai-reading', label: t('profile.aiReading'), icon: Sparkles, color: 'bg-teal-500', adminOnly: false, show: true },
+    { path: '/settings', label: t('profile.systemSettings'), icon: Settings, color: 'bg-green-500', adminOnly: false, show: true },
+    { path: '/notes', label: t('navigation.notes'), icon: StickyNote, color: 'bg-cyan-500', adminOnly: false, show: true },
+    { path: '/logs', label: '日志管理', icon: FileText, color: 'bg-indigo-500', adminOnly: true, show: user?.role === 'admin' },
+    { path: '/messages', label: t('friends.title'), icon: MessageCircle, color: 'bg-yellow-500', adminOnly: false, show: true },
     ...(user?.role === 'admin'
       ? [
-          { path: '/users', label: '用户管理', icon: Users, color: 'bg-purple-500', adminOnly: true },
-          { path: '/ip-management', label: '安全管理', icon: Shield, color: 'bg-red-500', adminOnly: true },
+          { path: '/users', label: t('profile.userManagement'), icon: Users, color: 'bg-purple-500', adminOnly: true, show: true },
+          { path: '/ip-management', label: t('profile.securityManagement'), icon: Shield, color: 'bg-red-500', adminOnly: true, show: true },
         ]
       : []),
-  ];
+  ].filter(item => item.show); // 只显示有权限的菜单项
 
   return (
     <>
@@ -140,15 +232,37 @@ export default function Profile() {
         {/* 用户信息卡片 */}
         <div className="card mb-6">
         <div className="flex items-center gap-4 mb-6">
-          <div className="w-20 h-20 rounded-full bg-blue-600 flex items-center justify-center text-white text-2xl font-bold">
-            {user?.username?.[0]?.toUpperCase() || 'U'}
+          <div className="flex items-center gap-2 flex-shrink-0">
+            <div
+              role="button"
+              tabIndex={0}
+              onDoubleClick={() => navigate('/profile/avatar')}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate('/profile/avatar'); } }}
+              title="双击更换头像"
+              className={`w-20 h-20 rounded-full flex items-center justify-center overflow-hidden cursor-pointer select-none ${user?.avatar_path ? 'bg-gray-200 dark:bg-gray-700' : 'bg-blue-600'}`}
+            >
+              {user?.avatar_path && getAvatarUrl(user.avatar_path) ? (
+                <img src={getAvatarUrl(user.avatar_path)!} alt="" className="w-full h-full object-cover" />
+              ) : (
+                <span className="text-2xl font-bold text-white">{user?.username?.[0]?.toUpperCase() || 'U'}</span>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={() => navigate('/profile/avatar')}
+              title="修改头像"
+              aria-label="修改头像"
+              className="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-600 dark:text-gray-400 transition-colors"
+            >
+              <Pencil className="w-4 h-4" />
+            </button>
           </div>
-          <div className="flex-1">
+          <div className="flex-1 min-w-0">
             <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100">{user?.username}</h2>
             <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">{user?.email}</p>
             {user?.role === 'admin' && (
               <span className="inline-block mt-2 px-2 py-1 text-xs bg-purple-100 dark:bg-purple-900/30 text-purple-600 dark:text-purple-400 rounded">
-                管理员
+                {t('profile.admin')}
               </span>
             )}
           </div>
@@ -163,15 +277,15 @@ export default function Profile() {
           <div className="grid grid-cols-3 gap-4 pt-4 border-t border-gray-200 dark:border-gray-700">
             <div className="text-center">
               <div className="text-2xl font-bold text-gray-900 dark:text-gray-100">{bookStats.total}</div>
-              <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">我的书籍</div>
+              <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">{t('profile.myBooks')}</div>
             </div>
             <div className="text-center">
               <div className="text-2xl font-bold text-blue-600 dark:text-blue-400">{bookStats.reading}</div>
-              <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">阅读中</div>
+              <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">{t('profile.reading')}</div>
             </div>
             <div className="text-center">
               <div className="text-2xl font-bold text-green-600 dark:text-green-400">{bookStats.finished}</div>
-              <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">已完成</div>
+              <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">{t('profile.finished')}</div>
             </div>
           </div>
         )}
@@ -181,7 +295,7 @@ export default function Profile() {
       <div className="card mb-6">
         <div className="flex items-center gap-2 mb-4">
           <Grid3x3 className="w-5 h-5 text-blue-600" />
-          <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">功能菜单</h2>
+          <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">{t('profile.functionMenu')}</h2>
         </div>
         <div className="grid grid-cols-3 gap-3">
           {menuItems.map((item) => {
@@ -202,11 +316,117 @@ export default function Profile() {
         </div>
       </div>
 
+      {/* 主题设置 */}
+      <div className="card mb-6">
+        <div className="flex items-center gap-2 mb-4">
+          <Monitor className="w-5 h-5 text-blue-600" />
+          <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">{t('settings.theme') || '主题设置'}</h2>
+        </div>
+        <div className="grid grid-cols-3 gap-2">
+          {[
+            { value: 'system', label: t('settings.systemTheme') || '跟随系统', icon: Monitor },
+            { value: 'light', label: t('settings.lightMode') || '浅色模式', icon: Sun },
+            { value: 'dark', label: t('settings.darkMode') || '深色模式', icon: Moon },
+          ].map((option) => {
+            const Icon = option.icon;
+            return (
+              <label
+                key={option.value}
+                className={`flex flex-col items-center gap-2 p-3 border-2 rounded-lg cursor-pointer transition-all ${
+                  theme === option.value
+                    ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20'
+                    : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="theme"
+                  value={option.value}
+                  checked={theme === option.value}
+                  onChange={() => setTheme(option.value as 'light' | 'dark' | 'system')}
+                  className="hidden"
+                />
+                <Icon className="w-5 h-5 text-gray-600 dark:text-gray-400" />
+                <span className="text-sm font-medium text-gray-700 dark:text-gray-300">{option.label}</span>
+              </label>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* 读书打卡 + 成就 */}
+      <div className="card mb-6">
+        <div className="flex items-center gap-2 mb-4">
+          <Calendar className="w-5 h-5 text-amber-600" />
+          <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">读书打卡</h2>
+        </div>
+        <div className="flex flex-wrap items-center gap-4">
+          <button
+            onClick={doCheckin}
+            disabled={checkinToday.checked || checkinLoading}
+            className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl font-medium transition-all ${
+              checkinToday.checked
+                ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 cursor-default'
+                : 'bg-amber-500 hover:bg-amber-600 text-white disabled:opacity-50'
+            }`}
+          >
+            {checkinToday.checked ? (
+              <>
+                <CheckCircle className="w-5 h-5" />
+                已打卡
+              </>
+            ) : checkinLoading ? (
+              <>
+                <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                打卡中
+              </>
+            ) : (
+              <>
+                <Calendar className="w-5 h-5" />
+                今日打卡
+              </>
+            )}
+          </button>
+          <div className="text-gray-600 dark:text-gray-400">
+            已连续打卡 <span className="font-bold text-amber-600 dark:text-amber-400">{checkinStreak}</span> 天
+          </div>
+        </div>
+        {/* 成就 - 单行，放在下方 */}
+        <div className="flex items-center gap-2 sm:gap-3 pt-3 mt-3 border-t border-gray-200 dark:border-gray-700">
+          <Sparkles className="w-4 h-4 text-yellow-500 flex-shrink-0" />
+          <span className="text-sm font-semibold text-gray-900 dark:text-gray-100 flex-shrink-0">成就</span>
+          {achievementsLoading ? (
+            <div className="flex-1 flex justify-center min-w-0">
+              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-yellow-500" />
+            </div>
+          ) : achievements.length > 0 ? (
+            <div className="flex-1 flex items-center gap-1.5 overflow-x-auto min-w-0 py-0.5">
+              {achievements.map((a) => (
+                <span
+                  key={a.id}
+                  title={a.description ? `${a.name}：${a.description}` : a.name}
+                  className={`flex-shrink-0 w-7 h-7 rounded-md flex items-center justify-center text-sm ${
+                    a.unlocked ? 'bg-amber-100 dark:bg-amber-900/40' : 'bg-gray-200 dark:bg-gray-700 opacity-50'
+                  }`}
+                >
+                  {a.icon || '🏆'}
+                </span>
+              ))}
+            </div>
+          ) : (
+            <span className="flex-1 text-xs text-gray-500 dark:text-gray-400">暂无</span>
+          )}
+          <span className="text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap flex-shrink-0">
+            {achievementStats.unlockedCount}/{achievementStats.totalAchievements} · {achievementStats.totalPoints} 分
+          </span>
+        </div>
+      </div>
+
       {/* 账号管理 */}
       <div className="card mb-6">
         <div className="flex items-center gap-2 mb-4">
           <User className="w-5 h-5 text-blue-600" />
-          <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">账号管理</h2>
+          <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">{t('profile.accountManagement')}</h2>
         </div>
         <div className="space-y-3">
           <button
@@ -215,34 +435,44 @@ export default function Profile() {
           >
             <div className="flex items-center gap-3">
               <User className="w-5 h-5 text-gray-600 dark:text-gray-400" />
-              <span className="text-gray-900 dark:text-gray-100">个人信息</span>
+              <span className="text-gray-900 dark:text-gray-100">{t('profile.personalInfo')}</span>
             </div>
-            <span className="text-gray-400">修改用户名、邮箱、密码</span>
+            <span className="text-gray-400">{t('profile.editPersonalInfoDesc')}</span>
           </button>
         </div>
       </div>
 
-      {/* 系统信息 */}
+      {/* 系统信息 - 折叠卡片 */}
       <div className="card mb-6">
-        <div className="flex items-center gap-2 mb-4">
-          <Info className="w-5 h-5 text-blue-600" />
-          <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">关于系统</h2>
-        </div>
+        <button
+          onClick={() => setShowAboutSystem(!showAboutSystem)}
+          className="w-full flex items-center justify-between gap-2 mb-4"
+        >
+          <div className="flex items-center gap-2">
+            <Info className="w-5 h-5 text-blue-600" />
+            <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">{t('profile.aboutSystem')}</h2>
+          </div>
+          {showAboutSystem ? (
+            <ChevronUp className="w-5 h-5 text-gray-400" />
+          ) : (
+            <ChevronDown className="w-5 h-5 text-gray-400" />
+          )}
+        </button>
+        {showAboutSystem && (
         <div className="space-y-4">
           <div>
-            <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-2">读士私人书库</h3>
-            <p className="text-sm text-gray-600 dark:text-gray-400 mb-1">The Books Path</p>
+            <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-2">{t('profile.appName')}</h3>
             <p className="text-xs text-gray-500 dark:text-gray-500">
-              一个现代化的电子书管理系统，支持EPUB、PDF、TXT等多种格式，提供流畅的阅读体验和强大的管理功能。
+              {t('profile.appDescription')}
             </p>
           </div>
           <div className="pt-4 border-t border-gray-200 dark:border-gray-700">
             <div className="space-y-2 text-sm">
               <div className="flex justify-between">
-                <span className="text-gray-600 dark:text-gray-400">开发人员</span>
+                <span className="text-gray-600 dark:text-gray-400">{t('profile.developer')}</span>
                 <span className="text-gray-900 dark:text-gray-100 font-medium">ttbye</span>
               </div>
-              <div className="flex justify-between">
+              {/* <div className="flex justify-between">
                 <span className="text-gray-600 dark:text-gray-400">GitHub</span>
                 <a
                   href="https://github.com/ttbye/ReadKnows"
@@ -252,18 +482,18 @@ export default function Profile() {
                 >
                   github.com/ttbye/ReadKnows
                 </a>
-              </div>
+              </div> */}
               <div className="flex justify-between items-center">
-                <span className="text-gray-600 dark:text-gray-400">前端版本</span>
+                <span className="text-gray-600 dark:text-gray-400">{t('profile.frontendVersion')}</span>
                 <code className="text-xs font-mono bg-gray-100 dark:bg-gray-800 px-2 py-1 rounded text-blue-600 dark:text-blue-400">
-                  {import.meta.env.VITE_BUILD_VERSION || '未知版本'}
+                  {import.meta.env.VITE_BUILD_VERSION || t('reader.unknownVersion')}
                 </code>
               </div>
               {import.meta.env.VITE_BUILD_TIME && (
                 <div className="flex justify-between items-center">
-                  <span className="text-gray-600 dark:text-gray-400">前端编译时间</span>
+                  <span className="text-gray-600 dark:text-gray-400">{t('profile.frontendBuildTime')}</span>
                   <code className="text-xs font-mono bg-gray-100 dark:bg-gray-800 px-2 py-1 rounded text-gray-600 dark:text-gray-400">
-                    {new Date(import.meta.env.VITE_BUILD_TIME).toLocaleString('zh-CN', { 
+                    {new Date(import.meta.env.VITE_BUILD_TIME).toLocaleString(i18n.language === 'zh' ? 'zh-CN' : 'en-US', { 
                       year: 'numeric', 
                       month: '2-digit', 
                       day: '2-digit', 
@@ -275,16 +505,16 @@ export default function Profile() {
                 </div>
               )}
               <div className="flex justify-between items-center">
-                <span className="text-gray-600 dark:text-gray-400">后端版本</span>
+                <span className="text-gray-600 dark:text-gray-400">{t('profile.backendVersion')}</span>
                 <code className="text-xs font-mono bg-gray-100 dark:bg-gray-800 px-2 py-1 rounded text-green-600 dark:text-green-400">
-                  {backendVersion || '加载中...'}
+                  {backendVersion || t('common.loading')}
                 </code>
               </div>
               {backendBuildTime && (
                 <div className="flex justify-between items-center">
-                  <span className="text-gray-600 dark:text-gray-400">后端编译时间</span>
+                  <span className="text-gray-600 dark:text-gray-400">{t('profile.backendBuildTime')}</span>
                   <code className="text-xs font-mono bg-gray-100 dark:bg-gray-800 px-2 py-1 rounded text-gray-600 dark:text-gray-400">
-                    {new Date(backendBuildTime).toLocaleString('zh-CN', { 
+                    {new Date(backendBuildTime).toLocaleString(i18n.language === 'zh' ? 'zh-CN' : 'en-US', { 
                       year: 'numeric', 
                       month: '2-digit', 
                       day: '2-digit', 
@@ -298,32 +528,45 @@ export default function Profile() {
             </div>
           </div>
         </div>
+        )}
       </div>
 
-      {/* 使用说明 */}
+      {/* 使用说明 - 折叠卡片 */}
       <div className="card mb-6">
-        <div className="flex items-center gap-2 mb-4">
-          <HelpCircle className="w-5 h-5 text-blue-600" />
-          <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">使用说明</h2>
-        </div>
+        <button
+          onClick={() => setShowUsageHelp(!showUsageHelp)}
+          className="w-full flex items-center justify-between gap-2 mb-4"
+        >
+          <div className="flex items-center gap-2">
+            <HelpCircle className="w-5 h-5 text-blue-600" />
+            <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">{t('profile.usageInstructions')}</h2>
+          </div>
+          {showUsageHelp ? (
+            <ChevronUp className="w-5 h-5 text-gray-400" />
+          ) : (
+            <ChevronDown className="w-5 h-5 text-gray-400" />
+          )}
+        </button>
+        {showUsageHelp && (
         <div className="space-y-3 text-sm text-gray-600 dark:text-gray-400">
           <div>
-            <h4 className="font-semibold text-gray-900 dark:text-gray-100 mb-1">📚 上传书籍</h4>
-            <p>支持EPUB、PDF、TXT格式，上传后系统会自动解析书籍信息。</p>
+            <h4 className="font-semibold text-gray-900 dark:text-gray-100 mb-1">📚 {t('profile.uploadBooksTitle')}</h4>
+            <p>{t('profile.uploadBooksDesc')}</p>
           </div>
           <div>
-            <h4 className="font-semibold text-gray-900 dark:text-gray-100 mb-1">📖 阅读功能</h4>
-            <p>支持多种阅读器，可自定义字体、主题、行距等阅读设置。</p>
+            <h4 className="font-semibold text-gray-900 dark:text-gray-100 mb-1">📖 {t('profile.readingFeaturesTitle')}</h4>
+            <p>{t('profile.readingFeaturesDesc')}</p>
           </div>
           <div>
-            <h4 className="font-semibold text-gray-900 dark:text-gray-100 mb-1">📝 笔记功能</h4>
-            <p>阅读时可以添加笔记和标注，方便记录阅读心得。</p>
+            <h4 className="font-semibold text-gray-900 dark:text-gray-100 mb-1">📝 {t('profile.notesFeaturesTitle')}</h4>
+            <p>{t('profile.notesFeaturesDesc')}</p>
           </div>
           <div>
-            <h4 className="font-semibold text-gray-900 dark:text-gray-100 mb-1">🤖 AI阅读</h4>
-            <p>使用AI助手进行智能阅读，支持摘要、问答等功能。</p>
+            <h4 className="font-semibold text-gray-900 dark:text-gray-100 mb-1">🤖 {t('profile.aiReadingTitle')}</h4>
+            <p>{t('profile.aiReadingDesc')}</p>
           </div>
         </div>
+        )}
       </div>
 
       {/* 退出登录 */}
@@ -333,7 +576,7 @@ export default function Profile() {
           className="w-full flex items-center justify-center gap-2 p-4 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors"
         >
           <LogOut className="w-5 h-5" />
-          <span className="font-medium">退出登录</span>
+          <span className="font-medium">{t('auth.logout')}</span>
         </button>
       </div>
       </div>

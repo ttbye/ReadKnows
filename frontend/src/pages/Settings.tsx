@@ -7,11 +7,14 @@
 import { useEffect, useState } from 'react';
 import { useAuthStore } from '../store/authStore';
 import { useNavigate } from 'react-router-dom';
-import api from '../utils/api';
+import api, { setCustomApiUrl, getCustomApiUrl, getCurrentApiUrl, getCustomApiKey, setCustomApiKey } from '../utils/api';
 import toast from 'react-hot-toast';
-import { Settings as SettingsIcon, Folder, Scan, CheckCircle, XCircle, Upload, Trash2, Type, Shield, Users, BookOpen, Trash, Sparkles, Sun, Moon, Monitor, Mail, Send, Plus, Edit, X, Volume2 } from 'lucide-react';
+import { Settings as SettingsIcon, Folder, Scan, CheckCircle, XCircle, Upload, Trash2, Type, Shield, Users, BookOpen, Trash, Sparkles, Sun, Moon, Monitor, Mail, Send, Plus, Edit, X, Volume2, Globe, Eye, EyeOff, ScanLine, Lock } from 'lucide-react';
 import { offlineStorage } from '../utils/offlineStorage';
 import { useTheme } from '../hooks/useTheme';
+import { useTranslation } from 'react-i18next';
+import PasswordInput from '../components/PasswordInput';
+import { syncTimezoneFromBackend } from '../utils/timezone';
 
 interface Setting {
   id: string;
@@ -23,6 +26,7 @@ interface Setting {
 export default function Settings() {
   const { isAuthenticated, user } = useAuthStore();
   const navigate = useNavigate();
+  const { t, i18n } = useTranslation();
   const [settings, setSettings] = useState<Record<string, Setting>>({});
   const [loading, setLoading] = useState(true);
   const [scanning, setScanning] = useState(false);
@@ -49,6 +53,9 @@ export default function Settings() {
   const [loadingTtsModels, setLoadingTtsModels] = useState(false);
   const [backendVersion, setBackendVersion] = useState<string>('');
   const [backendBuildTime, setBackendBuildTime] = useState<string>('');
+  const [customApiUrl, setCustomApiUrlState] = useState<string>('');
+  const [customApiKey, setCustomApiKeyState] = useState<string>('');
+  const [testingApiUrl, setTestingApiUrl] = useState(false);
   const { theme, setTheme } = useTheme();
   
   // 书籍类型管理
@@ -59,21 +66,42 @@ export default function Settings() {
   const [editingCategory, setEditingCategory] = useState<{ id: string; name: string; display_order: number } | null>(null);
   const [categoryForm, setCategoryForm] = useState({ name: '', display_order: 0 });
 
+  // 加载自定义 API URL 和 API KEY（不需要登录）
+  useEffect(() => {
+    const savedUrl = getCustomApiUrl();
+    const savedApiKey = getCustomApiKey();
+    setCustomApiUrlState(savedUrl || '');
+    setCustomApiKeyState(savedApiKey || '');
+  }, []);
+
   useEffect(() => {
     if (isAuthenticated) {
+      // 立即加载关键设置
       fetchSettings();
-      fetchFonts();
-      fetchReaderPreferences();
-      fetchCacheSize();
-      fetchBackendVersion();
-      fetchTtsProfiles();
-      if (user?.role === 'admin') {
-        fetchBookCategories();
-        // 强制从API获取TTS模型列表，不使用缓存
-        fetchTtsModels().catch((error) => {
-          console.error('[TTS设置] 初始化时获取模型列表失败:', error);
-        });
-      }
+      
+      // 延迟加载非关键数据，避免阻塞页面（进一步延迟）
+      const timer1 = setTimeout(() => {
+        fetchFonts();
+        fetchReaderPreferences();
+        fetchCacheSize();
+        fetchBackendVersion();
+      }, 500); // 延迟500ms
+      
+      const timer2 = setTimeout(() => {
+        fetchTtsProfiles();
+        if (user?.role === 'admin') {
+          fetchBookCategories();
+          // 强制从API获取TTS模型列表，不使用缓存
+          fetchTtsModels().catch((error) => {
+            // 静默处理网络错误
+          });
+        }
+      }, 1000); // 延迟1秒
+      
+      return () => {
+        clearTimeout(timer1);
+        clearTimeout(timer2);
+      };
     }
   }, [isAuthenticated, user]);
 
@@ -85,15 +113,52 @@ export default function Settings() {
         fetchTtsVoices(defaultModel);
       }
     }
-  }, [settings.tts_default_model, settings.system_language, ttsModels.length, user?.role]);
+  }, [settings.tts_default_model, i18n.language, ttsModels.length, user?.role]);
+
+  // 初始化时，优先使用 localStorage 的语言设置，然后同步到后端
+  useEffect(() => {
+    if (Object.keys(settings).length > 0) {
+      // 优先使用 localStorage 中的语言设置（用户最新选择）
+      const savedLanguage = localStorage.getItem('app-language');
+      if (savedLanguage && (savedLanguage === 'zh' || savedLanguage === 'en')) {
+        // 如果 localStorage 中的语言与当前 i18n.language 不一致，更新 i18n
+        if (i18n.language !== savedLanguage) {
+          i18n.changeLanguage(savedLanguage);
+        }
+        
+        // 同步到后端 system_language 设置（如果后端设置不一致）
+        const systemLanguage = savedLanguage === 'zh' ? 'zh-CN' : 'en';
+        if (settings.system_language?.value !== systemLanguage) {
+          // 静默更新后端设置，不显示 toast
+          api.put('/settings/system_language', { value: systemLanguage }, {
+            timeout: 5000, // 5秒超时
+          }).catch((error) => {
+            // 静默处理同步失败
+          });
+          // 更新本地状态
+          setSettings((prev) => ({
+            ...prev,
+            system_language: { ...prev.system_language!, value: systemLanguage },
+          }));
+        }
+      } else if (settings.system_language?.value) {
+        // 如果 localStorage 中没有语言设置，使用后端的设置
+        const systemLang = settings.system_language.value;
+        const i18nLang = systemLang === 'zh-CN' ? 'zh' : systemLang === 'en' ? 'en' : 'zh';
+        if (i18n.language !== i18nLang) {
+          i18n.changeLanguage(i18nLang);
+          localStorage.setItem('app-language', i18nLang);
+        }
+      }
+    }
+  }, [settings.system_language?.value, i18n]);
 
   // 当用户是管理员且设置已加载时，强制从 API 获取 TTS 模型列表
   useEffect(() => {
     if (user?.role === 'admin' && Object.keys(settings).length > 0 && ttsModels.length === 0 && !loadingTtsModels) {
       // 如果模型列表为空且不在加载中，强制从 API 获取
-      console.log('[TTS设置] 检测到模型列表为空，从 API 获取最新数据');
       fetchTtsModels().catch((error) => {
-        console.error('[TTS设置] 自动获取模型列表失败:', error);
+        // 静默处理获取失败
       });
     }
   }, [user?.role, settings, ttsModels.length, loadingTtsModels]);
@@ -106,9 +171,8 @@ export default function Settings() {
       const models = response.data.models || [];
       
       if (models.length === 0) {
-        console.warn('[TTS设置] API 返回的模型列表为空');
         setTtsModels([]);
-        toast.error('TTS 服务未返回可用模型，请检查 TTS 服务是否正常运行');
+        toast.error(t('settings.ttsNoModels'));
         return;
       }
       
@@ -125,25 +189,34 @@ export default function Settings() {
         await fetchTtsVoices(defaultModel);
       }
     } catch (error: any) {
-      console.error('获取TTS模型列表失败:', error);
       setTtsModels([]); // 清空列表，显示加载错误状态
-      toast.error(`获取TTS模型列表失败: ${error.response?.data?.error || error.message || '未知错误'}`);
+      toast.error(`${t('settings.fetchTtsModelsFailed')}: ${error.response?.data?.error || error.message || t('settings.unknownError')}`);
     } finally {
       setLoadingTtsModels(false);
     }
   };
 
+  // 语言代码映射函数：将 i18n 语言代码映射为系统语言代码
+  const mapLanguageToSystemLanguage = (lang: string): string => {
+    // zh -> zh-CN, en -> en, 未来可以扩展更多语言
+    const langMap: Record<string, string> = {
+      'zh': 'zh-CN',
+      'en': 'en',
+    };
+    return langMap[lang] || lang;
+  };
+
   // 获取TTS语音列表
   const fetchTtsVoices = async (modelId: string) => {
     try {
-      // 获取系统语言设置
-      const systemLanguage = settings.system_language?.value || 'zh-CN';
-      const langParam = systemLanguage === 'zh-CN' ? 'zh' : 'en';
+      // 使用 i18n.language 作为全局语言设置
+      const currentLanguage = i18n.language || 'zh';
+      const langParam = currentLanguage === 'zh' ? 'zh' : 'en';
       
       const response = await api.get('/tts/voices', { 
         params: { 
           model: modelId,
-          lang: langParam  // 传递语言参数，后端会根据此参数筛选音色
+          lang: langParam 
         } 
       });
 
@@ -156,16 +229,10 @@ export default function Settings() {
       }
       
       setTtsVoices(voices);
-      return voices; // 返回语音列表，方便调用者使用
+      return voices; 
     } catch (error: any) {
-      console.error('获取TTS语音列表失败:', error);
-      console.error('错误详情:', {
-        message: error.message,
-        response: error.response?.data,
-        status: error.response?.status
-      });
       setTtsVoices([]);
-      return []; // 返回空数组
+      return []; 
     }
   };
   
@@ -176,26 +243,24 @@ export default function Settings() {
       const profiles = response.data.profiles || [];
       setTtsProfiles(profiles);
     } catch (error: any) {
-      console.error('获取TTS语音配置失败:', error);
       setTtsProfiles([]);
     }
   };
 
-  // 获取书籍类型列表
+  // 获取书籍类型 列表
   const fetchBookCategories = async () => {
     setLoadingCategories(true);
     try {
       const response = await api.get('/settings/book-categories');
       setBookCategories(response.data.categories || []);
     } catch (error) {
-      console.error('获取书籍类型列表失败:', error);
-      toast.error('获取书籍类型列表失败');
+      toast.error(t('settings.fetchCategoriesFailed'));
     } finally {
       setLoadingCategories(false);
     }
   };
 
-  // 创建书籍类型
+  // 创建书籍 类型
   const handleCreateCategory = async () => {
     if (!categoryForm.name.trim()) {
       toast.error('请输入书籍类型名称');
@@ -207,17 +272,16 @@ export default function Settings() {
         name: categoryForm.name.trim(),
         display_order: categoryForm.display_order,
       });
-      toast.success('书籍类型创建成功');
+      toast.success(t('settings.categoryCreated'));
       setShowCategoryEditModal(false);
       setCategoryForm({ name: '', display_order: 0 });
       await fetchBookCategories();
     } catch (error: any) {
-      console.error('创建书籍类型失败:', error);
-      toast.error(error.response?.data?.error || '创建失败');
+      toast.error(error.response?.data?.error || t('settings.createCategoryFailed'));
     }
   };
 
-  // 更新书籍类型
+  // 更新书籍 类型
   const handleUpdateCategory = async () => {
     if (!editingCategory || !categoryForm.name.trim()) {
       toast.error('请输入书籍类型名称');
@@ -225,34 +289,32 @@ export default function Settings() {
     }
 
     try {
-      await api.put(`/settings/book-categories/${editingCategory.id}`, {
+      await api.post(`/settings/book-categories/${editingCategory.id}`, { _method: 'PUT', 
         name: categoryForm.name.trim(),
         display_order: categoryForm.display_order,
-      });
-      toast.success('书籍类型更新成功');
+       });
+      toast.success(t('settings.categoryUpdatedSuccess'));
       setShowCategoryEditModal(false);
       setEditingCategory(null);
       setCategoryForm({ name: '', display_order: 0 });
       await fetchBookCategories();
     } catch (error: any) {
-      console.error('更新书籍类型失败:', error);
-      toast.error(error.response?.data?.error || '更新失败');
+      toast.error(error.response?.data?.error || t('settings.updateCategoryFailed'));
     }
   };
 
-  // 删除书籍类型
+  // 删除书籍 类型
   const handleDeleteCategory = async (id: string, name: string) => {
-    if (!window.confirm(`确定要删除书籍类型"${name}"吗？`)) {
+    if (!window.confirm(t('settings.confirmDeleteCategoryMessage', { name }))) {
       return;
     }
 
     try {
-      await api.delete(`/settings/book-categories/${id}`);
-      toast.success('书籍类型删除成功');
+      await api.post(`/settings/book-categories/${id}`, { _method: 'DELETE' });
+      toast.success(t('settings.categoryDeletedSuccess'));
       await fetchBookCategories();
     } catch (error: any) {
-      console.error('删除书籍类型失败:', error);
-      toast.error(error.response?.data?.error || '删除失败');
+      toast.error(error.response?.data?.error || t('settings.deleteFailed'));
     }
   };
 
@@ -273,11 +335,10 @@ export default function Settings() {
   const fetchBackendVersion = async () => {
     try {
       const response = await api.get('/settings/version');
-      setBackendVersion(response.data.version || '未知版本');
+      setBackendVersion(response.data.version || t('reader.unknownVersion'));
       setBackendBuildTime(response.data.buildTime || '');
     } catch (error) {
-      console.error('获取后端版本号失败:', error);
-      setBackendVersion('未知版本');
+      setBackendVersion(t('reader.unknownVersion'));
       setBackendBuildTime('');
     }
   };
@@ -287,7 +348,7 @@ export default function Settings() {
       const size = await offlineStorage.getCacheSize();
       setCacheSize(size);
     } catch (error) {
-      console.error('获取缓存大小失败:', error);
+      // 静默处理获取缓存大小失败
     }
   };
 
@@ -300,7 +361,7 @@ export default function Settings() {
   };
 
   const handleClearCache = async () => {
-    if (!confirm('确定要清除所有缓存吗？这将删除所有离线缓存的书籍文件和阅读位置数据。')) {
+    if (!confirm(t('settings.confirmClearCache'))) {
       return;
     }
 
@@ -320,10 +381,9 @@ export default function Settings() {
       }
       keysToRemove.forEach(key => localStorage.removeItem(key));
       await fetchCacheSize();
-      toast.success(`缓存已清除！已删除 ${keysToRemove.length} 个阅读位置记录`);
+      toast.success(t('settings.cacheCleared', { count: keysToRemove.length }));
     } catch (error: any) {
-      console.error('清除缓存失败:', error);
-      toast.error(error.message || '清除缓存失败');
+      toast.error(error.message || t('settings.clearCacheFailed'));
     } finally {
       setClearingCache(false);
     }
@@ -351,10 +411,6 @@ export default function Settings() {
       }
       
       const response = await api.get('/ai/test', { params });
-      console.log('[Settings] AI测试响应:', response.data);
-      console.log('[Settings] 模型数据:', response.data.models);
-      console.log('[Settings] 模型数据类型:', typeof response.data.models);
-      console.log('[Settings] 模型是否为数组:', Array.isArray(response.data.models));
       
       if (response.data.success) {
         // 处理模型列表
@@ -372,25 +428,14 @@ export default function Settings() {
               return modelName;
             }
             // 如果都没有，尝试转换为字符串
-            console.warn('[Settings] 模型对象无法提取名称:', m);
             return JSON.stringify(m);
           }).filter((name: string) => name && name.trim() !== '');
-        } else {
-          console.warn('[Settings] ⚠️ 模型列表为空或格式不正确:', {
-            hasModels: !!response.data.models,
-            modelsType: typeof response.data.models,
-            isArray: Array.isArray(response.data.models),
-            modelsValue: response.data.models
-          });
         }
-        
-        console.log('[Settings] 解析后的模型列表:', models);
 
         setOllamaModels(models);
         
         // 检查是否有警告（例如：使用代理但模型列表为空，可能是 OLLAMA_URL 配置不一致）
         if (response.data.warning) {
-          console.warn('[Settings] 警告:', response.data.warning);
           if (showToast) {
             toast.error(response.data.warning, {
               duration: 8000, // 显示8秒
@@ -401,14 +446,12 @@ export default function Settings() {
         // 如果获取到了模型列表，且当前没有选择模型，自动选择第一个模型
         if (models.length > 0 && (!settings.ai_model?.value || settings.ai_model.value.trim() === '')) {
           const firstModel = models[0];
-          console.log('[Settings] 自动选择第一个模型:', firstModel);
           setSettings((prev) => ({
             ...prev,
             ai_model: { ...prev.ai_model!, value: firstModel },
           }));
-          // 自动保存到数据库
-          await updateSetting('ai_model', firstModel);
-          console.log('[Settings] 已自动保存模型名称:', firstModel);
+          // 自动保存到数据库，但不显示toast提示
+          await updateSetting('ai_model', firstModel, false);
         }
         
         if (showToast) {
@@ -417,7 +460,7 @@ export default function Settings() {
           } else {
             // 如果没有警告信息，才显示这个错误
             if (!response.data.warning) {
-              toast.error('连接成功，但未找到可用模型。请确保 Ollama 已安装模型。');
+              toast.error(t('settings.connectionSuccessButNoModels'));
             }
           }
         }
@@ -428,7 +471,6 @@ export default function Settings() {
         }
       }
     } catch (error: any) {
-      console.error('获取模型列表失败:', error);
       setOllamaModels([]);
       if (showToast) {
         const errorMessage = error.response?.data?.error || '获取模型列表失败';
@@ -442,7 +484,7 @@ export default function Settings() {
   const testOllamaConnection = async () => {
     const apiUrl = settings.ai_api_url?.value || 'http://localhost:11434';
     if (!apiUrl) {
-      toast.error('请先输入API地址');
+      toast.error(t('settings.pleaseEnterApiAddress'));
       return;
     }
 
@@ -450,11 +492,11 @@ export default function Settings() {
     try {
       const url = new URL(apiUrl);
       if (!url.protocol || !url.hostname) {
-        toast.error('API地址格式不正确，请使用 http:// 或 https:// 开头');
+        toast.error(t('settings.invalidApiUrlFormat'));
         return;
       }
     } catch (e) {
-      toast.error('API地址格式不正确，请输入有效的URL');
+      toast.error(t('settings.invalidApiUrl'));
       return;
     }
 
@@ -470,8 +512,7 @@ export default function Settings() {
       await updateSetting('ai_api_url', apiUrl);
       // 注意：成功消息在 fetchOllamaModels 中已经显示，这里不再重复显示
     } catch (error: any) {
-      console.error('测试连接失败:', error);
-      let errorMessage = '测试连接失败';
+      let errorMessage = t('settings.testConnectionFailed');
       
       if (error.response) {
         // 服务器返回了错误响应
@@ -480,36 +521,26 @@ export default function Settings() {
         
         // 处理 502 Bad Gateway（nginx 无法连接到上游服务器）
         if (status === 502) {
-          errorMessage = '502 Bad Gateway: nginx 无法连接到 Ollama 服务器\n\n';
-          errorMessage += '可能的原因：\n';
-          errorMessage += '1. 前端容器的 OLLAMA_URL 环境变量配置不正确\n';
-          errorMessage += '2. Ollama 服务器无法从 Docker 容器访问\n';
-          errorMessage += '3. Ollama 服务器未运行或地址/端口错误\n';
-          errorMessage += '4. 防火墙阻止了连接\n\n';
-          errorMessage += '解决步骤：\n';
-          errorMessage += '1. 检查 OLLAMA_URL: docker exec readknows-frontend env | grep OLLAMA_URL\n';
-          errorMessage += '2. 检查前端容器日志: docker logs readknows-frontend\n';
-          errorMessage += '3. 在 docker-compose.yml 中设置正确的 OLLAMA_URL\n';
-          errorMessage += '4. 重启前端容器: docker-compose restart frontend';
+          errorMessage = t('settings.error502');
         } else if (status === 404) {
-          errorMessage = '404 Not Found: Ollama API 端点不存在，请检查地址和端口是否正确';
+          errorMessage = t('settings.error404');
         } else {
           errorMessage = error.response.data?.error || `HTTP ${status}: ${statusText}`;
         }
       } else if (error.request) {
         // 请求已发出但没有收到响应
         if (error.code === 'ECONNREFUSED') {
-          errorMessage = '连接被拒绝，请检查 Ollama 服务器是否运行，以及地址和端口是否正确';
+          errorMessage = t('settings.errorConnectionRefused');
         } else if (error.code === 'ENOTFOUND' || error.code === 'EAI_AGAIN') {
-          errorMessage = '无法解析主机名，请检查地址是否正确';
+          errorMessage = t('settings.errorHostNotFound');
         } else if (error.code === 'ETIMEDOUT' || error.code === 'ECONNABORTED') {
-          errorMessage = '连接超时，请检查网络连接和防火墙设置';
+          errorMessage = t('settings.errorTimeout');
         } else {
-          errorMessage = `网络错误: ${error.message || error.code || '未知错误'}`;
+          errorMessage = t('settings.errorNetwork', { message: error.message || error.code || t('settings.unknownError') });
         }
       } else {
         // 其他错误
-        errorMessage = error.message || '测试连接失败';
+        errorMessage = error.message || t('settings.testConnectionFailed');
       }
       
       toast.error(errorMessage);
@@ -530,23 +561,54 @@ export default function Settings() {
       const fetchedSettings = response.data.settings || {};
       setSettings(fetchedSettings);
       
+      // 同步时区设置到localStorage
+      if (fetchedSettings.system_timezone_offset?.value) {
+        const timezoneOffset = parseInt(fetchedSettings.system_timezone_offset.value, 10);
+        if (!isNaN(timezoneOffset)) {
+          syncTimezoneFromBackend(timezoneOffset);
+        }
+      }
+      
+      // 更新系统标题到页面
+      const title = fetchedSettings.system_title?.value || 'ReadKnows';
+      document.title = title;
+      const metaTitle = document.querySelector('meta[name="application-name"]');
+      if (metaTitle) {
+        metaTitle.setAttribute('content', title);
+      }
+      const appleTitle = document.querySelector('meta[name="apple-mobile-web-app-title"]');
+      if (appleTitle) {
+        appleTitle.setAttribute('content', title);
+      }
+      
       if (fetchedSettings.ai_provider?.value === 'ollama' && fetchedSettings.ai_api_url?.value) {
         setTimeout(() => {
           fetchOllamaModels(fetchedSettings.ai_api_url.value, false, 'ollama');
         }, 500);
       }
     } catch (error: any) {
-      console.error('获取设置失败:', error);
       // 离线时不显示错误，API拦截器会尝试从缓存获取
       if (error.statusText !== 'OK (Offline Cache)' && error.statusText !== 'OK (Offline, No Cache)') {
         // 只有在在线且确实失败时才显示错误
         if (navigator.onLine) {
-          toast.error('获取设置失败');
+          toast.error(t('settings.fetchSettingsFailed'));
         }
       } else if (error.statusText === 'OK (Offline Cache)') {
         // 使用缓存数据
         const cachedSettings = error.data?.settings || {};
         setSettings(cachedSettings);
+        
+        // 更新系统标题到页面
+        const title = cachedSettings.system_title?.value || '读士私人书库';
+        document.title = title;
+        const metaTitle = document.querySelector('meta[name="application-name"]');
+        if (metaTitle) {
+          metaTitle.setAttribute('content', title);
+        }
+        const appleTitle = document.querySelector('meta[name="apple-mobile-web-app-title"]');
+        if (appleTitle) {
+          appleTitle.setAttribute('content', title);
+        }
       }
     } finally {
       setLoading(false);
@@ -558,7 +620,7 @@ export default function Settings() {
       const response = await api.get('/fonts');
       setFonts(response.data.fonts || []);
     } catch (error) {
-      console.error('获取字体列表失败:', error);
+      // 静默处理获取字体列表失败
     }
   };
 
@@ -572,11 +634,12 @@ export default function Settings() {
       formData.append('file', file);
       await api.post('/fonts/upload', formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
+        timeout: 300000, // 5分钟超时，适用于字体文件上传
       });
-      toast.success('字体上传成功');
+      toast.success(t('settings.fontUploadSuccess'));
       await fetchFonts();
     } catch (error: any) {
-      toast.error(error.response?.data?.error || '字体上传失败');
+      toast.error(error.response?.data?.error || t('settings.uploadFailed'));
     } finally {
       setUploadingFont(false);
       e.target.value = '';
@@ -584,13 +647,13 @@ export default function Settings() {
   };
 
   const handleDeleteFont = async (fontId: string) => {
-    if (!confirm('确定要删除这个字体吗？')) return;
+    if (!confirm(t('settings.confirmDeleteFont'))) return;
     try {
-      await api.delete(`/fonts/${fontId}`);
-      toast.success('字体已删除');
+      await api.post(`/fonts/${fontId}`, { _method: 'DELETE' });
+      toast.success(t('settings.fontDeletedSuccess'));
       await fetchFonts();
     } catch (error: any) {
-      toast.error(error.response?.data?.error || '删除失败');
+      toast.error(error.response?.data?.error || t('settings.deleteFailed'));
     }
   };
 
@@ -600,7 +663,7 @@ export default function Settings() {
       const response = await api.get('/reading/preferences');
       setReaderPreferences(response.data.preferences || {});
     } catch (error) {
-      console.error('获取阅读器偏好失败:', error);
+      // 静默处理获取阅读器偏好失败
     } finally {
       setLoadingPreferences(false);
     }
@@ -613,34 +676,62 @@ export default function Settings() {
         ...prev,
         [fileType]: { readerType, settings: settings || null },
       }));
-      toast.success('阅读器偏好已保存');
+      toast.success(t('settings.readerPreferencesSaved'));
     } catch (error: any) {
-      toast.error(error.response?.data?.error || '保存失败');
+      toast.error(error.response?.data?.error || t('settings.saveFailed'));
     }
   };
 
   const deleteReaderPreference = async (fileType: string) => {
     try {
-      await api.delete(`/reading/preferences?fileType=${fileType}`);
+      await api.post(`/reading/preferences?fileType=${fileType}`, { _method: 'DELETE' });
       setReaderPreferences((prev) => {
         const newPrefs = { ...prev };
         delete newPrefs[fileType];
         return newPrefs;
       });
-      toast.success('已取消选择，将使用默认阅读器');
+      toast.success(t('settings.unselectedWillUseDefault'));
     } catch (error: any) {
-      toast.error(error.response?.data?.error || '删除失败');
+      toast.error(error.response?.data?.error || t('settings.deleteFailed'));
     }
   };
 
-  const updateSetting = async (key: string, value: string) => {
+  const updateSetting = async (key: string, value: string, showToast: boolean = true) => {
     try {
-      await api.put(`/settings/${key}`, { value });
+      // Docker 环境下可能需要更长时间，设置为 120 秒
+      await api.put(`/settings/${key}`, { value }, {
+        timeout: 120000, // 120秒超时
+      });
+      
+      // 如果是时区设置，同步到localStorage
+      if (key === 'system_timezone_offset') {
+        const timezoneOffset = parseInt(value, 10);
+        if (!isNaN(timezoneOffset)) {
+          syncTimezoneFromBackend(timezoneOffset);
+        }
+      }
+      
       // 不立即刷新设置，避免重复请求
       // await fetchSettings();
-      toast.success('设置已保存');
+      if (showToast) {
+        toast.success(t('settings.settingsSaved'));
+      }
     } catch (error: any) {
-      toast.error(error.response?.data?.error || '保存失败');
+      if (showToast) {
+        let errorMessage = t('settings.saveFailed');
+        
+        if (error.code === 'ECONNABORTED' || error.message?.includes('timeout')) {
+          errorMessage = t('settings.saveTimeout') || '保存操作超时，请稍后重试';
+        } else if (error.code === 'ERR_CONNECTION_RESET' || error.code === 'ERR_NETWORK' || error.message?.includes('ERR_CONNECTION_RESET')) {
+          errorMessage = t('settings.saveConnectionReset') || '连接被重置，请稍后重试';
+        } else if (error.response?.data?.error) {
+          errorMessage = error.response.data.error;
+        } else if (error.message) {
+          errorMessage = error.message;
+        }
+        
+        toast.error(errorMessage);
+      }
     }
   };
 
@@ -650,7 +741,6 @@ export default function Settings() {
       setPathValidation((prev) => ({ ...prev, [path]: response.data }));
       return response.data;
     } catch (error) {
-      console.error('验证路径失败:', error);
       return null;
     }
   };
@@ -665,7 +755,7 @@ export default function Settings() {
   const handleScan = async () => {
     const scanPath = settings.books_scan_path?.value;
     if (!scanPath) {
-      toast.error('请先设置书籍扫描路径');
+      toast.error(t('settings.pleaseSetScanPath'));
       return;
     }
 
@@ -682,10 +772,156 @@ export default function Settings() {
     }
   };
 
+  // 测试服务器地址连接
+  const testApiUrl = async () => {
+    if (!customApiUrl || !customApiUrl.trim()) {
+      toast.error(t('settings.pleaseEnterServerAddress') || '请输入服务器地址');
+      return;
+    }
+
+    const url = customApiUrl.trim().replace(/\/+$/, '');
+    if (!url.startsWith('http://') && !url.startsWith('https://')) {
+      toast.error(t('settings.serverAddressMustStartWithHttp') || '服务器地址必须以 http:// 或 https:// 开头');
+      return;
+    }
+
+    setTestingApiUrl(true);
+    try {
+      // 临时设置 API URL 和 API KEY 进行测试
+      const originalBaseURL = api.defaults.baseURL;
+      const originalApiKey = getCustomApiKey();
+      
+      // 构建完整的 API URL（确保包含 /api）
+      let testApiUrl = url;
+      if (!testApiUrl.endsWith('/api')) {
+        testApiUrl = testApiUrl.endsWith('/') ? `${testApiUrl}api` : `${testApiUrl}/api`;
+      }
+      api.defaults.baseURL = testApiUrl;
+      
+      // 准备测试请求头
+      const testHeaders: any = {};
+      if (customApiKey && customApiKey.trim()) {
+        testHeaders['X-API-Key'] = customApiKey.trim();
+      }
+      
+      // 先测试基本连接（使用公开接口）
+      try {
+        await api.get('/settings/public', { 
+          timeout: 5000,
+          headers: testHeaders
+        });
+      } catch (publicError: any) {
+        // 如果公开接口都访问不了，说明服务器地址有问题
+        if (publicError.code === 'ERR_NETWORK' || publicError.code === 'ECONNABORTED') {
+          throw new Error('NETWORK_ERROR');
+        }
+        throw publicError;
+      }
+      
+      // 如果输入了 API Key，测试 API Key 是否正确（使用需要验证的接口）
+      if (customApiKey && customApiKey.trim()) {
+        try {
+          // 使用需要 API Key 验证但不一定需要登录的接口测试
+          // 尝试访问 /settings，如果 API Key 错误会返回 403，如果只是未登录会返回 401
+          await api.get('/settings', { 
+            timeout: 5000,
+            headers: testHeaders,
+            validateStatus: (status) => {
+              // 401 表示未登录，但说明 API Key 是对的（否则会是 403）
+              // 403 表示 API Key 错误
+              return status === 200 || status === 401;
+            }
+          });
+          // 如果返回 401（未登录）或 200（已登录），说明 API Key 正确
+          toast.success(t('settings.connectionSuccess') || '连接成功！服务器地址和 API Key 都有效');
+        } catch (keyError: any) {
+          // API Key 验证失败
+          if (keyError.response?.status === 403) {
+            const errorMsg = keyError.response?.data?.error || keyError.response?.data?.message || '';
+            if (errorMsg.includes('API Key') || errorMsg.includes('缺少') || errorMsg.includes('错误')) {
+              toast.error(t('settings.apiKeyInvalid') || '连接成功，但 API Key 不正确');
+              // 恢复原始 baseURL
+              api.defaults.baseURL = originalBaseURL;
+              return;
+            }
+          }
+          // 403 状态码表示 API Key 错误
+          if (keyError.response?.status === 403) {
+            toast.error(t('settings.apiKeyInvalid') || '连接成功，但 API Key 不正确');
+          } else {
+            // 其他错误（可能是网络问题等）
+            toast.success(t('settings.connectionSuccess') || '连接成功！服务器地址有效（API Key 测试可能存在问题）');
+          }
+          api.defaults.baseURL = originalBaseURL;
+          return;
+        }
+      } else {
+        // 没有输入 API Key，只测试服务器地址
+        toast.success(t('settings.connectionSuccess') || '连接成功！服务器地址有效');
+      }
+      
+      // 恢复原始 baseURL
+      api.defaults.baseURL = originalBaseURL;
+    } catch (error: any) {
+      // 恢复原始 baseURL
+      api.defaults.baseURL = getCurrentApiUrl();
+      
+      if (error.message === 'NETWORK_ERROR' || error.code === 'ERR_NETWORK' || error.code === 'ECONNABORTED') {
+        toast.error(t('settings.cannotConnectToServer') || '无法连接到服务器，请检查地址和网络连接');
+      } else if (error.response?.status === 401 || error.response?.status === 403) {
+        if (error.response?.data?.error?.includes('API Key') || error.response?.data?.message?.includes('API Key')) {
+          toast.error(t('settings.apiKeyInvalid') || '连接成功，但 API Key 不正确');
+        } else {
+          toast.success(t('settings.connectionSuccessRequiresLogin') || '连接成功！服务器地址有效（需要登录）');
+        }
+      } else {
+        toast.error(t('settings.connectionFailed', { error: error.message || t('settings.unknownError') }) || `连接失败: ${error.message || '未知错误'}`);
+      }
+    } finally {
+      setTestingApiUrl(false);
+    }
+  };
+
+  // 保存服务器地址和 API KEY
+  const saveApiUrl = () => {
+    try {
+      if (customApiUrl && customApiUrl.trim()) {
+        const url = customApiUrl.trim().replace(/\/+$/, '');
+        if (!url.startsWith('http://') && !url.startsWith('https://')) {
+          toast.error(t('settings.serverAddressMustStartWithHttp') || '服务器地址必须以 http:// 或 https:// 开头');
+          return;
+        }
+        setCustomApiUrl(url);
+        
+        // 同时保存 API KEY
+        if (customApiKey && customApiKey.trim()) {
+          setCustomApiKey(customApiKey.trim());
+        } else {
+          setCustomApiKey(null);
+        }
+        
+        toast.success(t('settings.serverAddressSaved') || '服务器地址已保存，页面将刷新');
+        setTimeout(() => {
+          window.location.reload();
+        }, 1000);
+      } else {
+        // 清除自定义地址和 API KEY，恢复默认
+        setCustomApiUrl(null);
+        setCustomApiKey(null);
+        toast.success(t('settings.defaultServerAddressRestored') || '已恢复默认服务器地址，页面将刷新');
+        setTimeout(() => {
+          window.location.reload();
+        }, 1000);
+      }
+    } catch (error: any) {
+      toast.error(t('settings.saveFailed', { error: error.message }) || `保存失败: ${error.message}`);
+    }
+  };
+
   if (!isAuthenticated) {
     return (
       <div className="text-center py-12">
-        <p className="text-gray-500">请先登录</p>
+        <p className="text-gray-500">{t('settings.pleaseLogin')}</p>
       </div>
     );
   }
@@ -704,14 +940,244 @@ export default function Settings() {
   const scanValidation = pathValidation[scanPath];
 
   return (
+    <>
     <div className="max-w-4xl mx-auto">
       <div className="space-y-6">
-        {/* ========== 管理图书（仅管理员） ========== */}
+        {/* ========== 一、个人设置（所有用户） ========== */}
+        <div className="card">
+          <div className="flex items-center gap-3 mb-4">
+            <SettingsIcon className="w-5 h-5 text-blue-600" />
+            <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">{t('settings.personalSettings') || '个人设置'}</h2>
+          </div>
+
+          <div className="space-y-6">
+            {/* 主题设置 */}
+            <div>
+              <label className="block text-sm font-medium mb-3">{t('settings.theme')}</label>
+              <div className="grid grid-cols-3 gap-2">
+                {[
+                  { value: 'system', label: t('settings.theme'), icon: Monitor },
+                  { value: 'light', label: t('settings.lightMode'), icon: Sun },
+                  { value: 'dark', label: t('settings.darkMode'), icon: Moon },
+                ].map((option) => {
+                  const Icon = option.icon;
+                  return (
+                    <label
+                      key={option.value}
+                      className={`flex flex-col items-center gap-2 p-3 border-2 rounded-lg cursor-pointer transition-all ${
+                        theme === option.value
+                          ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20'
+                          : 'border-gray-200 dark:border-gray-700 hover:border-gray-300'
+                      }`}
+                    >
+                      <input
+                        type="radio"
+                        name="theme"
+                        value={option.value}
+                        checked={theme === option.value}
+                        onChange={() => setTheme(option.value as 'light' | 'dark' | 'system')}
+                        className="hidden"
+                      />
+                      <Icon className="w-5 h-5 text-gray-600 dark:text-gray-400" />
+                      <span className="text-sm font-medium">{option.label}</span>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* 服务器地址设置（用于 Android APK 等移动应用）- 仅管理员可见 */}
+            {user?.role === 'admin' && (
+              <div className="pt-4 border-t border-gray-200 dark:border-gray-700">
+                <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
+                  {t('settings.serverAddress')} {import.meta.env.MODE === 'production' && '(Android APK)'}
+                </label>
+                <div className="space-y-3">
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    className="input flex-1"
+                    value={customApiUrl}
+                    onChange={(e) => setCustomApiUrlState(e.target.value)}
+                    placeholder={t('settings.serverAddressPlaceholder') || 'https://your-server.com 或 http://192.168.1.100:1281'}
+                    onKeyPress={(e) => {
+                      if (e.key === 'Enter') {
+                        saveApiUrl();
+                      }
+                    }}
+                  />
+                  <button
+                    onClick={testApiUrl}
+                    disabled={testingApiUrl || !customApiUrl?.trim()}
+                    className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {testingApiUrl ? t('settings.testing') : t('settings.testConnection')}
+                  </button>
+                  <button
+                    onClick={saveApiUrl}
+                    className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {customApiUrl?.trim() ? t('common.save') : (getCustomApiUrl() ? '恢复默认' : '使用默认')}
+                  </button>
+                </div>
+                
+                {/* API Key 输入框 */}
+                <div>
+                  <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
+                    {t('settings.apiKey')} <span className="text-gray-400 text-xs">(可选)</span>
+                  </label>
+                  <PasswordInput
+                    value={customApiKey}
+                    onChange={(e) => setCustomApiKeyState(e.target.value)}
+                    placeholder={t('settings.enterApiKey') || '输入 API Key（如果需要）'}
+                    className="input w-full"
+                    onKeyPress={(e) => {
+                      if (e.key === 'Enter') {
+                        saveApiUrl();
+                      }
+                    }}
+                  />
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                    {t('settings.apiKeyHint') || '如果服务器需要 API Key 认证，请在此输入'}
+                  </p>
+                </div>
+                
+                <p className="text-xs text-gray-500 dark:text-gray-400">
+                  {t('settings.currentServer')}: <code className="bg-gray-100 dark:bg-gray-800 px-2 py-1 rounded">{getCurrentApiUrl()}</code>
+                  {!getCustomApiUrl() && (
+                    <span className="ml-2 text-green-600 dark:text-green-400">✓ 使用本地服务器（无需配置）</span>
+                  )}
+                </p>
+                <p className="text-xs text-gray-500 dark:text-gray-400">
+                  💡 {!getCustomApiUrl() 
+                    ? '当前使用本地服务器，无需配置API地址和API Key。只有在需要连接远程服务器时才需要设置。'
+                    : t('settings.serverAddressHint')
+                  }
+                  {getCustomApiUrl() && (
+                    <button
+                      onClick={() => {
+                        setCustomApiUrl(null);
+                        setCustomApiKey(null);
+                        setCustomApiUrlState('');
+                        setCustomApiKeyState('');
+                        toast.success(t('settings.customAddressCleared') || '已清除自定义地址，页面将刷新');
+                        setTimeout(() => window.location.reload(), 1000);
+                      }}
+                      className="ml-2 text-red-600 hover:text-red-700 underline"
+                    >
+                      {t('settings.clear')}
+                    </button>
+                  )}
+                </p>
+              </div>
+              </div>
+            )}
+
+            {/* 语言设置（统一管理界面语言和系统语言） */}
+            <div className="pt-4 border-t border-gray-200 dark:border-gray-700">
+              <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
+                {t('language.systemLanguage')}
+              </label>
+              <select
+                className="input w-full"
+                value={i18n.language || 'zh'}
+                onChange={async (e) => {
+                  const newLanguage = e.target.value;
+                  const systemLanguage = mapLanguageToSystemLanguage(newLanguage);
+                  
+                  // 更新界面语言
+                  localStorage.setItem('app-language', newLanguage);
+                  await i18n.changeLanguage(newLanguage);
+                  
+                  // 同步更新系统语言设置到后端
+                  setSettings((prev) => ({
+                    ...prev,
+                    system_language: { ...prev.system_language!, value: systemLanguage },
+                  }));
+                  await updateSetting('system_language', systemLanguage);
+                  
+                  // 如果用户已登录，保存用户语言偏好到后端
+                  if (isAuthenticated && user) {
+                    try {
+                      await api.put('/users/me/language', { language: newLanguage }, {
+                        timeout: 120000, // 120秒超时，匹配后端设置
+                      });
+                    } catch (error) {
+                      // 静默处理保存语言设置失败
+                    }
+                  }
+                  
+                  // 切换语言后，重新获取音色列表（根据新语言筛选）
+                  const defaultModel = settings.tts_default_model?.value || 'edge';
+                  if (defaultModel) {
+                    await fetchTtsVoices(defaultModel);
+                  }
+                  
+                  toast.success(t('language.languageChanged'), {
+                    duration: 2000,
+                  });
+                  
+                  // 延迟刷新页面以确保翻译生效
+                  setTimeout(() => {
+                    window.location.reload();
+                  }, 500);
+                }}
+              >
+                <option value="zh">{t('language.chinese')}</option>
+                <option value="en">{t('language.english')}</option>
+              </select>
+              <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                {t('settings.selectSystemLanguageDesc')}
+              </p>
+            </div>
+
+            {/* 系统标题设置（仅管理员） */}
+            {user?.role === 'admin' && (
+              <div className="pt-4 border-t border-gray-200 dark:border-gray-700">
+                <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
+                  {t('settings.systemTitle')}
+                </label>
+                <input
+                  type="text"
+                  className="input w-full"
+                  value={settings.system_title?.value || 'ReadKnows'}
+                  onChange={(e) =>
+                    setSettings((prev) => ({
+                      ...prev,
+                      system_title: { ...prev.system_title!, value: e.target.value },
+                    }))
+                  }
+                  onBlur={() => {
+                    const title = settings.system_title?.value || 'ReadKnows';
+                    updateSetting('system_title', title);
+                    // 更新页面标题
+                    document.title = title;
+                    // 更新meta标签
+                    const metaTitle = document.querySelector('meta[name="application-name"]');
+                    if (metaTitle) {
+                      metaTitle.setAttribute('content', title);
+                    }
+                    const appleTitle = document.querySelector('meta[name="apple-mobile-web-app-title"]');
+                    if (appleTitle) {
+                      appleTitle.setAttribute('content', title);
+                    }
+                  }}
+                  placeholder={t('settings.systemTitlePlaceholder')}
+                />
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                  {t('settings.systemTitleDesc')}
+                </p>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* ========== 二、书籍管理（仅管理员） ========== */}
         {user?.role === 'admin' && (
         <div className="card">
           <div className="flex items-center gap-3 mb-4">
             <BookOpen className="w-5 h-5 text-purple-600" />
-            <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">管理图书</h2>
+            <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">{t('settings.bookManagement')}</h2>
           </div>
           
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
@@ -721,8 +1187,8 @@ export default function Settings() {
             >
               <BookOpen className="w-6 h-6 text-green-600 dark:text-green-400" />
               <div className="text-left">
-                <div className="font-semibold text-gray-900 dark:text-white">图书管理</div>
-                <div className="text-sm text-gray-600 dark:text-gray-400">管理书籍公有/私有状态</div>
+                <div className="font-semibold text-gray-900 dark:text-white">{t('settings.bookManagement')}</div>
+                <div className="text-sm text-gray-600 dark:text-gray-400">{t('settings.bookManagementDesc')}</div>
               </div>
             </button>
             
@@ -732,27 +1198,105 @@ export default function Settings() {
             >
               <Type className="w-6 h-6 text-purple-600 dark:text-purple-400" />
               <div className="text-left">
-                <div className="font-semibold text-gray-900 dark:text-white">图书类型管理</div>
-                <div className="text-sm text-gray-600 dark:text-gray-400">管理书籍分类类型</div>
+                <div className="font-semibold text-gray-900 dark:text-white">{t('settings.categoryManagement')}</div>
+                <div className="text-sm text-gray-600 dark:text-gray-400">{t('settings.categoryManagementDesc')}</div>
               </div>
             </button>
           </div>
         </div>
         )}
 
-        {/* ========== 书籍扫描（仅管理员） ========== */}
+        {/* ========== 三、阅读设置（所有用户） ========== */}
+        <div className="card">
+          <div className="flex items-center gap-3 mb-4">
+            <BookOpen className="w-5 h-5 text-green-600" />
+            <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">{t('settings.readingSettings')}</h2>
+          </div>
+          
+          <div className="space-y-6">
+            {/* EPUB阅读器选择 */}
+            <div>
+              <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
+                {t('settings.epubReader') || 'EPUB阅读器'}
+              </label>
+              <select
+                className="input w-full"
+                value={readerPreferences.epub?.readerType || 'default'}
+                onChange={(e) => updateReaderPreference('epub', e.target.value)}
+                disabled={loadingPreferences}
+              >
+                <option value="default">{t('settings.defaultReader')}</option>
+                <option value="pro">{t('settings.proReader') || '专业阅读器'}</option>
+              </select>
+              <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                {t('settings.epubReaderDesc')}
+              </p>
+            </div>
+
+            {/* 字体管理 */}
+            <div className="pt-4 border-t border-gray-200 dark:border-gray-700">
+              <div className="flex items-center justify-between mb-3">
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                  {t('settings.fontManagement')}
+                </label>
+                <label className="btn btn-sm btn-primary cursor-pointer">
+                  <Upload className="w-4 h-4 mr-1" />
+                  {t('settings.uploadFont') || '上传字体'}
+                  <input
+                    type="file"
+                    accept=".ttf,.otf,.woff,.woff2"
+                    onChange={handleFontUpload}
+                    disabled={uploadingFont}
+                    className="hidden"
+                  />
+                </label>
+              </div>
+              
+              {fonts.length === 0 ? (
+                <p className="text-sm text-gray-500 dark:text-gray-400">
+                  {t('settings.noFonts')}
+                </p>
+              ) : (
+                <div className="space-y-2">
+                  {fonts.map((font: any) => (
+                    <div
+                      key={font.id}
+                      className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-800 rounded-lg"
+                    >
+                      <span className="text-sm text-gray-700 dark:text-gray-300">{font.name}</span>
+                      <button
+                        onClick={() => handleDeleteFont(font.id)}
+                        className="text-red-600 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300"
+                        title={t('settings.deleteFont') || '删除字体'}
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {uploadingFont && (
+                <p className="text-sm text-blue-600 dark:text-blue-400 mt-2">
+                  {t('settings.uploadingFont') || '正在上传字体...'}
+                </p>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* ========== 四、书籍扫描（仅管理员） ========== */}
         {user?.role === 'admin' && (
         <div className="card">
           <div className="flex items-center gap-3 mb-4">
             <Folder className="w-5 h-5 text-blue-600" />
-            <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">书籍扫描</h2>
+            <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">{t('settings.bookScanning')}</h2>
           </div>
           
           <div className="space-y-6">
             {/* 存储路径 */}
             <div>
               <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
-                书籍存储路径
+                {t('settings.storagePath')}
               </label>
               <input
                 type="text"
@@ -760,7 +1304,7 @@ export default function Settings() {
                 value={storagePath}
                 onChange={(e) => handlePathChange('books_storage_path', e.target.value)}
                 onBlur={() => updateSetting('books_storage_path', storagePath)}
-                placeholder="例如: ./books 或 /path/to/books"
+                placeholder={t('settings.storagePath')}
               />
               {storageValidation && (
                 <div className="flex items-center gap-2 text-sm mt-2">
@@ -768,14 +1312,14 @@ export default function Settings() {
                     <>
                       <CheckCircle className="w-4 h-4 text-green-600 dark:text-green-400" />
                       <span className="text-green-600 dark:text-green-400">
-                        路径有效 {storageValidation.isWritable ? '(可写)' : '(只读)'}
+                        {storageValidation.isWritable ? t('settings.pathValidWritable') : t('settings.pathValidReadOnly')}
                       </span>
                     </>
                   ) : (
                     <>
                       <XCircle className="w-4 h-4 text-red-600 dark:text-red-400" />
                       <span className="text-red-600 dark:text-red-400">
-                        {storageValidation.error || '路径无效或不存在'}
+                        {storageValidation.error || t('settings.pathInvalid')}
                       </span>
                     </>
                   )}
@@ -786,7 +1330,7 @@ export default function Settings() {
             {/* 扫描路径 */}
             <div>
               <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
-                书籍扫描路径
+                {t('settings.scanPath')}
               </label>
               <div className="flex gap-2">
                 <input
@@ -795,7 +1339,7 @@ export default function Settings() {
                   value={scanPath}
                   onChange={(e) => handlePathChange('books_scan_path', e.target.value)}
                   onBlur={() => updateSetting('books_scan_path', scanPath)}
-                  placeholder="例如: /path/to/scan"
+                  placeholder={t('settings.scanPath')}
                 />
                 <button
                   onClick={handleScan}
@@ -805,12 +1349,12 @@ export default function Settings() {
                   {scanning ? (
                     <>
                       <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
-                      扫描中
+                      {t('settings.scanning')}
                     </>
                   ) : (
                     <>
                       <Scan className="w-4 h-4" />
-                      扫描
+                      {t('settings.scan')}
                     </>
                   )}
                 </button>
@@ -820,12 +1364,12 @@ export default function Settings() {
                   {scanValidation.exists && scanValidation.isDirectory ? (
                     <>
                       <CheckCircle className="w-4 h-4 text-green-600" />
-                      <span className="text-green-600">路径有效</span>
+                      <span className="text-green-600">{t('settings.pathValid')}</span>
                     </>
                   ) : (
                     <>
                       <XCircle className="w-4 h-4 text-red-600" />
-                      <span className="text-red-600">{scanValidation.error || '路径无效或不存在'}</span>
+                      <span className="text-red-600">{scanValidation.error || t('settings.pathInvalid')}</span>
                     </>
                   )}
                 </div>
@@ -833,11 +1377,11 @@ export default function Settings() {
               {scanResult && (
                 <div className="mt-3 p-3 bg-gray-50 dark:bg-gray-800 rounded-lg text-sm">
                   <div className="flex gap-4">
-                    <span>总计: {scanResult.total}</span>
-                    <span className="text-green-600 dark:text-green-400">导入: {scanResult.imported}</span>
-                    <span className="text-yellow-600 dark:text-yellow-400">跳过: {scanResult.skipped}</span>
+                    <span>{t('settings.total')}: {scanResult.total}</span>
+                    <span className="text-green-600 dark:text-green-400">{t('settings.imported')}: {scanResult.imported}</span>
+                    <span className="text-yellow-600 dark:text-yellow-400">{t('settings.skipped')}: {scanResult.skipped}</span>
                     {scanResult.errors > 0 && (
-                      <span className="text-red-600 dark:text-red-400">错误: {scanResult.errors}</span>
+                      <span className="text-red-600 dark:text-red-400">{t('settings.errors')}: {scanResult.errors}</span>
                     )}
                   </div>
                 </div>
@@ -859,7 +1403,7 @@ export default function Settings() {
                   }}
                   className="w-5 h-5"
                 />
-                <span className="text-sm">扫描时自动将TXT转换为EPUB</span>
+                <span className="text-sm">{t('settings.autoConvertTxt')}</span>
               </label>
               
               <label className="flex items-center gap-3 cursor-pointer">
@@ -875,7 +1419,7 @@ export default function Settings() {
                   }}
                   className="w-5 h-5"
                 />
-                <span className="text-sm">扫描时自动将MOBI转换为EPUB</span>
+                <span className="text-sm">{t('settings.autoConvertMobi')}</span>
               </label>
               
               <label className="flex items-center gap-3 cursor-pointer">
@@ -891,7 +1435,7 @@ export default function Settings() {
                   }}
                   className="w-5 h-5"
                 />
-                <span className="text-sm">扫描时自动获取豆瓣信息</span>
+                <span className="text-sm">{t('settings.autoFetchDouban')}</span>
               </label>
               
               {settings.auto_fetch_douban?.value === 'true' && (
@@ -907,7 +1451,7 @@ export default function Settings() {
                       }))
                     }
                     onBlur={() => updateSetting('douban_api_base', settings.douban_api_base?.value || 'https://127.0.0.1:1552')}
-                    placeholder="豆瓣API地址"
+                    placeholder={t('settings.doubanApiUrlPlaceholder')}
                   />
                 </div>
               )}
@@ -916,134 +1460,18 @@ export default function Settings() {
         </div>
         )}
 
-        {/* ========== 阅读设置 ========== */}
-        <div className="card">
-          <div className="flex items-center gap-3 mb-4">
-            <BookOpen className="w-5 h-5 text-purple-600" />
-            <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">阅读设置</h2>
-          </div>
-
-          <div className="space-y-6">
-            {/* EPUB阅读器选择 */}
-            {loadingPreferences ? (
-              <div className="text-center py-4">
-                <div className="inline-block animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600"></div>
-              </div>
-            ) : (
-              <div>
-                <div className="flex items-center justify-between mb-3">
-                  <label className="block text-sm font-medium">EPUB 阅读器</label>
-                  {readerPreferences.epub && (
-                    <button
-                      onClick={() => deleteReaderPreference('epub')}
-                      className="text-xs text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300"
-                    >
-                      使用默认
-                    </button>
-                  )}
-                </div>
-                {!readerPreferences.epub && (
-                  <div className="mb-3 p-2 bg-blue-50 dark:bg-blue-900/20 rounded text-xs text-blue-600 dark:text-blue-400">
-                    当前使用默认值：epub.js
-                  </div>
-                )}
-                <div className="grid grid-cols-2 gap-2">
-                  {[
-                    { value: 'epubjs', label: 'epub.js', desc: '默认' },
-                    { value: 'custom', label: '自定义解析器', desc: '无iframe问题' },
-                  ].map((option) => {
-                    const currentReader = readerPreferences.epub?.readerType || 'epubjs';
-                    const isSelected = currentReader === option.value;
-                    return (
-                      <label
-                        key={option.value}
-                        className={`flex items-center gap-2 p-3 border-2 rounded-lg cursor-pointer transition-all ${
-                          isSelected
-                            ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20'
-                            : 'border-gray-200 dark:border-gray-700 hover:border-gray-300'
-                        }`}
-                      >
-                        <input
-                          type="radio"
-                          name="epub-reader"
-                          value={option.value}
-                          checked={isSelected}
-                          onChange={() => updateReaderPreference('epub', option.value)}
-                          className="w-4 h-4"
-                        />
-                        <div className="flex-1">
-                          <div className="font-medium text-sm">{option.label}</div>
-                          <div className="text-xs text-gray-500 dark:text-gray-400">{option.desc}</div>
-                        </div>
-                      </label>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-
-            {/* 字体管理 */}
-            <div className="pt-4 border-t border-gray-200 dark:border-gray-700">
-              <div className="flex items-center gap-2 mb-3">
-                <Type className="w-4 h-4 text-blue-600" />
-                <label className="block text-sm font-medium">字体管理</label>
-              </div>
-              <div className="flex items-center gap-3 mb-3">
-                <label className="flex items-center gap-2 px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 cursor-pointer transition-colors text-sm">
-                  <Upload className="w-4 h-4" />
-                  <span>{uploadingFont ? '上传中...' : '上传字体'}</span>
-                  <input
-                    type="file"
-                    accept=".ttf,.otf,.woff,.woff2"
-                    onChange={handleFontUpload}
-                    disabled={uploadingFont}
-                    className="hidden"
-                  />
-                </label>
-                <span className="text-xs text-gray-500 dark:text-gray-400">
-                  支持 .ttf, .otf, .woff, .woff2
-                </span>
-              </div>
-              {fonts.length > 0 && (
-                <div className="space-y-2 max-h-48 overflow-y-auto">
-                  {fonts.map((font) => (
-                    <div
-                      key={font.id}
-                      className="flex items-center justify-between p-2 bg-gray-50 dark:bg-gray-700 rounded text-sm"
-                    >
-                      <div className="flex-1">
-                        <div className="font-medium">{font.name}</div>
-                        <div className="text-xs text-gray-500 dark:text-gray-400">
-                          {font.file_type.toUpperCase()} · {(font.file_size / 1024).toFixed(2)} KB
-                        </div>
-                      </div>
-                      <button
-                        onClick={() => handleDeleteFont(font.id)}
-                        className="p-1 text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded"
-                        title="删除"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-
-        {/* ========== AI功能（仅管理员） ========== */}
+        {/* ========== 五、AI功能设置（仅管理员） ========== */}
         {user?.role === 'admin' && (
         <div className="card">
           <div className="flex items-center gap-3 mb-4">
             <Sparkles className="w-5 h-5 text-purple-600" />
-            <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">AI阅读助手</h2>
+            <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">{t('settings.aiReadingAssistant')}</h2>
           </div>
           
-          <div className="space-y-4">
+          <div className="space-y-6">
             <div>
               <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
-                AI提供商
+                {t('settings.aiProvider')}
               </label>
               <select
                 value={settings.ai_provider?.value || 'ollama'}
@@ -1056,16 +1484,16 @@ export default function Settings() {
                 }}
                 className="input w-full"
               >
-                <option value="ollama">Ollama (本地)</option>
-                <option value="openai">OpenAI (ChatGPT)</option>
-                <option value="deepseek">DeepSeek</option>
+                <option value="ollama">{t('settings.ollamaLocal')}</option>
+                <option value="openai">{t('settings.openaiChatGPT')}</option>
+                <option value="deepseek">{t('settings.deepseek')}</option>
               </select>
             </div>
 
             <div>
               <div className="flex items-center justify-between mb-2">
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
-                  API地址
+                  {t('settings.apiUrl')}
                 </label>
                 {settings.ai_provider?.value === 'ollama' && (
                   <button
@@ -1073,7 +1501,7 @@ export default function Settings() {
                     disabled={testingConnection || loadingModels}
                     className="text-xs px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
                   >
-                    {testingConnection || loadingModels ? '测试中...' : '测试连接'}
+                    {testingConnection || loadingModels ? t('settings.testing') : t('settings.testConnection')}
                   </button>
                 )}
               </div>
@@ -1088,23 +1516,16 @@ export default function Settings() {
                   }))
                 }
                 onBlur={() => updateSetting('ai_api_url', settings.ai_api_url?.value || 'http://localhost:11434')}
-                placeholder="http://localhost:11434 或 http://192.168.6.20:11434"
+                placeholder={t('settings.ollamaApiUrlPlaceholder')}
               />
               {settings.ai_provider?.value === 'ollama' && (
                 <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                  提示：
-                  <br />• 如果 Ollama 在宿主机上，使用：http://host.docker.internal:11434
-                  <br />• 如果 Ollama 在局域网其他机器上，使用实际 IP 地址，如：http://192.168.6.20:11434
-                  <br />• <strong>重要：</strong>在 Docker 部署中，后端会通过前端容器的 nginx 代理访问 Ollama
-                  <br />• 请确保在 docker-compose.yml 中配置了前端容器的 OLLAMA_URL 环境变量
-                  <br />• OLLAMA_URL 应该与系统设置中的 API 地址一致
-                  <br />• 例如：OLLAMA_URL=http://host.docker.internal:11434 或 OLLAMA_URL=http://192.168.6.20:11434
-                  <br />• 配置后需要重启前端容器：docker-compose restart frontend
+                  {t('settings.ollamaHint')}
                 </p>
               )}
               {settings.ai_provider?.value === 'ollama' && ollamaModels.length > 0 && (
                 <p className="text-xs text-green-600 dark:text-green-400 mt-1">
-                  ✓ 已获取 {ollamaModels.length} 个可用模型
+                  {t('settings.modelsFetched', { count: ollamaModels.length })}
                 </p>
               )}
             </div>
@@ -1112,11 +1533,9 @@ export default function Settings() {
             {(settings.ai_provider?.value === 'openai' || settings.ai_provider?.value === 'deepseek') && (
               <div>
                 <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
-                  API密钥
+                  {t('settings.apiKey')}
                 </label>
-                <input
-                  type="password"
-                  className="input w-full"
+                <PasswordInput
                   value={settings.ai_api_key?.value || ''}
                   onChange={(e) =>
                     setSettings((prev) => ({
@@ -1125,14 +1544,15 @@ export default function Settings() {
                     }))
                   }
                   onBlur={() => updateSetting('ai_api_key', settings.ai_api_key?.value || '')}
-                  placeholder="输入API密钥"
+                  placeholder={t('settings.enterApiKey')}
+                  className="input w-full"
                 />
               </div>
             )}
 
             <div>
               <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
-                模型名称
+                {t('settings.model')}
               </label>
               {settings.ai_provider?.value === 'ollama' && ollamaModels.length > 0 ? (
                 <select
@@ -1177,378 +1597,387 @@ export default function Settings() {
         </div>
         )}
 
-        {/* ========== 系统功能 ========== */}
+        {/* ========== 六、语音朗读设置（仅管理员） ========== */}
+        {user?.role === 'admin' && (
         <div className="card">
           <div className="flex items-center gap-3 mb-4">
-            <Monitor className="w-5 h-5 text-blue-600" />
-            <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">系统功能</h2>
+              <Volume2 className="w-5 h-5 text-orange-600" />
+              <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">{t('settings.ttsServerSettings')}</h2>
           </div>
 
           <div className="space-y-6">
-            {/* 系统版本号 */}
-            <div className="pb-4 border-b border-gray-200 dark:border-gray-700 space-y-3">
-              <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm font-medium text-gray-900 dark:text-gray-100">前端版本</p>
+                <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
+                  {t('settings.ttsServerAddress')} <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  className="input"
+                  value={settings.tts_server_host?.value || '127.0.0.1'}
+                  onChange={(e) =>
+                    setSettings((prev) => ({
+                      ...prev,
+                      tts_server_host: { ...prev.tts_server_host!, value: e.target.value },
+                    }))
+                  }
+                  onBlur={() => updateSetting('tts_server_host', settings.tts_server_host?.value || '127.0.0.1')}
+                  placeholder={t('settings.ttsServerAddressPlaceholder')}
+                />
                   <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                    前端构建版本号
+                  {t('settings.ttsServerAddressDesc')}
                   </p>
                 </div>
-                <div className="text-right">
-                  <code className="text-sm font-mono bg-gray-100 dark:bg-gray-800 px-3 py-1 rounded text-blue-600 dark:text-blue-400">
-                    {import.meta.env.VITE_BUILD_VERSION || '未知版本'}
-                  </code>
-                </div>
-              </div>
-              {import.meta.env.VITE_BUILD_TIME && (
-                <div className="flex items-center justify-between">
+
                   <div>
-                    <p className="text-sm font-medium text-gray-900 dark:text-gray-100">前端编译时间</p>
+                <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
+                  {t('settings.ttsServerPort')} <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="number"
+                  className="input w-32"
+                  value={settings.tts_server_port?.value || '5050'}
+                  onChange={(e) =>
+                    setSettings((prev) => ({
+                      ...prev,
+                      tts_server_port: { ...prev.tts_server_port!, value: e.target.value },
+                    }))
+                  }
+                  onBlur={() => updateSetting('tts_server_port', settings.tts_server_port?.value || '5050')}
+                  placeholder="5050"
+                  min="1"
+                  max="65535"
+                />
                     <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                      前端构建时间
-                    </p>
-                  </div>
-                  <div className="text-right">
-                    <code className="text-xs font-mono bg-gray-100 dark:bg-gray-800 px-3 py-1 rounded text-gray-600 dark:text-gray-400">
-                      {new Date(import.meta.env.VITE_BUILD_TIME).toLocaleString('zh-CN', { 
-                        year: 'numeric', 
-                        month: '2-digit', 
-                        day: '2-digit', 
-                        hour: '2-digit', 
-                        minute: '2-digit',
-                        second: '2-digit'
-                      })}
-                    </code>
-                  </div>
-                </div>
-              )}
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-gray-900 dark:text-gray-100">后端版本</p>
-                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                    后端构建版本号
-                  </p>
-                </div>
-                <div className="text-right">
-                  <code className="text-sm font-mono bg-gray-100 dark:bg-gray-800 px-3 py-1 rounded text-green-600 dark:text-green-400">
-                    {backendVersion || '加载中...'}
-                  </code>
-                </div>
-              </div>
-              {backendBuildTime && (
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm font-medium text-gray-900 dark:text-gray-100">后端编译时间</p>
-                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                      后端构建时间
-                    </p>
-                  </div>
-                  <div className="text-right">
-                    <code className="text-xs font-mono bg-gray-100 dark:bg-gray-800 px-3 py-1 rounded text-gray-600 dark:text-gray-400">
-                      {new Date(backendBuildTime).toLocaleString('zh-CN', { 
-                        year: 'numeric', 
-                        month: '2-digit', 
-                        day: '2-digit', 
-                        hour: '2-digit', 
-                        minute: '2-digit',
-                        second: '2-digit'
-                      })}
-                    </code>
-                  </div>
-                </div>
-              )}
-            </div>
-            {/* 主题设置 */}
-            <div>
-              <label className="block text-sm font-medium mb-3">主题模式</label>
-              <div className="grid grid-cols-3 gap-2">
-                {[
-                  { value: 'system', label: '自动', icon: Monitor },
-                  { value: 'light', label: '亮色', icon: Sun },
-                  { value: 'dark', label: '暗色', icon: Moon },
-                ].map((option) => {
-                  const Icon = option.icon;
-                  return (
-                    <label
-                      key={option.value}
-                      className={`flex flex-col items-center gap-2 p-3 border-2 rounded-lg cursor-pointer transition-all ${
-                        theme === option.value
-                          ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20'
-                          : 'border-gray-200 dark:border-gray-700 hover:border-gray-300'
-                      }`}
-                    >
-                      <input
-                        type="radio"
-                        name="theme"
-                        value={option.value}
-                        checked={theme === option.value}
-                        onChange={() => setTheme(option.value as 'light' | 'dark' | 'system')}
-                        className="hidden"
-                      />
-                      <Icon className="w-5 h-5 text-gray-600 dark:text-gray-400" />
-                      <span className="text-sm font-medium">{option.label}</span>
-                    </label>
-                  );
-                })}
-              </div>
+                  {t('settings.ttsServerPortDesc')}
+                </p>
             </div>
 
-            {/* 系统语言设置 */}
+              {/* TTS 默认配置 */}
             <div className="pt-4 border-t border-gray-200 dark:border-gray-700">
-              <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
-                系统语言
-              </label>
+                <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-3">{t('settings.ttsDefaultConfig')}</h3>
+                
+                {/* 默认模型 */}
+                <div className="mb-4">
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                      {t('settings.defaultTtsEngine')}
+                    </label>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        try {
+                          toast.success(t('settings.refreshingTtsEngines'));
+                          await fetchTtsModels();
+                          toast.success(t('settings.ttsEnginesRefreshed'));
+                        } catch (error: any) {
+                          toast.error(t('settings.refreshTtsEnginesFailed'));
+                        }
+                      }}
+                      className="text-xs px-2 py-1 bg-blue-500 hover:bg-blue-600 text-white rounded transition-colors"
+                      title={t('settings.refreshTtsEnginesTitle')}
+                    >
+                      🔄 {t('settings.refreshTtsEngines')}
+                    </button>
+            </div>
               <select
-                className="input w-full"
-                value={settings.system_language?.value || 'zh-CN'}
+                    className="input"
+                    value={settings.tts_default_model?.value || 'edge'}
                 onChange={async (e) => {
-                  const newLanguage = e.target.value;
+                      const modelId = e.target.value;
                   setSettings((prev) => ({
                     ...prev,
-                    system_language: { ...prev.system_language!, value: newLanguage },
-                  }));
-                  await updateSetting('system_language', newLanguage);
-                  // 切换语言后，重新获取音色列表（根据新语言筛选）
-                  const defaultModel = settings.tts_default_model?.value || 'edge';
-                  if (defaultModel) {
-                    await fetchTtsVoices(defaultModel);
-                  }
-                }}
-              >
-                <option value="zh-CN">简体中文</option>
-                <option value="en">English</option>
+                        tts_default_model: { ...prev.tts_default_model!, value: modelId },
+                      }));
+                      updateSetting('tts_default_model', modelId);
+                      const voices = await fetchTtsVoices(modelId);
+                      if (voices && voices.length > 0) {
+                        const currentVoiceId = settings.tts_default_voice?.value;
+                        const voiceExists = voices.some((v: any) => v.id === currentVoiceId);
+                        if (!voiceExists) {
+                          const getVoiceLang = (voice: any): string => {
+                            if (voice.lang) return voice.lang;
+                            if (voice.locale?.toLowerCase().startsWith('zh')) return 'zh';
+                            if (voice.language?.toLowerCase().includes('chinese') || voice.language?.toLowerCase().includes('中文')) return 'zh';
+                            if (voice.id?.toLowerCase().startsWith('zh-cn') || voice.id?.toLowerCase().startsWith('zh_')) return 'zh';
+                            return 'zh';
+                          };
+                          const chineseVoice = voices.find((v: any) => getVoiceLang(v) === 'zh') || voices[0];
+                          if (chineseVoice) {
+                            setSettings((prev) => ({
+                              ...prev,
+                              tts_default_voice: { ...prev.tts_default_voice!, value: chineseVoice.id },
+                            }));
+                            updateSetting('tts_default_voice', chineseVoice.id);
+                          }
+                        }
+                      }
+                    }}
+                    disabled={loadingTtsModels}
+                  >
+                    {loadingTtsModels ? (
+                      <option value="">{t('settings.loadingFromApi')}</option>
+                    ) : ttsModels.length === 0 ? (
+                      <option value="">{t('settings.noAvailableEngines')}</option>
+                    ) : (
+                      ttsModels.map((model) => (
+                        <option key={model.id} value={model.id} disabled={!model.available}>
+                          {model.name} ({model.type === 'online' ? t('settings.online') : t('settings.offline')}) {model.available ? '' : `(${t('settings.unavailable')})`} - {model.description}
+                        </option>
+                      ))
+                    )}
               </select>
               <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                选择系统语言，音色列表将根据所选语言进行筛选
+                    {t('settings.selectDefaultTtsEngine')}
               </p>
             </div>
 
-            {/* OPDS功能（仅管理员） */}
-            {user?.role === 'admin' && (
-            <div className="pt-4 border-t border-gray-200 dark:border-gray-700">
-              <label className="flex items-center gap-3 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={settings.opds_enabled?.value === 'true'}
-                  onChange={(e) => {
-                    setSettings((prev) => ({
-                      ...prev,
-                      opds_enabled: { ...prev.opds_enabled!, value: e.target.checked ? 'true' : 'false' },
-                    }));
-                    updateSetting('opds_enabled', e.target.checked ? 'true' : 'false');
-                  }}
-                  className="w-5 h-5"
-                />
-                <div className="flex-1">
-                  <span className="text-sm font-medium">启用OPDS协议</span>
-                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                    允许其他阅读器通过OPDS访问书库
-                  </p>
-                </div>
+                {/* 默认语音 */}
+                <div className="mb-4">
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                      {t('settings.defaultVoice')}
               </label>
-              {settings.opds_enabled?.value === 'true' && (
-                <div className="mt-3 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
-                  <p className="text-xs font-medium mb-1">OPDS地址:</p>
-                  <code className="text-xs bg-white dark:bg-gray-800 p-2 rounded block break-all">
-                    {window.location.origin}/opds/
-                  </code>
-                </div>
-              )}
-            </div>
-            )}
-            <div className="pt-4 border-t border-gray-200 dark:border-gray-700">
-              <div className="flex items-center justify-between mb-3">
-                <div>
-                  <p className="text-sm font-medium">缓存管理</p>
-                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                    当前缓存大小: <span className="font-semibold">{formatCacheSize(cacheSize)}</span>
-                  </p>
-                </div>
                 <button
-                  onClick={handleClearCache}
-                  disabled={clearingCache || cacheSize === 0}
-                  className="btn btn-danger text-sm"
-                >
-                  {clearingCache ? (
-                    <>
-                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
-                      清除中
-                    </>
-                  ) : (
-                    <>
-                      <Trash className="w-4 h-4" />
-                      清除缓存
-                    </>
-                  )}
+                      type="button"
+                      onClick={async () => {
+                        const currentModel = settings.tts_default_model?.value || 'edge';
+                        if (currentModel === 'edge') {
+                          try {
+                            toast.success(t('settings.refreshingVoices'));
+                            await fetchTtsVoices(currentModel);
+                            toast.success(t('settings.voicesRefreshed'));
+                          } catch (error: any) {
+                            toast.error(t('settings.refreshVoicesFailed'));
+                          }
+                        } else {
+                          toast.success(t('settings.onlyEdgeTtsSupportsRefresh'));
+                        }
+                      }}
+                      className="text-xs px-2 py-1 bg-blue-500 hover:bg-blue-600 text-white rounded transition-colors"
+                      title={t('settings.refreshVoicesTitle')}
+                    >
+                      🔄 {t('settings.refreshVoices')}
                 </button>
               </div>
-            </div>
-          </div>
-        </div>
-
-        {/* ========== 安全设置（仅管理员） ========== */}
-        {user?.role === 'admin' && (
-          <div className="card">
-            <div className="flex items-center gap-3 mb-6">
-              <Shield className="w-5 h-5 text-purple-600" />
-              <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">安全与访问控制</h2>
-            </div>
-            
-            <div className="space-y-6">
-              {/* 私有访问密钥设置 */}
-              <div className="bg-blue-50 dark:bg-blue-900/20 p-4 rounded-lg border border-blue-200 dark:border-blue-800">
-                <h3 className="text-sm font-semibold text-blue-900 dark:text-blue-100 mb-3">私有访问密钥</h3>
-                <div className="space-y-3">
-                  <div>
-                    <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">密钥设置</label>
-                    <input
-                      type="password"
+                  <select
                       className="input"
-                      value={settings.private_access_key?.value || ''}
-                      onChange={(e) =>
+                    value={settings.tts_default_voice?.value || 'zh-CN-XiaoxiaoNeural'}
+                    onChange={(e) => {
                         setSettings((prev) => ({
                           ...prev,
-                          private_access_key: { ...prev.private_access_key!, value: e.target.value },
-                        }))
-                      }
-                      onBlur={() => updateSetting('private_access_key', settings.private_access_key?.value || '')}
-                      placeholder="留空则不启用私有访问密钥"
-                    />
+                        tts_default_voice: { ...prev.tts_default_voice!, value: e.target.value },
+                      }));
+                      updateSetting('tts_default_voice', e.target.value);
+                    }}
+                    disabled={ttsVoices.length === 0}
+                  >
+                    {ttsVoices.length > 0 ? (
+                      (() => {
+                        const getVoiceLang = (voice: any): string => {
+                          if (voice.lang) return voice.lang;
+                          if (voice.locale) {
+                            const locale = voice.locale.toLowerCase();
+                            if (locale.startsWith('zh')) return 'zh';
+                            if (locale.startsWith('en')) return 'en';
+                          }
+                          if (voice.language) {
+                            const lang = voice.language.toLowerCase();
+                            if (lang.includes('chinese') || lang.includes('中文')) return 'zh';
+                            if (lang.includes('english') || lang.includes('英文')) return 'en';
+                          }
+                          if (voice.id) {
+                            const id = voice.id.toLowerCase();
+                            if (id.startsWith('zh-cn') || id.startsWith('zh_')) return 'zh';
+                            if (id.startsWith('en-us') || id.startsWith('en_')) return 'en';
+                          }
+                          return 'zh';
+                        };
+                        const zhVoices = ttsVoices.filter((v: any) => getVoiceLang(v) === 'zh');
+                        const enVoices = ttsVoices.filter((v: any) => getVoiceLang(v) === 'en');
+                        return [
+                          ...zhVoices.map((voice: any) => (
+                            <option key={voice.id} value={voice.id}>
+                              {voice.name}
+                            </option>
+                          )),
+                          ...(enVoices.length > 0 ? [
+                            <optgroup key="en-group" label={t('settings.englishVoices')}>
+                              {enVoices.map((voice: any) => (
+                                <option key={voice.id} value={voice.id}>
+                                  {voice.name}
+                                </option>
+                              ))}
+                            </optgroup>
+                          ] : [])
+                        ];
+                      })()
+                    ) : (
+                      <option value="">{t('reader.loading')}</option>
+                    )}
+                  </select>
                     <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                      设置后，访问系统需要先验证此密钥。留空则不启用密钥验证。
+                    {t('settings.selectDefaultVoice')}
                     </p>
                   </div>
                   
-                  {settings.private_access_key?.value && settings.private_access_key.value.trim() !== '' && (
-                    <div className="pl-4 border-l-2 border-blue-300 dark:border-blue-700 space-y-2">
-                      <label className="flex items-center gap-3 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={settings.private_key_required_for_login?.value === 'true'}
-                          onChange={(e) => {
-                            setSettings((prev) => ({
-                              ...prev,
-                              private_key_required_for_login: { ...prev.private_key_required_for_login!, value: e.target.checked ? 'true' : 'false' },
-                            }));
-                            updateSetting('private_key_required_for_login', e.target.checked ? 'true' : 'false');
-                          }}
-                          className="w-4 h-4"
-                        />
-                        <span className="text-sm text-gray-700 dark:text-gray-300">登录时需要验证密钥</span>
-                      </label>
-                      
-                      <label className="flex items-center gap-3 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={settings.private_key_required_for_register?.value === 'true'}
-                          onChange={(e) => {
-                            setSettings((prev) => ({
-                              ...prev,
-                              private_key_required_for_register: { ...prev.private_key_required_for_register!, value: e.target.checked ? 'true' : 'false' },
-                            }));
-                            updateSetting('private_key_required_for_register', e.target.checked ? 'true' : 'false');
-                          }}
-                          className="w-4 h-4"
-                        />
-                        <span className="text-sm text-gray-700 dark:text-gray-300">注册时需要验证密钥（默认启用）</span>
-                      </label>
-                    </div>
-                  )}
-                </div>
-              </div>
-              
-              {/* 注册控制 */}
-              <div className="bg-green-50 dark:bg-green-900/20 p-4 rounded-lg border border-green-200 dark:border-green-800">
-                <h3 className="text-sm font-semibold text-green-900 dark:text-green-100 mb-3">注册控制</h3>
-                <label className="flex items-center gap-3 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={settings.registration_enabled?.value === 'true'}
-                    onChange={(e) => {
-                      setSettings((prev) => ({
-                        ...prev,
-                        registration_enabled: { ...prev.registration_enabled!, value: e.target.checked ? 'true' : 'false' },
-                      }));
-                      updateSetting('registration_enabled', e.target.checked ? 'true' : 'false');
-                    }}
-                    className="w-5 h-5"
-                  />
-                  <div>
-                    <div className="text-sm font-medium text-gray-700 dark:text-gray-300">允许用户注册</div>
-                    <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                      关闭后，新用户将无法注册账号
-                    </div>
-                  </div>
-                </label>
-              </div>
-              
-              {/* IP限制设置 */}
-              <div className="bg-red-50 dark:bg-red-900/20 p-4 rounded-lg border border-red-200 dark:border-red-800">
-                <h3 className="text-sm font-semibold text-red-900 dark:text-red-100 mb-3">IP访问限制</h3>
-                <div>
+                {/* 默认语速 */}
+                <div className="mb-4">
                   <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
-                    最大失败尝试次数
-                  </label>
-                  <input
-                    type="number"
-                    className="input w-32"
-                    min="1"
-                    max="100"
-                    value={settings.max_access_attempts?.value || '10'}
-                    onChange={(e) =>
-                      setSettings((prev) => ({
-                        ...prev,
-                        max_access_attempts: { ...prev.max_access_attempts!, value: e.target.value },
-                      }))
-                    }
-                    onBlur={() => updateSetting('max_access_attempts', settings.max_access_attempts?.value || '10')}
-                  />
+                    {t('settings.defaultSpeed')}
+                      </label>
+                  <div className="flex items-center gap-3">
+                        <input
+                      type="range"
+                      min="0.5"
+                      max="3.0"
+                      step="0.1"
+                      className="flex-1"
+                      value={settings.tts_default_speed?.value || '1.0'}
+                          onChange={(e) => {
+                            setSettings((prev) => ({
+                              ...prev,
+                          tts_default_speed: { ...prev.tts_default_speed!, value: e.target.value },
+                        }));
+                      }}
+                      onMouseUp={(e) => {
+                        updateSetting('tts_default_speed', (e.target as HTMLInputElement).value);
+                      }}
+                    />
+                    <span className="text-sm font-medium w-16 text-right">
+                      {settings.tts_default_speed?.value || '1.0'}x
+                    </span>
+                    </div>
                   <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                    超过此次数后，该IP将被自动封禁
+                    {t('settings.defaultSpeedDesc') || '设置默认语速（0.5x - 3.0x）'}
                   </p>
-                </div>
-              </div>
-              
-              {/* 配置摘要 */}
-              <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded-lg">
-                <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-3">当前安全配置</h3>
-                <div className="space-y-2 text-sm">
-                  <div className="flex items-center justify-between">
-                    <span className="text-gray-600 dark:text-gray-400">私有访问密钥:</span>
-                    <span className={`font-medium ${settings.private_access_key?.value && settings.private_access_key.value.trim() !== '' ? 'text-green-600 dark:text-green-400' : 'text-gray-500 dark:text-gray-500'}`}>
-                      {settings.private_access_key?.value && settings.private_access_key.value.trim() !== '' ? '已设置' : '未设置'}
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-gray-600 dark:text-gray-400">登录需要密钥:</span>
-                    <span className={`font-medium ${settings.private_key_required_for_login?.value === 'true' ? 'text-green-600 dark:text-green-400' : 'text-gray-500 dark:text-gray-500'}`}>
-                      {settings.private_key_required_for_login?.value === 'true' ? '是' : '否'}
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-gray-600 dark:text-gray-400">注册需要密钥:</span>
-                    <span className={`font-medium ${settings.private_key_required_for_register?.value === 'true' ? 'text-green-600 dark:text-green-400' : 'text-gray-500 dark:text-gray-500'}`}>
-                      {settings.private_key_required_for_register?.value === 'true' ? '是' : '否'}
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-gray-600 dark:text-gray-400">允许注册:</span>
-                    <span className={`font-medium ${settings.registration_enabled?.value === 'true' ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
-                      {settings.registration_enabled?.value === 'true' ? '是' : '否'}
-                    </span>
-                  </div>
                 </div>
               </div>
             </div>
           </div>
         )}
 
-        {/* ========== 邮件推送设置（仅管理员） ========== */}
+        {/* ========== 七、OCR 服务器设置（仅管理员） ========== */}
+        {user?.role === 'admin' && (
+        <div className="card">
+          <div className="flex items-center gap-3 mb-4">
+              <ScanLine className="w-5 h-5 text-purple-600" />
+              <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">{t('settings.ocrServerSettings')}</h2>
+          </div>
+
+          <div className="space-y-6">
+                <div>
+                <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
+                  {t('settings.ocrServerAddress')} <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  className="input"
+                  value={settings.ocr_server_host?.value || '127.0.0.1'}
+                  onChange={(e) =>
+                    setSettings((prev) => ({
+                      ...prev,
+                      ocr_server_host: { ...prev.ocr_server_host!, value: e.target.value },
+                    }))
+                  }
+                  onBlur={() => updateSetting('ocr_server_host', settings.ocr_server_host?.value || '127.0.0.1')}
+                  placeholder={t('settings.ocrServerAddressPlaceholder')}
+                />
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                  {t('settings.ocrServerAddressDesc')}
+                  </p>
+                </div>
+
+                  <div>
+                <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
+                  {t('settings.ocrServerPort')} <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="number"
+                  className="input w-32"
+                  value={settings.ocr_server_port?.value || '5080'}
+                  onChange={(e) =>
+                    setSettings((prev) => ({
+                      ...prev,
+                      ocr_server_port: { ...prev.ocr_server_port!, value: e.target.value },
+                    }))
+                  }
+                  onBlur={() => updateSetting('ocr_server_port', settings.ocr_server_port?.value || '5080')}
+                  placeholder="5080"
+                  min="1"
+                  max="65535"
+                />
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                  {t('settings.ocrServerPortDesc')}
+                </p>
+            </div>
+
+            {/* OCR API Key（可选） */}
+            <div>
+                <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
+                  {t('settings.ocrApiKey')} <span className="text-gray-400 text-xs">({t('settings.optional')})</span>
+                </label>
+                <PasswordInput
+                  value={settings.ocr_api_key?.value || ''}
+                  onChange={(e) =>
+                    setSettings((prev) => ({
+                      ...prev,
+                      ocr_api_key: { ...prev.ocr_api_key!, value: e.target.value },
+                    }))
+                  }
+                  onBlur={() => updateSetting('ocr_api_key', settings.ocr_api_key?.value || '')}
+                  placeholder={t('settings.ocrApiKeyPlaceholder')}
+                  className="input"
+                />
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                  {t('settings.ocrApiKeyDesc')}
+                </p>
+            </div>
+
+            {/* 测试 OCR 连接 */}
+            <div className="pt-4 border-t border-gray-200 dark:border-gray-700">
+              <button
+                type="button"
+                onClick={async () => {
+                  try {
+                    toast.loading(t('settings.testingOcrConnection') || '测试连接中...', { id: 'ocr-test' });
+                    // 先保存设置，然后通过后端 API 测试连接
+                    const host = settings.ocr_server_host?.value || '127.0.0.1';
+                    const port = settings.ocr_server_port?.value || '5080';
+                    
+                    // 先保存设置
+                    await updateSetting('ocr_server_host', host);
+                    await updateSetting('ocr_server_port', port);
+                    
+                    // 通过后端 API 测试连接（避免 CORS 问题）
+                    // 使用 api 工具函数，会自动处理认证令牌
+                    const response = await api.get('/ocr/health');
+                    const data = response.data;
+                    if (data.status === 'ok' && data.ocr_engine_ready) {
+                      toast.success(t('settings.ocrConnectionSuccess') || 'OCR 服务连接成功！', { id: 'ocr-test' });
+                    } else if (data.status === 'ok') {
+                      toast.warning(t('settings.ocrServiceNotReady') || 'OCR 服务运行中，但引擎未就绪', { id: 'ocr-test' });
+                    } else {
+                      toast.error(t('settings.ocrConnectionFailed') || `OCR 服务连接失败: ${data.message || '未知错误'}`, { id: 'ocr-test' });
+                    }
+                  } catch (error: any) {
+                    toast.error(t('settings.ocrConnectionFailed') || `OCR 服务连接失败: ${error.message}`, { id: 'ocr-test' });
+                  }
+                }}
+                className="px-4 py-2 bg-purple-500 hover:bg-purple-600 text-white rounded transition-colors"
+              >
+                {t('settings.testOcrConnection') || '测试 OCR 连接'}
+              </button>
+            </div>
+          </div>
+        </div>
+        )}
+
+        {/* ========== 八、邮件推送设置（仅管理员） ========== */}
         {user?.role === 'admin' && (
           <div className="card">
-            <div className="flex items-center gap-3 mb-6">
-              <Mail className="w-5 h-5 text-orange-600" />
-              <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">邮件推送设置</h2>
+            <div className="flex items-center gap-3 mb-4">
+              <Mail className="w-5 h-5 text-blue-600" />
+              <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">{t('settings.emailPushSettings')}</h2>
             </div>
             
             <div className="space-y-6">
@@ -1568,9 +1997,9 @@ export default function Settings() {
                     className="w-5 h-5"
                   />
                   <div className="flex-1">
-                    <span className="text-sm font-medium">启用邮件推送功能</span>
+                    <span className="text-sm font-medium">{t('settings.enableEmailPush')}</span>
                     <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                      启用后，用户可以将书籍推送到Kindle或其他邮箱
+                      {t('settings.enableEmailPushDesc')}
                     </p>
                   </div>
                 </label>
@@ -1580,11 +2009,11 @@ export default function Settings() {
                 <>
                   {/* SMTP配置 */}
                   <div className="space-y-4 pt-4 border-t border-gray-200 dark:border-gray-700">
-                    <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">SMTP服务器配置</h3>
+                    <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">{t('settings.smtpServerConfig')}</h3>
                     
                     <div>
                       <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
-                        SMTP服务器地址 <span className="text-red-500">*</span>
+                        {t('settings.smtpServerAddress')} <span className="text-red-500">*</span>
                       </label>
                       <input
                         type="text"
@@ -1597,16 +2026,16 @@ export default function Settings() {
                           }))
                         }
                         onBlur={() => updateSetting('smtp_host', settings.smtp_host?.value || '')}
-                        placeholder="例如：smtp.gmail.com 或 smtp.qq.com"
+                        placeholder={t('settings.smtpServerAddressPlaceholder')}
                       />
                       <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                        常用邮箱SMTP地址：Gmail (smtp.gmail.com), QQ邮箱 (smtp.qq.com), 163邮箱 (smtp.163.com)
+                        {t('settings.smtpServerAddressDesc')}
                       </p>
                     </div>
 
                     <div>
                       <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
-                        SMTP端口 <span className="text-red-500">*</span>
+                        {t('settings.smtpPortRequired')} <span className="text-red-500">*</span>
                       </label>
                       <input
                         type="number"
@@ -1622,13 +2051,13 @@ export default function Settings() {
                         placeholder="587"
                       />
                       <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                        常用端口：587 (TLS), 465 (SSL), 25 (不推荐)
+                        {t('settings.smtpPortDesc')}
                       </p>
                     </div>
 
                     <div>
                       <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
-                        发送方邮箱地址 <span className="text-red-500">*</span>
+                        {t('settings.senderEmail')} <span className="text-red-500">*</span>
                       </label>
                       <input
                         type="email"
@@ -1644,17 +2073,15 @@ export default function Settings() {
                         placeholder="your-email@example.com"
                       />
                       <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                        此邮箱地址将显示在推送模态框中，用户需要在Kindle中允许接收此邮箱的邮件
+                        {t('settings.senderEmailDesc')}
                       </p>
                     </div>
 
                     <div>
                       <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
-                        SMTP密码/授权码 <span className="text-red-500">*</span>
+                        {t('settings.smtpPasswordOrAuthCode')} <span className="text-red-500">*</span>
                       </label>
-                      <input
-                        type="password"
-                        className="input"
+                      <PasswordInput
                         value={settings.smtp_password?.value || ''}
                         onChange={(e) =>
                           setSettings((prev) => ({
@@ -1663,41 +2090,41 @@ export default function Settings() {
                           }))
                         }
                         onBlur={() => updateSetting('smtp_password', settings.smtp_password?.value || '')}
-                        placeholder="输入邮箱密码或授权码"
+                        placeholder={t('settings.smtpPasswordPlaceholder')}
+                        className="input"
                       />
                       <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                        注意：部分邮箱（如Gmail、QQ邮箱）需要使用授权码而非登录密码
+                        {t('settings.smtpPasswordDesc')}
                       </p>
                     </div>
                   </div>
 
                   {/* 测试邮件 */}
                   <div className="pt-4 border-t border-gray-200 dark:border-gray-700">
-                    <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-3">测试邮件发送</h3>
+                    <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-3">{t('settings.testEmailSending')}</h3>
                     <div className="flex gap-3">
                       <input
                         type="email"
                         className="input flex-1"
                         value={testEmailAddress}
                         onChange={(e) => setTestEmailAddress(e.target.value)}
-                        placeholder="输入测试邮箱地址"
+                        placeholder={t('settings.testEmailAddressPlaceholder')}
                         disabled={testingEmail}
                       />
                       <button
                         onClick={async () => {
                           if (!testEmailAddress || !testEmailAddress.includes('@')) {
-                            toast.error('请输入有效的邮箱地址');
+                            toast.error(t('settings.pleaseEnterValidEmail'));
                             return;
                           }
                           setTestingEmail(true);
                           try {
                             const response = await api.post('/settings/test-email', { email: testEmailAddress });
-                            toast.success(`测试邮件已发送到 ${response.data.sentTo}`);
+                            toast.success(t('settings.testEmailSentTo', { email: response.data.sentTo }));
                             setTestEmailAddress('');
                           } catch (error: any) {
-                            const errorMsg = error.response?.data?.error || error.response?.data?.message || '发送测试邮件失败';
+                            const errorMsg = error.response?.data?.error || error.response?.data?.message || t('settings.sendTestEmailFailed');
                             const errorDetails = error.response?.data?.details;
-                            console.error('发送测试邮件失败:', error.response?.data || error);
                             toast.error(errorDetails ? `${errorMsg} (${errorDetails})` : errorMsg, {
                               duration: 5000, // 显示5秒，让用户有时间阅读
                             });
@@ -1711,18 +2138,18 @@ export default function Settings() {
                         {testingEmail ? (
                           <>
                             <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
-                            发送中...
+                            {t('settings.sending')}
                           </>
                         ) : (
                           <>
                             <Send className="w-4 h-4" />
-                            发送测试邮件
+                            {t('settings.sendTestEmail')}
                           </>
                         )}
                       </button>
                     </div>
                     <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
-                      发送测试邮件以验证SMTP配置是否正确
+                      {t('settings.testEmailDesc')}
                     </p>
                   </div>
                 </>
@@ -1731,607 +2158,464 @@ export default function Settings() {
           </div>
         )}
 
-        {/* ========== 语音朗读服务器设置（仅管理员） ========== */}
+        {/* ========== 八、安全与访问控制（仅管理员） ========== */}
         {user?.role === 'admin' && (
           <div className="card">
             <div className="flex items-center gap-3 mb-4">
-              <Volume2 className="w-5 h-5 text-blue-600" />
-              <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">语音朗读服务器设置</h2>
+              <Shield className="w-5 h-5 text-red-600" />
+              <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">{t('settings.securityAndAccessControl')}</h2>
+            </div>
+            
+            <div className="space-y-6">
+              {/* API Key 设置 */}
+              <div className="bg-purple-50 dark:bg-purple-900/20 p-4 rounded-lg border border-purple-200 dark:border-purple-800 mb-4">
+                <h3 className="text-sm font-semibold text-purple-900 dark:text-purple-100 mb-3">{t('settings.apiKey') || 'API Key'}</h3>
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">{t('settings.apiKeySettings') || 'API Key 设置'}</label>
+                    <PasswordInput
+                      value={settings.api_key?.value || ''}
+                      onChange={(e) =>
+                        setSettings((prev) => ({
+                          ...prev,
+                          api_key: { ...prev.api_key!, value: e.target.value },
+                        }))
+                      }
+                      onBlur={() => updateSetting('api_key', settings.api_key?.value || '')}
+                      placeholder={t('settings.enterApiKey') || '输入 API Key'}
+                      className="input"
+                    />
+                    <div className="mt-2 flex items-center gap-2">
+                      {settings.api_key?.value && settings.api_key.value.trim() !== '' ? (
+                        <>
+                          <CheckCircle className="w-4 h-4 text-green-600 dark:text-green-400" />
+                          <p className="text-xs text-green-600 dark:text-green-400">
+                            API Key 验证已启用，所有 API 请求都需要提供正确的 API Key
+                          </p>
+                        </>
+                      ) : (
+                        <>
+                          <XCircle className="w-4 h-4 text-gray-400" />
+                          <p className="text-xs text-gray-500 dark:text-gray-400">
+                            API Key 验证未启用，留空则不要求 API Key
+                          </p>
+                        </>
+                      )}
+                    </div>
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
+                      {t('settings.apiKeyDesc') || '用于 API 请求认证的密钥，所有 API 请求都需要在请求头中包含 X-API-Key。留空则不启用 API Key 验证。'}
+                    </p>
+                    <p className="text-xs text-yellow-600 dark:text-yellow-400 mt-1">
+                      ⚠️ 修改 API Key 后，所有客户端都需要更新 API Key 才能继续使用服务
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* 私有访问密钥设置 */}
+              <div className="bg-blue-50 dark:bg-blue-900/20 p-4 rounded-lg border border-blue-200 dark:border-blue-800">
+                <h3 className="text-sm font-semibold text-blue-900 dark:text-blue-100 mb-3">{t('settings.privateAccessKey')}</h3>
+                <div className="space-y-3">
+              <div>
+                    <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">{t('settings.keySettings')}</label>
+                <PasswordInput
+                      value={settings.private_access_key?.value || ''}
+                  onChange={(e) =>
+                    setSettings((prev) => ({
+                      ...prev,
+                          private_access_key: { ...prev.private_access_key!, value: e.target.value },
+                    }))
+                  }
+                      onBlur={() => updateSetting('private_access_key', settings.private_access_key?.value || '')}
+                      placeholder={t('settings.leaveEmptyToDisable')}
+                  className="input"
+                />
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                      {t('settings.keyVerificationDesc')}
+                </p>
+              </div>
+
+                  {settings.private_access_key?.value && settings.private_access_key.value.trim() !== '' && (
+                    <div className="pl-4 border-l-2 border-blue-300 dark:border-blue-700 space-y-2">
+                      <label className="flex items-center gap-3 cursor-pointer">
+                <input
+                          type="checkbox"
+                          checked={settings.private_key_required_for_login?.value === 'true'}
+                    onChange={(e) => {
+                      setSettings((prev) => ({
+                        ...prev,
+                              private_key_required_for_login: { ...prev.private_key_required_for_login!, value: e.target.checked ? 'true' : 'false' },
+                            }));
+                            updateSetting('private_key_required_for_login', e.target.checked ? 'true' : 'false');
+                          }}
+                          className="w-4 h-4"
+                        />
+                        <span className="text-sm text-gray-700 dark:text-gray-300">{t('settings.requireKeyForLogin')}</span>
+                  </label>
+                      
+                      <label className="flex items-center gap-3 cursor-pointer">
+                    <input
+                          type="checkbox"
+                          checked={settings.private_key_required_for_register?.value === 'true'}
+                      onChange={(e) => {
+                        setSettings((prev) => ({
+                          ...prev,
+                              private_key_required_for_register: { ...prev.private_key_required_for_register!, value: e.target.checked ? 'true' : 'false' },
+                        }));
+                            updateSetting('private_key_required_for_register', e.target.checked ? 'true' : 'false');
+                      }}
+                          className="w-4 h-4"
+                    />
+                        <span className="text-sm text-gray-700 dark:text-gray-300">{t('settings.requireKeyForRegister')}</span>
+                      </label>
+                  </div>
+                  )}
+                </div>
+                </div>
+
+              {/* 注册控制 */}
+              <div className="bg-green-50 dark:bg-green-900/20 p-4 rounded-lg border border-green-200 dark:border-green-800">
+                <h3 className="text-sm font-semibold text-green-900 dark:text-green-100 mb-3">{t('settings.registrationControl')}</h3>
+                  <label className="flex items-center gap-3 cursor-pointer">
+                    <input
+                      type="checkbox"
+                    checked={settings.registration_enabled?.value === 'true'}
+                      onChange={(e) => {
+                        setSettings((prev) => ({
+                          ...prev,
+                        registration_enabled: { ...prev.registration_enabled!, value: e.target.checked ? 'true' : 'false' },
+                        }));
+                      updateSetting('registration_enabled', e.target.checked ? 'true' : 'false');
+                      }}
+                      className="w-5 h-5"
+                    />
+                    <div>
+                    <div className="text-sm font-medium text-gray-700 dark:text-gray-300">{t('settings.allowUserRegistration')}</div>
+                    <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                      {t('settings.disableRegistrationDesc')}
+                    </div>
+                    </div>
+                  </label>
+                </div>
+
+              {/* API服务器配置显示控制 */}
+              <div className="bg-purple-50 dark:bg-purple-900/20 p-4 rounded-lg border border-purple-200 dark:border-purple-800">
+                <h3 className="text-sm font-semibold text-purple-900 dark:text-purple-100 mb-3">{t('settings.apiServerConfigControl')}</h3>
+                  <label className="flex items-center gap-3 cursor-pointer">
+                    <input
+                      type="checkbox"
+                    checked={settings.enable_api_server_config_in_login?.value === 'true'}
+                      onChange={(e) => {
+                        setSettings((prev) => ({
+                          ...prev,
+                        enable_api_server_config_in_login: { ...prev.enable_api_server_config_in_login!, value: e.target.checked ? 'true' : 'false' },
+                        }));
+                      updateSetting('enable_api_server_config_in_login', e.target.checked ? 'true' : 'false');
+                      }}
+                      className="w-5 h-5"
+                    />
+                    <div>
+                    <div className="text-sm font-medium text-gray-700 dark:text-gray-300">{t('settings.enableApiServerConfigInLogin')}</div>
+                    <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                      {t('settings.enableApiServerConfigInLoginDesc')}
+                    </div>
+                    </div>
+                  </label>
+                </div>
+
+              {/* IP限制设置 */}
+              <div className="bg-red-50 dark:bg-red-900/20 p-4 rounded-lg border border-red-200 dark:border-red-800">
+                <h3 className="text-sm font-semibold text-red-900 dark:text-red-100 mb-3">{t('settings.ipAccessRestriction')}</h3>
+                <div>
+                  <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
+                    {t('settings.maxFailedAttempts')}
+                  </label>
+                  <input
+                    type="number"
+                    className="input w-32"
+                    min="1"
+                    max="100"
+                    value={settings.max_access_attempts?.value || '10'}
+                    onChange={(e) =>
+                      setSettings((prev) => ({
+                        ...prev,
+                        max_access_attempts: { ...prev.max_access_attempts!, value: e.target.value },
+                      }))
+                    }
+                    onBlur={() => updateSetting('max_access_attempts', settings.max_access_attempts?.value || '10')}
+                  />
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                    {t('settings.autoBanDesc')}
+                  </p>
+                </div>
+              </div>
+
+              {/* 配置摘要 */}
+              <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded-lg">
+                <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-3">{t('settings.currentSecurityConfig')}</h3>
+                <div className="space-y-2 text-sm">
+                  <div className="flex items-center justify-between">
+                    <span className="text-gray-600 dark:text-gray-400">{t('settings.privateAccessKeyStatus')}</span>
+                    <span className={`font-medium ${settings.private_access_key?.value && settings.private_access_key.value.trim() !== '' ? 'text-green-600 dark:text-green-400' : 'text-gray-500 dark:text-gray-500'}`}>
+                      {settings.private_access_key?.value && settings.private_access_key.value.trim() !== '' ? t('settings.set') : t('settings.notSet')}
+                    </span>
+                    </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-gray-600 dark:text-gray-400">{t('settings.loginRequiresKey')}</span>
+                    <span className={`font-medium ${settings.private_key_required_for_login?.value === 'true' ? 'text-green-600 dark:text-green-400' : 'text-gray-500 dark:text-gray-500'}`}>
+                      {settings.private_key_required_for_login?.value === 'true' ? t('settings.yes') : t('settings.no')}
+                    </span>
+                    </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-gray-600 dark:text-gray-400">{t('settings.registerRequiresKey')}</span>
+                    <span className={`font-medium ${settings.private_key_required_for_register?.value === 'true' ? 'text-green-600 dark:text-green-400' : 'text-gray-500 dark:text-gray-500'}`}>
+                      {settings.private_key_required_for_register?.value === 'true' ? t('settings.yes') : t('settings.no')}
+                    </span>
+                    </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-gray-600 dark:text-gray-400">{t('settings.allowRegistration')}</span>
+                    <span className={`font-medium ${settings.registration_enabled?.value === 'true' ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
+                      {settings.registration_enabled?.value === 'true' ? t('settings.yes') : t('settings.no')}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-gray-600 dark:text-gray-400">{t('settings.showApiServerConfigInLogin')}</span>
+                    <span className={`font-medium ${settings.enable_api_server_config_in_login?.value === 'true' ? 'text-green-600 dark:text-green-400' : 'text-gray-500 dark:text-gray-500'}`}>
+                      {settings.enable_api_server_config_in_login?.value === 'true' ? t('settings.yes') : t('settings.no')}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ========== 八.五、隐私（仅管理员） ========== */}
+        {user?.role === 'admin' && (
+          <div className="card">
+            <div className="flex items-center gap-3 mb-4">
+              <Lock className="w-5 h-5 text-amber-600" />
+              <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">{t('settings.privacy')}</h2>
+            </div>
+            <div className="space-y-6">
+              <div className="bg-amber-50 dark:bg-amber-900/20 p-4 rounded-lg border border-amber-200 dark:border-amber-800">
+                <h3 className="text-sm font-semibold text-amber-900 dark:text-amber-100 mb-3">{t('settings.privacyBooksVisibility')}</h3>
+                <label className="flex items-center gap-3 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={settings.admin_can_see_all_books?.value === 'true'}
+                    onChange={(e) => {
+                      setSettings((prev) => ({
+                        ...prev,
+                        admin_can_see_all_books: { ...(prev.admin_can_see_all_books || { id: '', value: 'false', description: '' }), value: e.target.checked ? 'true' : 'false' },
+                      }));
+                      updateSetting('admin_can_see_all_books', e.target.checked ? 'true' : 'false');
+                    }}
+                    className="w-5 h-5"
+                  />
+                  <div>
+                    <div className="text-sm font-medium text-gray-700 dark:text-gray-300">{t('settings.adminCanSeeAllBooks')}</div>
+                    <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">{t('settings.adminCanSeeAllBooksDesc')}</div>
+                  </div>
+                </label>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ========== 九、系统时区设置（仅管理员） ========== */}
+        {user?.role === 'admin' && (
+          <div className="card">
+            <div className="flex items-center gap-3 mb-4">
+              <Globe className="w-5 h-5 text-blue-600" />
+              <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">系统时区设置</h2>
             </div>
             
             <div className="space-y-6">
               <div>
                 <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
-                  TTS 服务器地址 <span className="text-red-500">*</span>
+                  时区偏移（小时）
                 </label>
-                <input
-                  type="text"
-                  className="input"
-                  value={settings.tts_server_host?.value || '127.0.0.1'}
-                  onChange={(e) =>
-                    setSettings((prev) => ({
-                      ...prev,
-                      tts_server_host: { ...prev.tts_server_host!, value: e.target.value },
-                    }))
-                  }
-                  onBlur={() => updateSetting('tts_server_host', settings.tts_server_host?.value || '127.0.0.1')}
-                  placeholder="例如：127.0.0.1"
-                />
-                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                  部署 TTS 服务的服务器 IP 地址或域名
-                </p>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
-                  TTS 服务器端口 <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="number"
-                  className="input w-32"
-                  value={settings.tts_server_port?.value || '5050'}
-                  onChange={(e) =>
-                    setSettings((prev) => ({
-                      ...prev,
-                      tts_server_port: { ...prev.tts_server_port!, value: e.target.value },
-                    }))
-                  }
-                  onBlur={() => updateSetting('tts_server_port', settings.tts_server_port?.value || '5050')}
-                  placeholder="5050"
-                  min="1"
-                  max="65535"
-                />
-                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                  TTS 服务监听的端口号（默认：5050）
-                </p>
-              </div>
-
-              {/* TTS 默认配置 */}
-              <div className="pt-4 border-t border-gray-200 dark:border-gray-700">
-                <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-3">TTS 默认配置</h3>
-                
-                {/* 默认模型 */}
-                <div className="mb-4">
-                  <div className="flex items-center justify-between mb-2">
-                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
-                      默认 TTS 引擎
-                    </label>
-                    <button
-                      type="button"
-                      onClick={async () => {
-                        try {
-                          toast.success('正在从 API 刷新 TTS 引擎列表...');
-                          await fetchTtsModels();
-                          toast.success('TTS 引擎列表已刷新');
-                        } catch (error: any) {
-                          console.error('刷新 TTS 引擎列表失败:', error);
-                          toast.error('刷新 TTS 引擎列表失败');
-                        }
-                      }}
-                      className="text-xs px-2 py-1 bg-blue-500 hover:bg-blue-600 text-white rounded transition-colors"
-                      title="从 API 刷新 TTS 引擎列表"
-                    >
-                      🔄 刷新
-                    </button>
-                  </div>
-                  <select
-                    className="input"
-                    value={settings.tts_default_model?.value || 'edge'}
-                    onChange={async (e) => {
-                      const modelId = e.target.value;
-                      setSettings((prev) => ({
-                        ...prev,
-                        tts_default_model: { ...prev.tts_default_model!, value: modelId },
-                      }));
-                      updateSetting('tts_default_model', modelId);
-                      // 切换模型时，重新获取该模型的语音列表
-                      const voices = await fetchTtsVoices(modelId);
-                      // 如果当前默认语音不在新模型的语音列表中，重置为该模型的默认语音
-                      // 注意：不同TTS引擎的语音ID格式完全不同，切换引擎时必须使用对应引擎的语音ID
-                      if (voices && voices.length > 0) {
-                        const currentVoiceId = settings.tts_default_voice?.value;
-                        const voiceExists = voices.some((v: any) => v.id === currentVoiceId);
-                        
-                        if (!voiceExists) {
-                          // 当前语音ID不匹配新引擎，使用新引擎的默认语音
-                          // 辅助函数：从音色对象推断语言
-                          const getVoiceLang = (voice: any): string => {
-                            if (voice.lang) return voice.lang;
-                            if (voice.locale?.toLowerCase().startsWith('zh')) return 'zh';
-                            if (voice.language?.toLowerCase().includes('chinese') || voice.language?.toLowerCase().includes('中文')) return 'zh';
-                            if (voice.id?.toLowerCase().startsWith('zh-cn') || voice.id?.toLowerCase().startsWith('zh_')) return 'zh';
-                            return 'zh'; // 默认返回中文
-                          };
-                          const chineseVoice = voices.find((v: any) => getVoiceLang(v) === 'zh') || voices[0];
-                          if (chineseVoice) {
-                            console.log(`[TTS设置] 切换引擎：${settings.tts_default_model?.value} -> ${modelId}`);
-                            console.log(`[TTS设置] 语音ID不匹配，重置为: ${currentVoiceId} -> ${chineseVoice.id}`);
-                          setSettings((prev) => ({
-                            ...prev,
-                            tts_default_voice: { ...prev.tts_default_voice!, value: chineseVoice.id },
-                          }));
-                          updateSetting('tts_default_voice', chineseVoice.id);
-                          }
-                        }
-                      }
-                    }}
-                    disabled={loadingTtsModels}
-                  >
-                    {loadingTtsModels ? (
-                      <option value="">正在从 API 加载...</option>
-                    ) : ttsModels.length === 0 ? (
-                      <option value="">暂无可用引擎（请点击刷新按钮或检查 TTS 服务）</option>
-                    ) : (
-                      ttsModels.map((model) => (
-                        <option key={model.id} value={model.id} disabled={!model.available}>
-                          {model.name} ({model.type === 'online' ? '在线' : '离线'}) {model.available ? '' : '(不可用)'} - {model.description}
-                        </option>
-                      ))
-                    )}
-                  </select>
-                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                    选择默认使用的 TTS 引擎
-                  </p>
-                </div>
-
-                {/* 默认语音 */}
-                <div className="mb-4">
-                  <div className="flex items-center justify-between mb-2">
-                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
-                    默认语音
-                  </label>
-                    <button
-                      type="button"
-                      onClick={async () => {
-                        const currentModel = settings.tts_default_model?.value || 'edge';
-                        if (currentModel === 'edge') {
-                          try {
-                            toast.success('正在从在线服务刷新音色列表...');
-                            await fetchTtsVoices(currentModel);
-                            toast.success('音色列表已刷新');
-                          } catch (error: any) {
-                            console.error('刷新音色列表失败:', error);
-                            toast.error('刷新音色列表失败');
-                          }
-                        } else {
-                          toast.success('只有 Edge-TTS 支持在线刷新音色列表');
-                        }
-                      }}
-                      className="text-xs px-2 py-1 bg-blue-500 hover:bg-blue-600 text-white rounded transition-colors"
-                      title="从在线服务刷新音色列表（仅 Edge-TTS）"
-                    >
-                      🔄 刷新
-                    </button>
-                  </div>
-                  <select
-                    className="input"
-                    value={settings.tts_default_voice?.value || 'zh-CN-XiaoxiaoNeural'}
+                <div className="flex items-center gap-3">
+                  <input
+                    type="number"
+                    className="input w-32"
+                    min="-12"
+                    max="14"
+                    step="1"
+                    value={settings.system_timezone_offset?.value || '8'}
                     onChange={(e) => {
+                      const offset = e.target.value;
                       setSettings((prev) => ({
                         ...prev,
-                        tts_default_voice: { ...prev.tts_default_voice!, value: e.target.value },
+                        system_timezone_offset: { ...prev.system_timezone_offset!, value: offset },
                       }));
-                      updateSetting('tts_default_voice', e.target.value);
                     }}
-                    disabled={ttsVoices.length === 0}
-                  >
-                    {ttsVoices.length > 0 ? (
-                      (() => {
-                        // 辅助函数：从音色对象推断语言
-                        const getVoiceLang = (voice: any): string => {
-                          // 优先使用 lang 字段
-                          if (voice.lang) return voice.lang;
-                          // 从 locale 推断（如 zh-CN, en-US）
-                          if (voice.locale) {
-                            const locale = voice.locale.toLowerCase();
-                            if (locale.startsWith('zh')) return 'zh';
-                            if (locale.startsWith('en')) return 'en';
-                          }
-                          // 从 language 字段推断
-                          if (voice.language) {
-                            const lang = voice.language.toLowerCase();
-                            if (lang.includes('chinese') || lang.includes('中文')) return 'zh';
-                            if (lang.includes('english') || lang.includes('英文')) return 'en';
-                          }
-                          // 从 id 推断（如 zh-CN-XiaoxiaoNeural）
-                          if (voice.id) {
-                            const id = voice.id.toLowerCase();
-                            if (id.startsWith('zh-cn') || id.startsWith('zh_')) return 'zh';
-                            if (id.startsWith('en-us') || id.startsWith('en_')) return 'en';
-                          }
-                          return 'zh'; // 默认返回中文
-                        };
-                        
-                        // 按语言分组：先显示中文，再显示英文
-                        const zhVoices = ttsVoices.filter((v: any) => getVoiceLang(v) === 'zh');
-                        const enVoices = ttsVoices.filter((v: any) => getVoiceLang(v) === 'en');
-                        
-                        
-                        return [
-                          ...zhVoices.map((voice: any) => (
-                        <option key={voice.id} value={voice.id}>
-                              {voice.name}
-                        </option>
-                          )),
-                          ...(enVoices.length > 0 ? [
-                            <optgroup key="en-group" label="--- 英文音色 ---">
-                              {enVoices.map((voice: any) => (
-                                <option key={voice.id} value={voice.id}>
-                                  {voice.name}
-                                </option>
-                              ))}
-                            </optgroup>
-                          ] : [])
-                        ];
-                      })()
-                    ) : (
-                      <option value="">加载中...</option>
-                    )}
-                  </select>
-                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                    选择默认使用的语音（根据选择的引擎显示可用语音）
-                  </p>
-                </div>
-
-                {/* 默认语速 */}
-                <div className="mb-4">
-                  <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
-                    默认语速
-                  </label>
-                  <div className="flex items-center gap-3">
-                    <input
-                      type="range"
-                      min="0.5"
-                      max="3.0"
-                      step="0.1"
-                      className="flex-1"
-                      value={settings.tts_default_speed?.value || '1.0'}
-                      onChange={(e) => {
-                        setSettings((prev) => ({
-                          ...prev,
-                          tts_default_speed: { ...prev.tts_default_speed!, value: e.target.value },
-                        }));
-                      }}
-                      onMouseUp={(e) => {
-                        updateSetting('tts_default_speed', (e.target as HTMLInputElement).value);
-                      }}
-                    />
-                    <span className="text-sm font-medium w-16 text-right">
-                      {settings.tts_default_speed?.value || '1.0'}x
-                    </span>
-                  </div>
-                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                    设置默认语速（0.5x - 3.0x）
-                  </p>
-                </div>
-
-                {/* 自动角色识别 */}
-                <div className="mb-4">
-                  <label className="flex items-center gap-3 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={settings.tts_auto_role?.value === 'true'}
-                      onChange={(e) => {
-                        setSettings((prev) => ({
-                          ...prev,
-                          tts_auto_role: { ...prev.tts_auto_role!, value: e.target.checked ? 'true' : 'false' },
-                        }));
-                        updateSetting('tts_auto_role', e.target.checked ? 'true' : 'false');
-                      }}
-                      className="w-5 h-5"
-                    />
-                    <div>
-                      <span className="text-sm font-medium text-gray-700 dark:text-gray-300">启用自动角色识别</span>
-                      <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                        自动识别文本中的角色（旁白/对话）并选择合适的语音
-                      </p>
-                    </div>
-                  </label>
-                </div>
-
-                {/* 音频测试内容样本 */}
-                <div className="mb-4">
-                  <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
-                    音频测试内容样本
-                  </label>
-                  <textarea
-                    className="input min-h-[80px]"
-                    value={settings.tts_test_sample?.value || 'Hello, 你好！This is a test. 这是一个测试。'}
-                    onChange={(e) =>
-                      setSettings((prev) => ({
-                        ...prev,
-                        tts_test_sample: { ...prev.tts_test_sample!, value: e.target.value },
-                      }))
-                    }
-                    onBlur={() => updateSetting('tts_test_sample', settings.tts_test_sample?.value || 'Hello, 你好！This is a test. 这是一个测试。')}
-                    placeholder="例如：Hello, 你好！This is a test. 这是一个测试。"
+                    onBlur={() => updateSetting('system_timezone_offset', settings.system_timezone_offset?.value || '8')}
+                    placeholder="8"
                   />
-                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                    用于TTS测试的文本内容，建议使用中英文混读的文本以测试语音切换效果
-                  </p>
+                  <span className="text-sm text-gray-600 dark:text-gray-400">
+                    UTC{parseInt(settings.system_timezone_offset?.value || '8', 10) >= 0 ? '+' : ''}{settings.system_timezone_offset?.value || '8'}
+                  </span>
                 </div>
-              </div>
-
-              {/* 测试 TTS 服务 */}
-              <div className="pt-4 border-t border-gray-200 dark:border-gray-700">
-                <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-3">测试 TTS 服务</h3>
-                
-                {/* 显示当前使用的配置 */}
-                <div className="mb-3 p-3 bg-gray-50 dark:bg-gray-800 rounded-lg text-sm">
-                  <div className="space-y-1 text-gray-700 dark:text-gray-300">
-                    <div>
-                      <strong>测试引擎:</strong>{' '}
-                      {(() => {
-                        const modelId = settings.tts_default_model?.value || 'edge';
-                        const model = ttsModels.find(m => m.id === modelId);
-                        return model ? `${model.name} (${model.type === 'online' ? '在线' : '离线'})` : modelId;
-                      })()}
-                    </div>
-                    <div>
-                      <strong>测试音色:</strong>{' '}
-                      {(() => {
-                        const voiceId = settings.tts_default_voice?.value || 'zh-CN-XiaoxiaoNeural';
-                        const voice = ttsVoices.find(v => v.id === voiceId);
-                        if (voice) {
-                          return `${voice.name} ${voice.gender ? `(${voice.gender === 'male' ? '男' : '女'})` : ''} ${voice.style ? `- ${voice.style}` : ''}`;
-                        }
-                        return voiceId;
-                      })()}
-                    </div>
-                    <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                      💡 测试将使用上方"默认 TTS 引擎"和"默认语音"的配置
-                    </div>
-                  </div>
-                </div>
-                
-                <button
-                  onClick={async () => {
-                    // 停止之前的音频播放
-                    if (ttsTestAudio) {
-                      ttsTestAudio.pause();
-                      ttsTestAudio.currentTime = 0;
-                      setTtsTestAudio(null);
-                    }
-                    
-                    setTestingTTS(true);
-                    setTtsTestResult(null);
-                    try {
-                      // 直接使用系统默认配置进行测试
-                      const selectedModel = settings.tts_default_model?.value || 'edge';
-                      const selectedVoice = settings.tts_default_voice?.value || 'zh-CN-XiaoxiaoNeural';
-                      // 使用系统设置的测试样本
-                      const testText = settings.tts_test_sample?.value || '你好，这是一个TTS测试。';
-                      
-                      console.log(`[TTS测试] 使用配置: model=${selectedModel}, voice=${selectedVoice}, text="${testText.substring(0, 50)}${testText.length > 50 ? '...' : ''}"`);
-                      
-                      const response = await api.post('/tts/test', {
-                        voice: selectedVoice,
-                        text: testText,
-                        model: selectedModel  // 传递模型参数，确保使用正确的引擎
-                      });
-                      setTtsTestResult(response.data);
-                      
-                      // 检查响应是否成功
-                      if (!response.data.success) {
-                        const errorMsg = response.data.error || response.data.message || '测试 TTS 服务失败';
-                        const errorDetails = response.data.details;
-                        toast.error(errorDetails ? `${errorMsg} (${errorDetails})` : errorMsg, {
-                          duration: 5000,
-                        });
-                        return;
-                      }
-                      
-                      if (response.data.success && response.data.synthesis?.works) {
-                        toast.success('TTS 服务测试成功！正在播放测试音频...');
-                        
-                        // 如果返回了音频数据，自动播放
-                        if (response.data.audioData) {
-                          try {
-                            // 将base64转换为Blob
-                            const base64Data = response.data.audioData;
-                            const binaryString = atob(base64Data);
-                            const bytes = new Uint8Array(binaryString.length);
-                            for (let i = 0; i < binaryString.length; i++) {
-                              bytes[i] = binaryString.charCodeAt(i);
-                            }
-                            const blob = new Blob([bytes], { type: 'audio/mpeg' });
-                            const audioUrl = URL.createObjectURL(blob);
-                            
-                            // 创建Audio对象并播放
-                            const audio = new Audio(audioUrl);
-                            setTtsTestAudio(audio);
-                            
-                            audio.onended = () => {
-                              URL.revokeObjectURL(audioUrl);
-                              setTtsTestAudio(null);
-                            };
-                            
-                            audio.onerror = (e) => {
-                              console.error('音频播放失败:', e);
-                              toast.error('音频播放失败');
-                              URL.revokeObjectURL(audioUrl);
-                              setTtsTestAudio(null);
-                            };
-                            
-                            await audio.play();
-                          } catch (audioError: any) {
-                            console.error('播放测试音频失败:', audioError);
-                            toast.error('播放测试音频失败: ' + (audioError.message || '未知错误'));
-                          }
-                        }
-                      } else {
-                        toast.error(response.data.message || 'TTS 服务测试完成，但部分功能可能异常', {
-                          duration: 5000,
-                        });
-                      }
-                    } catch (error: any) {
-                      const errorMsg = error.response?.data?.error || error.response?.data?.message || '测试 TTS 服务失败';
-                      const errorDetails = error.response?.data?.details;
-                      console.error('测试 TTS 服务失败:', error.response?.data || error);
-                      setTtsTestResult({ 
-                        success: false, 
-                        error: errorMsg,
-                        details: errorDetails 
-                      });
-                      toast.error(errorDetails ? `${errorMsg} (${errorDetails})` : errorMsg, {
-                        duration: 5000,
-                      });
-                    } finally {
-                      setTestingTTS(false);
-                    }
-                  }}
-                  disabled={testingTTS}
-                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {testingTTS ? (
-                    <>
-                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
-                      测试中...
-                    </>
-                  ) : (
-                    <>
-                      <Volume2 className="w-4 h-4" />
-                      测试 TTS 服务
-                    </>
-                  )}
-                </button>
-                
-                {ttsTestResult && (
-                  <div className={`mt-3 p-3 rounded-lg text-sm ${
-                    ttsTestResult.success && ttsTestResult.synthesis?.works
-                      ? 'bg-green-50 dark:bg-green-900/20 text-green-800 dark:text-green-200'
-                      : 'bg-yellow-50 dark:bg-yellow-900/20 text-yellow-800 dark:text-yellow-200'
-                  }`}>
-                    {ttsTestResult.success && ttsTestResult.synthesis?.works ? (
-                      <div>
-                        <div className="font-semibold mb-1 flex items-center gap-2">
-                          ✅ 测试成功
-                          {ttsTestAudio && (
-                            <span className="text-xs font-normal opacity-70 flex items-center gap-1">
-                              <Volume2 className="w-3 h-3" />
-                              正在播放...
-                            </span>
-                          )}
-                        </div>
-                        <div className="text-xs opacity-80 space-y-1">
-                          <div><strong>服务器地址:</strong> {ttsTestResult.ttsBaseUrl}</div>
-                          <div><strong>健康检查:</strong> 正常</div>
-                          <div><strong>语音列表:</strong> {ttsTestResult.voices?.available ? '可用' : '不可用'}</div>
-                          <div><strong>合成功能:</strong> 正常</div>
-                          {ttsTestResult.synthesis?.model && (
-                            <div>
-                              <strong>TTS 引擎:</strong> {(() => {
-                                const modelId = ttsTestResult.synthesis.model;
-                                const model = ttsModels.find(m => m.id === modelId);
-                                return model ? `${model.name} (${model.type === 'online' ? '在线' : '离线'})` : modelId;
-                              })()}
-                            </div>
-                          )}
-                          {ttsTestResult.synthesis?.voice && (
-                            <div>
-                              <strong>音色类型:</strong> {(() => {
-                                const voiceId = ttsTestResult.synthesis.voice;
-                                const voice = ttsVoices.find(v => v.id === voiceId);
-                                if (voice) {
-                                  return `${voice.name} ${voice.gender ? `(${voice.gender === 'male' ? '男' : '女'})` : ''} ${voice.style ? `- ${voice.style}` : ''}`;
-                                }
-                                // 如果找不到，尝试从voice ID中解析
-                                // Edge-TTS格式：zh-CN-XiaoxiaoNeural
-                                if (voiceId.startsWith('zh-CN-')) {
-                                  const voiceName = voiceId.replace('zh-CN-', '').replace('Neural', '');
-                                  // 简单的名称映射
-                                  const nameMap: Record<string, string> = {
-                                    'Xiaoxiao': '晓晓（温柔女声）',
-                                    'Xiaohan': '晓涵（自然女声）',
-                                    'Xiaomo': '晓墨（成熟女声）',
-                                    'Xiaoyi': '晓伊（可爱女声）',
-                                    'Yunxi': '云希（年轻男声）',
-                                    'Yunyang': '云扬（成熟男声）',
-                                    'Yunjian': '云健（专业男声）',
-                                  };
-                                  return nameMap[voiceName] || voiceId;
-                                }
-                                // CosyVoice格式：cosyvoice-{name}
-                                if (voiceId.startsWith('cosyvoice-')) {
-                                  return voiceId.replace('cosyvoice-', '');
-                                }
-                                return voiceId;
-                              })()}
-                            </div>
-                          )}
-                          {ttsTestResult.audioSize && (
-                            <div><strong>测试音频大小:</strong> {(ttsTestResult.audioSize / 1024).toFixed(2)} KB</div>
-                          )}
-                        </div>
-                      </div>
-                    ) : (
-                      <div>
-                        <div className="font-semibold mb-1">⚠️ 测试结果</div>
-                        <div className="text-xs opacity-80 space-y-1">
-                          {ttsTestResult.error && <div><strong>错误:</strong> {ttsTestResult.error}</div>}
-                          {ttsTestResult.details && <div><strong>详情:</strong> {ttsTestResult.details}</div>}
-                          {ttsTestResult.message && <div><strong>消息:</strong> {ttsTestResult.message}</div>}
-                          {ttsTestResult.synthesis?.error && (
-                            <div><strong>合成错误:</strong> {ttsTestResult.synthesis.error}</div>
-                          )}
-                          {ttsTestResult.synthesis?.model && (
-                            <div>
-                              <strong>TTS 引擎:</strong> {(() => {
-                                const modelId = ttsTestResult.synthesis.model;
-                                const model = ttsModels.find(m => m.id === modelId);
-                                return model ? `${model.name} (${model.type === 'online' ? '在线' : '离线'})` : modelId;
-                              })()}
-                        </div>
-                          )}
-                          {ttsTestResult.synthesis?.voice && (
-                            <div>
-                              <strong>音色类型:</strong> {(() => {
-                                const voiceId = ttsTestResult.synthesis.voice;
-                                const voice = ttsVoices.find(v => v.id === voiceId);
-                                if (voice) {
-                                  return `${voice.name} ${voice.gender ? `(${voice.gender === 'male' ? '男' : '女'})` : ''} ${voice.style ? `- ${voice.style}` : ''}`;
-                                }
-                                // 如果找不到，尝试从voice ID中解析
-                                // Edge-TTS格式：zh-CN-XiaoxiaoNeural
-                                if (voiceId.startsWith('zh-CN-')) {
-                                  const voiceName = voiceId.replace('zh-CN-', '').replace('Neural', '');
-                                  // 简单的名称映射
-                                  const nameMap: Record<string, string> = {
-                                    'Xiaoxiao': '晓晓（温柔女声）',
-                                    'Xiaohan': '晓涵（自然女声）',
-                                    'Xiaomo': '晓墨（成熟女声）',
-                                    'Xiaoyi': '晓伊（可爱女声）',
-                                    'Yunxi': '云希（年轻男声）',
-                                    'Yunyang': '云扬（成熟男声）',
-                                    'Yunjian': '云健（专业男声）',
-                                  };
-                                  return nameMap[voiceName] || voiceId;
-                                }
-                                // CosyVoice格式：cosyvoice-{name}
-                                if (voiceId.startsWith('cosyvoice-')) {
-                                  return voiceId.replace('cosyvoice-', '');
-                                }
-                                return voiceId;
-                              })()}
-                            </div>
-                          )}
-                          {ttsTestResult.synthesis?.error && (
-                            <div><strong>合成错误:</strong> {ttsTestResult.synthesis.error}</div>
-                          )}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                )}
-                
-                <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
-                  测试 TTS 服务的连接、健康状态和语音合成功能。测试将使用上方配置的"默认 TTS 引擎"和"默认语音"。
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                  系统时区偏移量（相对于UTC），默认+8（中国上海时区）。范围：-12 到 +14
+                </p>
+                <p className="text-xs text-blue-600 dark:text-blue-400 mt-1">
+                  💡 修改后，所有时间显示将根据新的时区偏移进行调整
                 </p>
               </div>
             </div>
           </div>
         )}
 
+        {/* ========== 十、系统信息（所有用户） ========== */}
+        <div className="card">
+          <div className="flex items-center gap-3 mb-4">
+            <Monitor className="w-5 h-5 text-gray-600" />
+            <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">{t('settings.systemInfo') || '系统信息'}</h2>
+                        </div>
+
+          <div className="space-y-6">
+            {/* 系统版本号 */}
+            <div className="pb-4 border-b border-gray-200 dark:border-gray-700 space-y-3">
+              <div className="flex items-center justify-between">
+                            <div>
+                  <p className="text-sm font-medium text-gray-900 dark:text-gray-100">{t('settings.frontendVersion')}</p>
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                    {t('settings.frontendBuildTime') || '前端构建版本号'}
+                  </p>
+                            </div>
+                <div className="text-right">
+                  <code className="text-sm font-mono bg-gray-100 dark:bg-gray-800 px-3 py-1 rounded text-blue-600 dark:text-blue-400">
+                    {import.meta.env.VITE_BUILD_VERSION || t('reader.unknownVersion')}
+                  </code>
+                </div>
+              </div>
+              {import.meta.env.VITE_BUILD_TIME && (
+                <div className="flex items-center justify-between">
+                            <div>
+                    <p className="text-sm font-medium text-gray-900 dark:text-gray-100">{t('settings.frontendBuildTime')}</p>
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                      {t('settings.frontendBuildTimeDesc')}
+                    </p>
+                            </div>
+                  <div className="text-right">
+                    <code className="text-xs font-mono bg-gray-100 dark:bg-gray-800 px-3 py-1 rounded text-gray-600 dark:text-gray-400">
+                      {new Date(import.meta.env.VITE_BUILD_TIME).toLocaleString(i18n.language === 'zh' ? 'zh-CN' : 'en-US', { 
+                        year: 'numeric', 
+                        month: '2-digit', 
+                        day: '2-digit', 
+                        hour: '2-digit', 
+                        minute: '2-digit',
+                        second: '2-digit'
+                      })}
+                    </code>
+                        </div>
+                      </div>
+              )}
+              <div className="flex items-center justify-between">
+                            <div>
+                  <p className="text-sm font-medium text-gray-900 dark:text-gray-100">{t('settings.backendVersion')}</p>
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                    {t('settings.backendVersionDesc')}
+                  </p>
+                        </div>
+                <div className="text-right">
+                  <code className="text-sm font-mono bg-gray-100 dark:bg-gray-800 px-3 py-1 rounded text-green-600 dark:text-green-400">
+                    {backendVersion || t('common.loading')}
+                  </code>
+                </div>
+              </div>
+              {backendBuildTime && (
+                <div className="flex items-center justify-between">
+                            <div>
+                    <p className="text-sm font-medium text-gray-900 dark:text-gray-100">{t('settings.backendBuildTime')}</p>
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                      {t('settings.backendBuildTimeDesc')}
+                    </p>
+                            </div>
+                  <div className="text-right">
+                    <code className="text-xs font-mono bg-gray-100 dark:bg-gray-800 px-3 py-1 rounded text-gray-600 dark:text-gray-400">
+                      {new Date(backendBuildTime).toLocaleString(i18n.language === 'zh' ? 'zh-CN' : 'en-US', { 
+                        year: 'numeric', 
+                        month: '2-digit', 
+                        day: '2-digit', 
+                        hour: '2-digit', 
+                        minute: '2-digit',
+                        second: '2-digit'
+                      })}
+                    </code>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+            {/* OPDS功能（仅管理员） */}
+            {user?.role === 'admin' && (
+            <div className="pt-4 border-t border-gray-200 dark:border-gray-700">
+              <label className="flex items-center gap-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={settings.opds_enabled?.value === 'true'}
+                  onChange={(e) => {
+                    setSettings((prev) => ({
+                      ...prev,
+                      opds_enabled: { ...prev.opds_enabled!, value: e.target.checked ? 'true' : 'false' },
+                    }));
+                    updateSetting('opds_enabled', e.target.checked ? 'true' : 'false');
+                  }}
+                  className="w-5 h-5"
+                />
+                <div className="flex-1">
+                  <span className="text-sm font-medium">{t('settings.opdsEnabled')}</span>
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                    {t('settings.opdsDesc')}
+                </p>
+              </div>
+              </label>
+              {settings.opds_enabled?.value === 'true' && (
+                <div className="mt-3 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
+                  <p className="text-xs font-medium mb-1">OPDS地址:</p>
+                  <code className="text-xs bg-white dark:bg-gray-800 p-2 rounded block break-all">
+                    {window.location.origin}/opds/
+                  </code>
+            </div>
+              )}
+          </div>
+        )}
+
+            {/* 缓存清理 */}
+            <div className="pt-4 border-t border-gray-200 dark:border-gray-700">
+              <div className="flex items-center justify-between mb-3">
+                <div>
+                  <p className="text-sm font-medium">{t('settings.cache')}</p>
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                    {t('settings.currentCacheSize')}: <span className="font-semibold">{formatCacheSize(cacheSize)}</span>
+                  </p>
+                </div>
+                <button
+                  onClick={handleClearCache}
+                  disabled={clearingCache || cacheSize === 0}
+                  className="btn btn-danger text-sm"
+                >
+                  {clearingCache ? (
+                    <>
+                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                      {t('settings.clearing')}
+                    </>
+                  ) : (
+                    <>
+                      <Trash className="w-4 h-4" />
+                      {t('settings.clearCache')}
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+        </div>
       </div>
 
       {/* 书籍类型编辑模态框 */}
@@ -2340,7 +2624,7 @@ export default function Settings() {
           <div className="card-gradient rounded-lg shadow-xl max-w-md w-full p-6">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-xl font-bold text-gray-900 dark:text-gray-100">
-                {editingCategory ? '编辑书籍类型' : '添加书籍类型'}
+              {editingCategory ? t('settings.editCategory') : t('settings.addCategory')}
               </h2>
               <button
                 onClick={() => {
@@ -2357,13 +2641,13 @@ export default function Settings() {
             <div className="space-y-4">
               <div>
                 <label className="block text-sm font-medium mb-2 text-gray-900 dark:text-gray-100">
-                  类型名称 <span className="text-red-500">*</span>
+                {t('settings.categoryName')} <span className="text-red-500">*</span>
                 </label>
                 <input
                   type="text"
                   value={categoryForm.name}
                   onChange={(e) => setCategoryForm({ ...categoryForm, name: e.target.value })}
-                  placeholder="例如: 小说、历史、科技"
+                placeholder={t('settings.categoryNamePlaceholder')}
                   className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-purple-500 dark:bg-gray-700 dark:text-white"
                   autoFocus
                 />
@@ -2371,13 +2655,13 @@ export default function Settings() {
 
               <div>
                 <label className="block text-sm font-medium mb-2 text-gray-900 dark:text-gray-100">
-                  排序顺序
+                {t('settings.displayOrder')}
                 </label>
                 <input
                   type="number"
                   value={categoryForm.display_order}
                   onChange={(e) => setCategoryForm({ ...categoryForm, display_order: parseInt(e.target.value) || 0 })}
-                  placeholder="数字越小越靠前"
+                placeholder={t('settings.displayOrderPlaceholder')}
                   className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-purple-500 dark:bg-gray-700 dark:text-white"
                 />
               </div>
@@ -2391,19 +2675,19 @@ export default function Settings() {
                   }}
                   className="flex-1 px-4 py-2 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
                 >
-                  取消
+                {t('common.cancel')}
                 </button>
                 <button
                   onClick={editingCategory ? handleUpdateCategory : handleCreateCategory}
                   className="flex-1 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors"
                 >
-                  {editingCategory ? '更新' : '创建'}
+                {editingCategory ? t('common.save') : t('common.add')}
                 </button>
               </div>
             </div>
           </div>
         </div>
       )}
-    </div>
+    </>
   );
 }

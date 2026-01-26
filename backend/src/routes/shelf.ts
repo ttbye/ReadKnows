@@ -8,6 +8,7 @@ import express from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import { db } from '../db';
 import { authenticateToken, AuthRequest } from '../middleware/auth';
+import { logActionFromRequest } from '../utils/logger';
 
 const router = express.Router();
 
@@ -30,6 +31,12 @@ router.post('/add', authenticateToken, async (req: AuthRequest, res) => {
     // 如果是子书籍（多格式书籍），使用主书籍ID
     const mainBookId = book.parent_book_id || book.id;
 
+    // 隐私：不允许添加他人的私有书籍
+    const mainBook = db.prepare('SELECT is_public, uploader_id FROM books WHERE id = ?').get(mainBookId) as any;
+    if (mainBook && mainBook.is_public === 0 && mainBook.uploader_id !== userId) {
+      return res.status(403).json({ error: '无权添加该书籍到书架' });
+    }
+
     // 检查主书籍是否已在书架中
     const existing = db
       .prepare('SELECT id FROM user_shelves WHERE user_id = ? AND book_id = ?')
@@ -39,11 +46,26 @@ router.post('/add', authenticateToken, async (req: AuthRequest, res) => {
       return res.status(400).json({ error: '书籍已在书架中' });
     }
 
+    // 获取书籍信息用于日志
+    const bookInfo = db.prepare('SELECT title FROM books WHERE id = ?').get(mainBookId) as any;
+    const username = db.prepare('SELECT username FROM users WHERE id = ?').get(userId) as any;
+
     // 添加主书籍到书架
     const shelfId = uuidv4();
     db.prepare(
       'INSERT INTO user_shelves (id, user_id, book_id) VALUES (?, ?, ?)'
     ).run(shelfId, userId, mainBookId);
+
+    // 记录日志
+    logActionFromRequest(req, {
+      action_type: 'book_favorite',
+      action_category: 'book',
+      description: `收藏书籍：${bookInfo?.title || mainBookId}`,
+      metadata: {
+        book_id: mainBookId,
+        book_title: bookInfo?.title,
+      },
+    });
 
     res.status(201).json({ message: '已添加到书架' });
   } catch (error: any) {
@@ -58,9 +80,24 @@ router.delete('/remove/:bookId', authenticateToken, async (req: AuthRequest, res
     const { bookId } = req.params;
     const userId = req.userId!;
 
+    // 获取书籍信息用于日志
+    const bookInfo = db.prepare('SELECT title FROM books WHERE id = ?').get(bookId) as any;
+    const username = db.prepare('SELECT username FROM users WHERE id = ?').get(userId) as any;
+
     db.prepare(
       'DELETE FROM user_shelves WHERE user_id = ? AND book_id = ?'
     ).run(userId, bookId);
+
+    // 记录日志
+    logActionFromRequest(req, {
+      action_type: 'book_unfavorite',
+      action_category: 'book',
+      description: `取消收藏书籍：${bookInfo?.title || bookId}`,
+      metadata: {
+        book_id: bookId,
+        book_title: bookInfo?.title,
+      },
+    });
 
     res.json({ message: '已从书架移除' });
   } catch (error: any) {
@@ -87,6 +124,7 @@ router.get('/my', authenticateToken, async (req: AuthRequest, res) => {
     const sortField = sortFieldMap[sort as string] || 's.added_at';
     const sortOrder = order === 'asc' ? 'ASC' : 'DESC';
 
+    // 仅展示公开书或本人上传的私有书，不展示他人私有（即使用户曾通过其他途径加入书架）
     const shelves = db
       .prepare(`
         SELECT 
@@ -96,9 +134,10 @@ router.get('/my', authenticateToken, async (req: AuthRequest, res) => {
         FROM user_shelves s
         JOIN books b ON s.book_id = b.id
         WHERE s.user_id = ? AND b.parent_book_id IS NULL
+          AND (b.is_public = 1 OR b.uploader_id = ?)
         ORDER BY ${sortField} ${sortOrder}
       `)
-      .all(userId) as any[];
+      .all(userId, userId) as any[];
 
     // 对于MOBI格式的书籍，优先使用EPUB版本的封面
     const processedBooks = shelves.map((book: any) => {

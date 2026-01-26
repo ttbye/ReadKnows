@@ -218,20 +218,20 @@ build_backend() {
         exit 1
     fi
     
-    print_info "后端构建上下文: $BACKEND_DIR"
+    print_info "后端构建上下文: $PROJECT_ROOT (项目根目录，用于读取 package.json)"
     print_info "目标平台: $PLATFORM"
     
     # 检查是否使用 buildx
     BUILD_SUCCESS=false
     if [ "$USE_BUILDX" = true ]; then
-        print_info "尝试使用 Docker Buildx 构建多平台镜像..."
+        print_info "尝试使用 Docker Buildx 构建多平台镜像（构建上下文: $PROJECT_ROOT）..."
         if docker buildx build \
             --platform "$PLATFORM" \
             --tag ttbye/readknows-backend:latest \
             --tag "ttbye/readknows-backend:latest-$ARCH_NAME" \
             --load \
-            -f "$BACKEND_DIR/Dockerfile" \
-            "$BACKEND_DIR" 2>&1; then
+            -f "$BACKEND_DIR/Dockerfile.debian" \
+            "$PROJECT_ROOT" 2>&1; then
             BUILD_SUCCESS=true
         else
             print_warning "Buildx 构建失败，回退到标准 Docker 构建..."
@@ -241,12 +241,12 @@ build_backend() {
     
     # 如果 Buildx 失败或未启用，使用标准构建
     if [ "$BUILD_SUCCESS" = false ]; then
-        print_info "使用标准 Docker 构建..."
+        print_info "使用标准 Docker 构建（构建上下文: $PROJECT_ROOT）..."
         docker build \
             --platform "$PLATFORM" \
             -t ttbye/readknows-backend:latest \
-            -f "$BACKEND_DIR/Dockerfile" \
-            "$BACKEND_DIR"
+            -f "$BACKEND_DIR/Dockerfile.debian" \
+            "$PROJECT_ROOT"
         
         if [ $? -eq 0 ]; then
             BUILD_SUCCESS=true
@@ -278,14 +278,14 @@ build_frontend() {
     # 检查是否使用 buildx
     BUILD_SUCCESS=false
     if [ "$USE_BUILDX" = true ]; then
-        print_info "尝试使用 Docker Buildx 构建多平台镜像..."
+        print_info "尝试使用 Docker Buildx 构建多平台镜像（构建上下文: $PROJECT_ROOT）..."
         if docker buildx build \
             --platform "$PLATFORM" \
             --tag ttbye/readknows-frontend:latest \
             --tag "ttbye/readknows-frontend:latest-$ARCH_NAME" \
             --load \
             -f "$FRONTEND_DIR/Dockerfile" \
-            "$FRONTEND_DIR" 2>&1; then
+            "$PROJECT_ROOT" 2>&1; then
             BUILD_SUCCESS=true
         else
             print_warning "Buildx 构建失败，回退到标准 Docker 构建..."
@@ -295,12 +295,12 @@ build_frontend() {
     
     # 如果 Buildx 失败或未启用，使用标准构建
     if [ "$BUILD_SUCCESS" = false ]; then
-        print_info "使用标准 Docker 构建..."
+        print_info "使用标准 Docker 构建（构建上下文: $PROJECT_ROOT）..."
         docker build \
             --platform "$PLATFORM" \
             -t ttbye/readknows-frontend:latest \
             -f "$FRONTEND_DIR/Dockerfile" \
-            "$FRONTEND_DIR"
+            "$PROJECT_ROOT"
         
         if [ $? -eq 0 ]; then
             BUILD_SUCCESS=true

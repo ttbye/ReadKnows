@@ -13,13 +13,60 @@ export interface IPBlockRequest extends Request {
 
 /**
  * 获取客户端真实IP地址
+ * 在 Docker 环境中，需要正确处理代理头
  */
 export function getClientIp(req: Request): string {
+  // 优先级：X-Forwarded-For > X-Real-IP > req.ip > req.socket.remoteAddress
+  // X-Forwarded-For 可能包含多个 IP（代理链），取第一个（最原始的客户端 IP）
   const forwarded = req.headers['x-forwarded-for'];
   if (typeof forwarded === 'string') {
-    return forwarded.split(',')[0].trim();
+    const ips = forwarded.split(',').map(ip => ip.trim()).filter(ip => ip);
+    if (ips.length > 0) {
+      // 取第一个 IP（最原始的客户端 IP）
+      const clientIp = ips[0];
+      // 过滤掉 Docker 内部网络 IP（172.x.x.x, 10.x.x.x 等）
+      // 如果第一个 IP 是 Docker 内部 IP，尝试取下一个
+      if (clientIp.startsWith('172.') || 
+          clientIp.startsWith('10.') || 
+          clientIp.startsWith('192.168.') ||
+          clientIp === '127.0.0.1' ||
+          clientIp === '::1') {
+        // 如果还有其他 IP，尝试使用下一个
+        if (ips.length > 1) {
+          return ips[1];
+        }
+      }
+      return clientIp;
+    }
   }
-  return req.ip || req.socket.remoteAddress || 'unknown';
+  
+  // 尝试 X-Real-IP 头
+  const realIp = req.headers['x-real-ip'];
+  if (typeof realIp === 'string' && realIp.trim()) {
+    return realIp.trim();
+  }
+  
+  // 使用 Express 的 req.ip（需要设置 trust proxy）
+  if (req.ip && req.ip !== '::ffff:127.0.0.1' && req.ip !== '::1') {
+    // 移除 IPv6 映射的 IPv4 前缀
+    const ip = req.ip.replace(/^::ffff:/, '');
+    return ip;
+  }
+  
+  // 最后尝试 socket 地址
+  const socketIp = req.socket.remoteAddress;
+  if (socketIp && socketIp !== '::1' && socketIp !== '127.0.0.1') {
+    return socketIp.replace(/^::ffff:/, '');
+  }
+  
+  // 如果都获取不到，返回 unknown（不应该发生）
+  console.warn('[IP获取] 无法获取客户端 IP，使用默认值:', {
+    'x-forwarded-for': req.headers['x-forwarded-for'],
+    'x-real-ip': req.headers['x-real-ip'],
+    'req.ip': req.ip,
+    'socket.remoteAddress': req.socket.remoteAddress
+  });
+  return 'unknown';
 }
 
 /**
@@ -80,7 +127,14 @@ export function recordAccessAttempt(
  */
 export function checkAndBlockIP(ip: string, attemptType: 'private_key' | 'login'): boolean {
   try {
-    const maxAttemptsSetting = db.prepare("SELECT value FROM system_settings WHERE key = 'max_access_attempts'").get() as { value?: string } | undefined;
+    let maxAttemptsSetting: { value?: string } | undefined = undefined;
+    try {
+      maxAttemptsSetting = db.prepare("SELECT value FROM system_settings WHERE key = 'max_access_attempts'").get() as { value?: string } | undefined;
+    } catch (dbError: any) {
+      console.warn('[IPBlock] 查询 max_access_attempts 失败:', dbError.message);
+      // 如果查询失败，使用默认值
+      maxAttemptsSetting = undefined;
+    }
     const maxAttempts = parseInt(
       maxAttemptsSetting?.value || '10'
     );

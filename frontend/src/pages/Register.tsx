@@ -7,9 +7,11 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuthStore } from '../store/authStore';
-import api from '../utils/api';
+import api, { getCustomApiUrl, getCustomApiKey } from '../utils/api';
 import toast from 'react-hot-toast';
 import { Key, UserPlus, AlertCircle, RefreshCw } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
+import PasswordInput from '../components/PasswordInput';
 
 interface SystemConfig {
   registrationEnabled: boolean;
@@ -19,6 +21,7 @@ interface SystemConfig {
 }
 
 export default function Register() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const { login } = useAuthStore();
   const [systemConfig, setSystemConfig] = useState<SystemConfig | null>(null);
@@ -27,6 +30,7 @@ export default function Register() {
   
   const [formData, setFormData] = useState({
     username: '',
+    nickname: '',
     email: '',
     password: '',
     confirmPassword: '',
@@ -51,8 +55,7 @@ export default function Register() {
           setPrivateKeyVerified(true);
         }
       } catch (error: any) {
-        console.error('获取系统配置失败:', error);
-        toast.error('获取系统配置失败');
+        toast.error(t('auth.getSystemConfigFailed'));
       }
     };
     
@@ -64,7 +67,7 @@ export default function Register() {
     e.preventDefault();
     
     if (!formData.privateKey) {
-      toast.error('请输入私有访问密钥');
+      toast.error(t('auth.enterPrivateKey'));
       return;
     }
     
@@ -76,9 +79,9 @@ export default function Register() {
       });
       
       setPrivateKeyVerified(true);
-      toast.success('密钥验证成功，请继续注册');
+      toast.success(t('auth.verifySuccess'));
     } catch (error: any) {
-      const errorMessage = error.response?.data?.error || '密钥验证失败';
+      const errorMessage = error.response?.data?.error || t('auth.verifyFailed');
       toast.error(errorMessage);
     } finally {
       setVerifyingPrivateKey(false);
@@ -90,13 +93,43 @@ export default function Register() {
     e.preventDefault();
 
     if (formData.password !== formData.confirmPassword) {
-      toast.error('两次输入的密码不一致');
+      toast.error(t('auth.passwordsNotMatch') || '两次输入的密码不一致');
       return;
     }
 
     if (formData.password.length < 6) {
-      toast.error('密码长度至少为6位');
+      toast.error(t('auth.passwordMinLength') || '密码长度至少为6位');
       return;
+    }
+
+    // 检查是否配置了服务器地址和 API Key，如果配置了，必须先验证通过
+    const customApiUrl = getCustomApiUrl();
+    const customApiKey = getCustomApiKey();
+    if (customApiUrl && customApiKey && customApiKey.trim()) {
+      // 如果配置了 API Key，必须在提交前验证
+      try {
+        let testBaseUrl = customApiUrl;
+        if (!testBaseUrl.endsWith('/api') && !testBaseUrl.endsWith('/api/')) {
+          testBaseUrl = `${testBaseUrl}/api`;
+        }
+        
+        const verifyResponse = await fetch(`${testBaseUrl}/settings`, {
+          method: 'GET',
+          headers: {
+            'X-API-Key': customApiKey.trim(),
+          },
+          signal: AbortSignal.timeout(3000),
+        });
+
+        if (verifyResponse.status === 403) {
+          toast.error('API Key 验证失败，无法注册。请检查服务器配置。');
+          return;
+        }
+      } catch (verifyError: any) {
+        // 验证失败，阻止注册
+        toast.error('API Key 验证失败，无法注册。请检查服务器配置。');
+        return;
+      }
     }
 
     setLoading(true);
@@ -104,6 +137,7 @@ export default function Register() {
     try {
       const response = await api.post('/auth/register', {
         username: formData.username,
+        nickname: formData.nickname.trim() || undefined,
         email: formData.email,
         password: formData.password,
         privateKey: showPrivateKeyStep ? formData.privateKey : undefined,
@@ -137,7 +171,7 @@ export default function Register() {
       <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-gray-900">
         <div className="text-center">
           <RefreshCw className="w-8 h-8 animate-spin mx-auto text-blue-600" />
-          <p className="mt-2 text-gray-600 dark:text-gray-400">加载中...</p>
+          <p className="mt-2 text-gray-600 dark:text-gray-400">{t('common.loading')}</p>
         </div>
       </div>
     );
@@ -171,60 +205,61 @@ export default function Register() {
   // 第一步：验证私有访问密钥
   if (showPrivateKeyStep && !privateKeyVerified) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-gray-900 py-12 px-4">
-        <div className="max-w-md w-full space-y-8">
-          <div className="text-center">
-            <div className="mx-auto h-16 w-16 bg-blue-100 dark:bg-blue-900 rounded-full flex items-center justify-center mb-4">
-              <Key className="h-8 w-8 text-blue-600 dark:text-blue-400" />
-            </div>
-            <h2 className="text-3xl font-extrabold text-gray-900 dark:text-gray-100">
-              私有访问验证
-            </h2>
-            <p className="mt-2 text-sm text-gray-600 dark:text-gray-400">
-              注册前需要验证私有访问密钥
-            </p>
-          </div>
-          
-          <form className="mt-8 space-y-6" onSubmit={handleVerifyPrivateKey}>
-            <div>
-              <label htmlFor="privateKey" className="block text-sm font-medium mb-2 text-gray-900 dark:text-gray-100">
-                私有访问密钥
-              </label>
-              <input
-                id="privateKey"
-                name="privateKey"
-                type="password"
-                required
-                className="input"
-                placeholder="请输入私有访问密钥"
-                value={formData.privateKey}
-                onChange={(e) =>
-                  setFormData({ ...formData, privateKey: e.target.value })
-                }
-                autoFocus
-              />
-              <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
-                如果您不知道密钥，请联系管理员
+      <div className="min-h-screen flex items-center justify-center bg-white dark:bg-gray-950 py-12 px-4">
+        <div className="max-w-md w-full">
+          <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 p-8">
+            <div className="text-center mb-8">
+              <div className="mx-auto h-12 w-12 bg-blue-600 dark:bg-blue-500 flex items-center justify-center mb-4">
+                <Key className="h-6 w-6 text-white" />
+              </div>
+              <h2 className="text-2xl font-semibold text-gray-900 dark:text-gray-100 mb-2">
+                私有访问验证
+              </h2>
+              <p className="text-sm text-gray-600 dark:text-gray-400">
+                注册前需要验证私有访问密钥
               </p>
             </div>
+            
+            <form onSubmit={handleVerifyPrivateKey} className="space-y-6">
+              <div>
+                <label htmlFor="privateKey" className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
+                  私有访问密钥
+                </label>
+                <PasswordInput
+                  id="privateKey"
+                  name="privateKey"
+                  value={formData.privateKey}
+                  onChange={(e) =>
+                    setFormData({ ...formData, privateKey: e.target.value })
+                  }
+                  placeholder="请输入私有访问密钥"
+                  className="w-full px-4 py-3 border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:border-blue-600 dark:focus:border-blue-500 transition-colors"
+                  required
+                  autoFocus
+                />
+                <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                  如果您不知道密钥，请联系管理员
+                </p>
+              </div>
 
-            <div className="flex gap-2">
-              <button
-                type="button"
-                onClick={() => navigate('/login')}
-                className="flex-1 btn bg-gray-200 dark:bg-gray-700 text-gray-900 dark:text-gray-100"
-              >
-                返回登录
-              </button>
-              <button
-                type="submit"
-                disabled={verifyingPrivateKey}
-                className="flex-1 btn btn-primary"
-              >
-                {verifyingPrivateKey ? '验证中...' : '验证密钥'}
-              </button>
-            </div>
-          </form>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => navigate('/login')}
+                  className="flex-1 px-4 py-3 bg-gray-200 dark:bg-gray-700 text-gray-900 dark:text-gray-100 font-medium hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors"
+                >
+                  返回登录
+                </button>
+                <button
+                  type="submit"
+                  disabled={verifyingPrivateKey}
+                  className="flex-1 px-4 py-3 bg-blue-600 dark:bg-blue-500 text-white font-medium hover:bg-blue-700 dark:hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                  {verifyingPrivateKey ? '验证中...' : '验证密钥'}
+                </button>
+              </div>
+            </form>
+          </div>
         </div>
       </div>
     );
@@ -256,7 +291,7 @@ export default function Register() {
           <div className="space-y-4">
             <div>
               <label htmlFor="username" className="block text-sm font-medium mb-2 text-gray-900 dark:text-gray-100">
-                用户名
+                用户名 <span className="text-red-500">*</span>
               </label>
               <input
                 id="username"
@@ -269,12 +304,38 @@ export default function Register() {
                   setFormData({ ...formData, username: e.target.value })
                 }
                 autoFocus={!showPrivateKeyStep}
+                placeholder="只能包含字母、数字和下划线"
               />
+              <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                用于登录，注册后无法修改
+              </p>
+            </div>
+            
+            <div>
+              <label htmlFor="nickname" className="block text-sm font-medium mb-2 text-gray-900 dark:text-gray-100">
+                昵称 <span className="text-red-500">*</span>
+              </label>
+              <input
+                id="nickname"
+                name="nickname"
+                type="text"
+                required
+                className="input"
+                value={formData.nickname}
+                onChange={(e) =>
+                  setFormData({ ...formData, nickname: e.target.value })
+                }
+                placeholder="用于显示的昵称"
+                maxLength={20}
+              />
+              <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                其他用户将看到的昵称
+              </p>
             </div>
             
             <div>
               <label htmlFor="email" className="block text-sm font-medium mb-2 text-gray-900 dark:text-gray-100">
-                邮箱
+                邮箱 <span className="text-red-500">*</span>
               </label>
               <input
                 id="email"
@@ -286,6 +347,7 @@ export default function Register() {
                 onChange={(e) =>
                   setFormData({ ...formData, email: e.target.value })
                 }
+                placeholder="your@email.com"
               />
             </div>
             
@@ -293,16 +355,15 @@ export default function Register() {
               <label htmlFor="password" className="block text-sm font-medium mb-2 text-gray-900 dark:text-gray-100">
                 密码
               </label>
-              <input
+              <PasswordInput
                 id="password"
                 name="password"
-                type="password"
-                required
-                className="input"
                 value={formData.password}
                 onChange={(e) =>
                   setFormData({ ...formData, password: e.target.value })
                 }
+                className="input"
+                required
               />
               <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
                 密码长度至少为6位
@@ -313,16 +374,15 @@ export default function Register() {
               <label htmlFor="confirmPassword" className="block text-sm font-medium mb-2 text-gray-900 dark:text-gray-100">
                 确认密码
               </label>
-              <input
+              <PasswordInput
                 id="confirmPassword"
                 name="confirmPassword"
-                type="password"
-                required
-                className="input"
                 value={formData.confirmPassword}
                 onChange={(e) =>
                   setFormData({ ...formData, confirmPassword: e.target.value })
                 }
+                className="input"
+                required
               />
             </div>
           </div>

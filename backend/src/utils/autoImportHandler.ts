@@ -15,8 +15,8 @@ import { extractPdfCover } from './pdfCoverExtractor';
 import { convertTxtToEpub, convertMobiToEpub } from './epubConverter';
 import { calculateFileHash } from './fileHash';
 import { DetectedFile } from './fileWatcher';
-
-const booksDir = process.env.BOOKS_DIR || './books';
+import { booksDir } from '../config/paths';
+import { downloadCoverToLocal } from './coverDownloader';
 
 export interface ImportResult {
   success: boolean;
@@ -214,6 +214,19 @@ export class AutoImportHandler {
         metadata.cover_url = null;
       }
     }
+
+      // 如果封面是远程URL，自动下载到本地
+      if (metadata.cover_url && (metadata.cover_url.startsWith('http://') || metadata.cover_url.startsWith('https://'))) {
+        console.log('[自动导入] 检测到远程封面URL，开始下载到本地:', metadata.cover_url);
+        const localCoverUrl = await downloadCoverToLocal(metadata.cover_url, bookDir, booksDir);
+        if (localCoverUrl) {
+          metadata.cover_url = localCoverUrl;
+          console.log('[自动导入] 远程封面已下载到本地:', localCoverUrl);
+        } else {
+          console.warn('[自动导入] 远程封面下载失败，保留原始URL:', metadata.cover_url);
+          // 如果下载失败，保留原始URL
+        }
+      }
 
       // 7. 保存到数据库
       const fileSize = fs.statSync(newFilePath).size;

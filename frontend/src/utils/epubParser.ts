@@ -476,7 +476,13 @@ export class EpubParser {
   // 静态方法：从URL加载EPUB（支持Blob URL）
   static async loadFromUrl(url: string | Promise<string>): Promise<EpubParser> {
     // 如果url是Promise，等待它解析
-    const actualUrl = typeof url === 'string' ? url : await url;
+    let actualUrl = typeof url === 'string' ? url : await url;
+    
+    // 如果是相对路径，需要构建完整URL（支持自定义API URL）
+    if (actualUrl.startsWith('/') && !actualUrl.startsWith('blob:')) {
+      const { getFullBookUrl } = await import('./api');
+      actualUrl = getFullBookUrl(actualUrl);
+    }
     
     let arrayBuffer: ArrayBuffer;
     
@@ -488,10 +494,13 @@ export class EpubParser {
       }
       arrayBuffer = await response.arrayBuffer();
     } else {
-      // 从服务器URL加载
+      // 从服务器URL加载（需要添加认证头）
+      const { getAuthHeaders } = await import('./api');
+      const authHeaders = getAuthHeaders();
       const response = await fetch(actualUrl, {
         headers: {
           'Accept': 'application/epub+zip, application/zip, application/octet-stream, */*',
+          ...authHeaders,
         },
       });
       

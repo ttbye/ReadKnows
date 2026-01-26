@@ -27,6 +27,8 @@ import {
 } from '../utils/bookStorage';
 import { extractTagsFromDouban } from '../utils/tagHelper';
 import { generateOfficeCover } from '../utils/officeCoverGenerator';
+import { downloadCoverToLocal } from '../utils/coverDownloader';
+import { booksDir } from '../config/paths';
 
 const router = express.Router();
 
@@ -37,7 +39,7 @@ function getSetting(key: string, defaultValue: string = ''): string {
 }
 
 // 扫描文件并导入书籍
-async function scanAndImportFile(
+export async function scanAndImportFile(
   filePath: string,
   fileName: string,
   storagePath: string,
@@ -51,9 +53,14 @@ async function scanAndImportFile(
   deleteSource: boolean = false
 ): Promise<any> {
   const ext = path.extname(fileName).toLowerCase();
-  const allowedTypes = ['.epub', '.pdf', '.txt', '.mobi', '.docx', '.doc', '.xlsx', '.xls', '.pptx', '.md'];
+  // 支持的书籍/文档格式：epub、mobi、pdf、txt、docx、xlsx、pptx、md（仅支持新格式Office文档）
+  const allowedTypes = ['.epub', '.pdf', '.txt', '.mobi', '.docx', '.xlsx', '.pptx', '.md'];
 
   if (!allowedTypes.includes(ext)) {
+    // 特别提示旧版Office格式不被支持
+    if (['.doc', '.xls', '.ppt'].includes(ext)) {
+      return { skipped: true, reason: '不支持旧版Office格式（.doc、.xls、.ppt），请使用新格式（.docx、.xlsx、.pptx）' };
+    }
     return { skipped: true, reason: '不支持的文件格式' };
   }
 
@@ -263,6 +270,19 @@ async function scanAndImportFile(
     }
   }
 
+  // 如果封面是远程URL，自动下载到本地
+  if (metadata.cover_url && (metadata.cover_url.startsWith('http://') || metadata.cover_url.startsWith('https://'))) {
+    console.log('[扫描导入] 检测到远程封面URL，开始下载到本地:', metadata.cover_url);
+    const localCoverUrl = await downloadCoverToLocal(metadata.cover_url, bookDir, booksDir);
+    if (localCoverUrl) {
+      metadata.cover_url = localCoverUrl;
+      console.log('[扫描导入] 远程封面已下载到本地:', localCoverUrl);
+    } else {
+      console.warn('[扫描导入] 远程封面下载失败，保留原始URL:', metadata.cover_url);
+      // 如果下载失败，保留原始URL
+    }
+  }
+
   // 生成最终文件名
   const finalFileExt = path.extname(finalFilePath);
   const finalFileName = generateBookFileName(finalTitle, finalFileExt);
@@ -445,9 +465,9 @@ router.post('/scan-list', authenticateToken, async (req: AuthRequest, res) => {
               // 递归扫描子目录
               scanDirectory(itemPath);
             } else if (itemStat.isFile()) {
-              // 处理文件
+              // 处理文件（仅支持新格式Office文档）
               const ext = path.extname(item).toLowerCase();
-              if (['.epub', '.pdf', '.txt', '.mobi', '.docx', '.doc', '.xlsx', '.xls', '.pptx', '.md'].includes(ext)) {
+              if (['.epub', '.pdf', '.txt', '.mobi', '.docx', '.xlsx', '.pptx', '.md'].includes(ext)) {
                 files.push({
                   path: itemPath,
                   name: item,
@@ -612,9 +632,9 @@ router.post('/scan', authenticateToken, async (req: AuthRequest, res) => {
           // 递归扫描子目录
           await scanDirectory(filePath);
         } else if (stat.isFile()) {
-          // 处理文件
+          // 处理文件（仅支持新格式Office文档）
           const ext = path.extname(file).toLowerCase();
-          if (['.epub', '.pdf', '.txt', '.mobi', '.docx', '.doc', '.xlsx', '.xls', '.pptx'].includes(ext)) {
+          if (['.epub', '.pdf', '.txt', '.mobi', '.docx', '.xlsx', '.pptx', '.md'].includes(ext)) {
             try {
               const result = await scanAndImportFile(
                 filePath,
@@ -693,3 +713,4 @@ router.delete('/import-history', authenticateToken, async (req: AuthRequest, res
 });
 
 export default router;
+

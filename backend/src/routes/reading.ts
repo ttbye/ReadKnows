@@ -8,6 +8,7 @@ import express from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import { db } from '../db';
 import { authenticateToken, AuthRequest } from '../middleware/auth';
+import { logActionFromRequest } from '../utils/logger';
 
 // 获取当前 UTC 时间的 ISO 8601 格式字符串
 const getCurrentUTCTime = () => new Date().toISOString();
@@ -134,10 +135,26 @@ router.post('/progress', authenticateToken, async (req: AuthRequest, res) => {
             ? normalizedCurrentPosition.substring(0, maxCfiLength)
             : normalizedCurrentPosition;
         
+        // ✅ 修复：确保进度值不会倒退，使用MAX函数保证进度只能前进
+        // 同时，如果客户端进度明显小于服务器进度（且不是同一会话），说明可能是旧数据，不更新进度值
+        // 但是，如果客户端进度更大，应该更新（可能是同一设备的不同标签页，或者客户端时间更准确）
+        const finalProgressValue = isSameSession 
+          ? progressValue  // 同一设备，直接使用客户端进度
+          : Math.max(existing.progress, progressValue);  // 不同设备，使用较大的进度值（避免倒退）
+        
+        // ✅ 修复：如果使用服务器的更大进度值，但客户端提供了新的位置信息，应该更新位置信息
+        // 这样可以确保即使进度值不更新，位置信息也能同步
+        const shouldUpdatePosition = safeCurrentPosition !== null || isSameSession;
+        
+        // ✅ 修复：如果进度值没有变化（使用了服务器的更大值），但位置信息需要更新，确保位置信息能正确更新
+        // 使用条件更新：只有当进度值确实更新，或者位置信息有变化时才更新
         const updateStmt = db.prepare(`
         UPDATE reading_progress 
         SET progress = ?, 
-            current_position = COALESCE(?, current_position), 
+            current_position = CASE 
+              WHEN ? IS NOT NULL THEN ?
+              ELSE current_position
+            END,
             current_page = ?,
             total_pages = ?,
             chapter_index = ?,
@@ -150,8 +167,9 @@ router.post('/progress', authenticateToken, async (req: AuthRequest, res) => {
         `);
         const now = getCurrentUTCTime();
         const result = updateStmt.run(
-          progressValue, 
-          safeCurrentPosition, 
+          finalProgressValue, 
+          safeCurrentPosition,  // 第一个?用于判断
+          safeCurrentPosition,  // 第二个?用于赋值
           safeCurrentPage,
           safeTotalPages,
           safeChapterIndex,
@@ -686,31 +704,47 @@ router.get('/progress', authenticateToken, async (req: AuthRequest, res) => {
     const userId = req.userId!;
     const { limit = 20 } = req.query;
 
-    const progresses = db
-      .prepare(`
-        SELECT 
-          p.*,
-          b.title,
-          b.author,
-          b.cover_url,
-          b.file_type,
-          b.id as book_id
-        FROM reading_progress p
-        JOIN books b ON p.book_id = b.id
-        WHERE p.user_id = ? AND b.parent_book_id IS NULL
-        ORDER BY p.last_read_at DESC
-        LIMIT ?
-      `)
-      .all(userId, Number(limit)) as any[];
+    let progresses: any[] = [];
+    try {
+      // 仅展示公开书或本人上传的私有书的进度，不展示他人私有
+      progresses = db
+        .prepare(`
+          SELECT 
+            p.*,
+            b.title,
+            b.author,
+            b.cover_url,
+            b.file_type,
+            b.id as book_id
+          FROM reading_progress p
+          JOIN books b ON p.book_id = b.id
+          WHERE p.user_id = ? AND b.parent_book_id IS NULL
+            AND (b.is_public = 1 OR b.uploader_id = ?)
+          ORDER BY p.last_read_at DESC
+          LIMIT ?
+        `)
+        .all(userId, userId, Number(limit)) as any[];
+    } catch (dbError: any) {
+      if (dbError.message && (dbError.message.includes('no such table') || dbError.message.includes('no such column'))) {
+        console.warn('reading_progress 或 books 表不存在，返回空数组');
+        return res.json({ progresses: [] });
+      }
+      throw dbError;
+    }
 
     // 对于MOBI格式的书籍，优先使用EPUB版本的封面
     const processedProgresses = progresses.map((progress: any) => {
       if (progress.file_type && progress.file_type.toLowerCase() === 'mobi') {
-        // 查找EPUB格式的版本
-        const epubBook = db.prepare('SELECT * FROM books WHERE parent_book_id = ? AND file_type = ?').get(progress.book_id, 'epub') as any;
-        if (epubBook && epubBook.cover_url) {
-          // 使用EPUB版本的封面
-          progress.cover_url = epubBook.cover_url;
+        try {
+          // 查找EPUB格式的版本
+          const epubBook = db.prepare('SELECT * FROM books WHERE parent_book_id = ? AND file_type = ?').get(progress.book_id, 'epub') as any;
+          if (epubBook && epubBook.cover_url) {
+            // 使用EPUB版本的封面
+            progress.cover_url = epubBook.cover_url;
+          }
+        } catch (epubError: any) {
+          // 忽略EPUB查询错误，继续使用原封面
+          console.warn('查询EPUB封面失败:', epubError.message);
         }
       }
       return progress;
@@ -718,8 +752,10 @@ router.get('/progress', authenticateToken, async (req: AuthRequest, res) => {
 
     res.json({ progresses: processedProgresses });
   } catch (error: any) {
-    console.error('获取阅读进度列表错误:', error);
-    res.status(500).json({ error: '获取失败' });
+    // console.error('获取阅读进度列表错误:', error);
+    // console.error('错误消息:', error.message);
+    // console.error('错误堆栈:', error.stack);
+    res.status(500).json({ error: '获取失败: ' + (error.message || '未知错误') });
   }
 });
 
@@ -1107,6 +1143,10 @@ router.post('/history/session', authenticateToken, async (req: AuthRequest, res)
       }
     }
 
+    // 获取书籍和用户信息用于日志
+    const bookInfo = db.prepare('SELECT title FROM books WHERE id = ?').get(bookId) as any;
+    const username = db.prepare('SELECT username FROM users WHERE id = ?').get(userId) as any;
+
     // 获取或创建历史记录
     let history = db
       .prepare('SELECT id, last_read_at FROM reading_history WHERE user_id = ? AND book_id = ?')
@@ -1119,6 +1159,18 @@ router.post('/history/session', authenticateToken, async (req: AuthRequest, res)
         VALUES (?, ?, ?, ?, ?, 0)
       `).run(historyId, userId, bookId, getCurrentUTCTime(), currentProgress);
       history = { id: historyId, last_read_at: null };
+      
+      // 记录开始阅读日志
+      logActionFromRequest(req, {
+        action_type: 'reading_start',
+        action_category: 'reading',
+        description: `开始阅读：${bookInfo?.title || bookId}`,
+        metadata: {
+          book_id: bookId,
+          book_title: bookInfo?.title,
+          progress: currentProgress,
+        },
+      });
     } else {
       // 更新进度（确保使用最新的进度值）
       db.prepare(`

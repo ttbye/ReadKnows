@@ -174,7 +174,7 @@ export function extractEpubMetadata(filePath: string, bookDir?: string): Promise
                                 }
                             
                             // 返回相对于booksDir的路径
-                            const booksDir = process.env.BOOKS_DIR || './books';
+                            const { booksDir } = require('../config/paths');
                             const relativePath = path.relative(booksDir, coverFilePath);
                             coverUrl = `/books/${relativePath.replace(/\\/g, '/')}`;
                                 console.log('[EPUB封面提取] 封面图片已保存:', {

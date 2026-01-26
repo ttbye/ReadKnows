@@ -8,6 +8,7 @@ import { X, Play, Pause, SkipBack, SkipForward, Volume2 } from 'lucide-react';
 import { ReadingSettings, BookData } from '../../types/reader';
 import { useState, useEffect, useRef } from 'react';
 import api from '../../utils/api';
+import { useTranslation } from 'react-i18next';
 
 interface ReadingSettingsPanelProps {
   settings: ReadingSettings;
@@ -37,6 +38,7 @@ export default function ReadingSettingsPanel({
   onTTSPrev,
   onTTSNext,
 }: ReadingSettingsPanelProps) {
+  const { t } = useTranslation();
   const [models, setModels] = useState<Array<{ id: string; name: string; description: string; type: string; available: boolean }>>([]);
   const [voices, setVoices] = useState<Array<{ id: string; name: string; lang: string; gender?: string; style?: string }>>([]);
   const [loadingModels, setLoadingModels] = useState(false);
@@ -343,16 +345,28 @@ export default function ReadingSettingsPanel({
       style={{ 
         backgroundColor: 'rgba(0, 0, 0, 0.65)', 
         backdropFilter: 'blur(8px)',
-        animation: 'fadeIn 0.2s ease-out'
+        animation: 'fadeIn 0.2s ease-out',
+        paddingTop: typeof window !== 'undefined' && window.innerWidth < 1024
+          ? `max(clamp(20px, env(safe-area-inset-top, 20px), 44px), 0px)`
+          : '0px',
+        paddingBottom: typeof window !== 'undefined' && window.innerWidth < 1024
+          ? `calc(${typeof window !== 'undefined' && window.innerWidth >= 768 ? '64px' : '56px'} + clamp(10px, env(safe-area-inset-bottom, 10px), 34px))`
+          : 'max(env(safe-area-inset-bottom, 0px), 0px)',
+        paddingLeft: 'max(env(safe-area-inset-left, 0px), 0px)',
+        paddingRight: 'max(env(safe-area-inset-right, 0px), 0px)',
       }}
       onClick={onClose}
     >
       <div 
-        className="w-full md:w-[90vw] lg:w-[80vw] xl:w-[70vw] max-w-5xl h-[90vh] md:h-auto md:max-h-[85vh] rounded-t-3xl md:rounded-3xl flex flex-col animate-slide-up overflow-hidden"
+        className="w-full md:w-[90vw] lg:w-[80vw] xl:w-[70vw] max-w-5xl md:h-auto md:max-h-[85vh] rounded-t-3xl md:rounded-3xl flex flex-col animate-slide-up overflow-hidden"
         style={{
           backgroundColor: themeStyles.bg,
           color: themeStyles.text,
           boxShadow: '0 20px 60px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.1)',
+          maxHeight: typeof window !== 'undefined' && window.innerWidth < 1024
+            ? `calc(100vh - max(clamp(20px, env(safe-area-inset-top, 20px), 44px), 0px) - ${typeof window !== 'undefined' && window.innerWidth >= 768 ? '64px' : '56px'} - clamp(10px, env(safe-area-inset-bottom, 10px), 34px))`
+            : '85vh',
+          height: typeof window !== 'undefined' && window.innerWidth < 1024 ? 'auto' : undefined,
         }}
         onClick={(e) => e.stopPropagation()}
       >
@@ -411,7 +425,7 @@ export default function ReadingSettingsPanel({
               {/* 进度条 */}
               <div className="space-y-3">
                 <div className="flex items-center justify-between text-sm font-medium">
-                  <span>播放进度</span>
+                  <span>{t('tts.playbackProgress')}</span>
                   <span className="font-bold">
                     {ttsCurrentIndex >= 0 ? `${ttsCurrentIndex + 1} / ${ttsTotalParagraphs}` : '0 / 0'}
                   </span>
@@ -481,7 +495,7 @@ export default function ReadingSettingsPanel({
                   >
                     {models.filter(m => m.available).map((m) => (
                       <option key={m.id} value={m.id}>
-                        {m.name} ({m.type === 'online' ? '在线' : '离线'})
+                        {m.name} ({m.type === 'online' ? t('tts.online') : t('tts.offline')})
                       </option>
                     ))}
                   </select>
@@ -489,7 +503,7 @@ export default function ReadingSettingsPanel({
 
                 {/* 音色选择 */}
                 <div className="space-y-2">
-                  <label className="text-sm font-semibold">音色</label>
+                  <label className="text-sm font-semibold">{t('tts.voice')}</label>
                   <select
                     value={currentVoice}
                     onChange={(e) => handleVoiceChange(e.target.value)}
@@ -502,13 +516,13 @@ export default function ReadingSettingsPanel({
                     disabled={loadingVoices}
                   >
                     {loadingVoices ? (
-                      <option value="">加载中...</option>
+                      <option value="">{t('common.loading')}</option>
                     ) : voices.length === 0 ? (
-                      <option value="">暂无可用音色</option>
+                      <option value="">{t('tts.noAvailableVoices')}</option>
                     ) : (
                       voices.map((v) => (
                       <option key={v.id} value={v.id}>
-                        {v.name} {v.gender ? `(${v.gender === 'male' ? '男' : '女'})` : ''}
+                        {v.name} {v.gender ? `(${v.gender === 'male' ? t('tts.male') : t('tts.female')})` : ''}
                       </option>
                       ))
                     )}
@@ -517,7 +531,7 @@ export default function ReadingSettingsPanel({
 
                 {/* 播放速度 */}
                 <div className="space-y-2">
-                  <label className="text-sm font-semibold">播放速度</label>
+                  <label className="text-sm font-semibold">{t('tts.playbackSpeed')}</label>
                   <select
                     value={currentSpeed.toString()}
                     onChange={(e) => handleSpeedChange(Number(e.target.value))}
@@ -548,13 +562,13 @@ export default function ReadingSettingsPanel({
                   letterSpacing: '0.05em'
                 }}>
                   <div className="w-1 h-3 rounded-full bg-gradient-to-b from-blue-500 to-blue-600" />
-                  文字样式
+                  {t('reader.textStyle')}
                 </div>
 
                 {/* 字体大小 */}
               <div className="mb-4 md:mb-5">
                 <div className="flex items-center justify-between mb-3">
-                  <label className="text-sm font-semibold">字体大小</label>
+                  <label className="text-sm font-semibold">{t('reader.fontSize')}</label>
                   <div className="flex items-center gap-2">
                     {/* 自定义输入框 */}
                     <input
@@ -583,7 +597,7 @@ export default function ReadingSettingsPanel({
                         color: themeStyles.text,
                         focusRingColor: settings.theme === 'dark' ? '#4a9eff' : '#1890ff',
                       }}
-                      aria-label="自定义字体大小"
+                      aria-label={t('reader.customFontSize')}
                     />
                     <span className="text-xs" style={{ color: themeStyles.text, opacity: 0.7 }}>px</span>
                   </div>
@@ -603,7 +617,7 @@ export default function ReadingSettingsPanel({
                       borderColor: themeStyles.border,
                       color: themeStyles.text,
                     }}
-                    aria-label="减小字体"
+                    aria-label={t('reader.decreaseFont')}
                   >
                     −
                   </button>
@@ -639,7 +653,7 @@ export default function ReadingSettingsPanel({
                       borderColor: themeStyles.border,
                       color: themeStyles.text,
                     }}
-                    aria-label="增大字体"
+                    aria-label={t('reader.increaseFont')}
                   >
                     +
                   </button>
@@ -661,7 +675,7 @@ export default function ReadingSettingsPanel({
                         borderColor: settings.fontSize === size ? 'transparent' : themeStyles.border,
                         color: settings.fontSize === size ? '#fff' : themeStyles.text,
                       }}
-                      aria-label={`设置字体大小 ${size}px`}
+                      aria-label={t('reader.setFontSize', { size })}
                     >
                       {size}
                     </button>
@@ -671,13 +685,13 @@ export default function ReadingSettingsPanel({
 
               {/* 字体 */}
               <div className="mb-4 md:mb-5">
-                <label className="block text-sm font-semibold mb-2">字体</label>
+                <label className="block text-sm font-semibold mb-2">{t('reader.font')}</label>
                 <div className="grid grid-cols-4 gap-1.5 md:gap-2">
                   {[
-                    { value: 'default', label: '默认' },
-                    { value: 'serif', label: '衬线' },
-                    { value: 'sans-serif', label: '无衬线' },
-                    { value: 'monospace', label: '等宽' }
+                    { value: 'default', label: t('reader.defaultFont') },
+                    { value: 'serif', label: t('reader.serifFont') },
+                    { value: 'sans-serif', label: t('reader.sansSerifFont') },
+                    { value: 'monospace', label: t('reader.monospaceFont') }
                   ].map((font) => (
                     <button
                       key={font.value}
@@ -708,7 +722,7 @@ export default function ReadingSettingsPanel({
               {/* 行高 */}
               <div className="mb-4 md:mb-5">
                 <div className="flex items-center justify-between mb-2">
-                  <label className="text-sm font-semibold">行间距</label>
+                  <label className="text-sm font-semibold">{t('reader.lineHeight')}</label>
                   <span className="text-sm font-bold px-2.5 py-0.5 rounded-md" style={{ 
                     color: '#fff',
                     background: settings.theme === 'dark' ? 'linear-gradient(135deg, #4a9eff 0%, #2563eb 100%)' : 'linear-gradient(135deg, #1890ff 0%, #0d5fbf 100%)',
@@ -730,15 +744,15 @@ export default function ReadingSettingsPanel({
                   }}
                 />
                 <div className="flex justify-between text-[10px] mt-1" style={{ opacity: 0.5 }}>
-                  <span>1.2 紧凑</span>
-                  <span>3.0 宽松</span>
+                  <span>{t('reader.compact')}</span>
+                  <span>{t('reader.loose')}</span>
                 </div>
               </div>
 
               {/* 边距 */}
               <div className="mb-4 md:mb-5">
                 <div className="flex items-center justify-between mb-2">
-                  <label className="text-sm font-semibold">页边距</label>
+                  <label className="text-sm font-semibold">{t('reader.margin')}</label>
                   <span className="text-sm font-bold px-2.5 py-0.5 rounded-md" style={{ 
                     color: '#fff',
                     background: settings.theme === 'dark' ? 'linear-gradient(135deg, #4a9eff 0%, #2563eb 100%)' : 'linear-gradient(135deg, #1890ff 0%, #0d5fbf 100%)',
@@ -759,15 +773,15 @@ export default function ReadingSettingsPanel({
                   }}
                 />
                 <div className="flex justify-between text-[10px] mt-1" style={{ opacity: 0.5 }}>
-                  <span>10px 窄</span>
-                  <span>50px 宽</span>
+                  <span>{t('reader.narrow')}</span>
+                  <span>{t('reader.wide')}</span>
                 </div>
               </div>
 
               {/* 首行缩进 */}
               <div className="mb-0">
                 <div className="flex items-center justify-between mb-2">
-                  <label className="text-sm font-semibold">首行缩进</label>
+                  <label className="text-sm font-semibold">{t('reader.textIndent')}</label>
                   <span className="text-sm font-bold px-2.5 py-0.5 rounded-md" style={{ 
                     color: '#fff',
                     background: settings.theme === 'dark' ? 'linear-gradient(135deg, #4a9eff 0%, #2563eb 100%)' : 'linear-gradient(135deg, #1890ff 0%, #0d5fbf 100%)',
@@ -789,8 +803,8 @@ export default function ReadingSettingsPanel({
                   }}
                 />
                 <div className="flex justify-between text-[10px] mt-1" style={{ opacity: 0.5 }}>
-                  <span>0em 无</span>
-                  <span>4em 最大</span>
+                  <span>{t('reader.none')}</span>
+                  <span>{t('reader.max')}</span>
                 </div>
               </div>
               </div>
@@ -804,45 +818,45 @@ export default function ReadingSettingsPanel({
               letterSpacing: '0.05em'
             }}>
               <div className="w-1 h-3 rounded-full bg-gradient-to-b from-green-500 to-green-600" />
-              外观设置
+              {t('reader.appearanceSettings')}
             </div>
 
             {/* 主题 */}
           <div className="mb-4">
-            <label className="block text-sm font-semibold mb-3">阅读主题</label>
+            <label className="block text-sm font-semibold mb-3">{t('reader.readingTheme')}</label>
             <div className="grid grid-cols-4 gap-2 md:gap-3">
               {([
                 { 
                   value: 'light', 
-                  label: '浅色', 
+                  label: t('reader.lightTheme'), 
                   preview: '#ffffff', 
                   border: '#e5e7eb',
                   textColor: '#000000',
-                  description: '经典白底黑字'
+                  description: t('reader.lightThemeDesc')
                 },
                 { 
                   value: 'dark', 
-                  label: '深色', 
+                  label: t('reader.darkTheme'), 
                   preview: '#1a1a1a', 
                   border: '#374151',
                   textColor: '#ffffff',
-                  description: '夜间护眼'
+                  description: t('reader.darkThemeDesc')
                 },
                 { 
                   value: 'sepia', 
-                  label: '护眼', 
+                  label: t('reader.sepiaTheme'), 
                   preview: '#f4e4bc', 
                   border: '#d4c49c',
                   textColor: '#5c4b37',
-                  description: '纸质质感'
+                  description: t('reader.sepiaThemeDesc')
                 },
                 { 
                   value: 'green', 
-                  label: '绿色', 
+                  label: t('reader.greenTheme'), 
                   preview: '#c8e6c9', 
                   border: '#a5d6a7',
                   textColor: '#2e7d32',
-                  description: '清新护眼'
+                  description: t('reader.greenThemeDesc')
                 }
               ] as const).map((theme) => (
                 <button
@@ -949,12 +963,12 @@ export default function ReadingSettingsPanel({
               letterSpacing: '0.05em'
             }}>
               <div className="w-1 h-3 rounded-full bg-gradient-to-b from-orange-500 to-orange-600" />
-              交互设置
+              {t('reader.interactionSettings')}
             </div>
 
             {/* 翻页方式 */}
           <div className="mb-4">
-            <label className="block text-sm font-semibold mb-2">翻页方式</label>
+            <label className="block text-sm font-semibold mb-2">{t('reader.pageTurnMethod')}</label>
             <div className="grid grid-cols-2 gap-1.5 md:gap-2">
               <button
                 onClick={() => {
@@ -982,8 +996,8 @@ export default function ReadingSettingsPanel({
                 }}
               >
                 <div className="text-center">
-                  <div className="text-sm font-bold mb-0.5">滑动翻页</div>
-                  <div className="text-[10px] md:text-xs" style={{ opacity: settings.pageTurnMethod === 'swipe' ? 0.9 : 0.6 }}>防误触 · 推荐</div>
+                  <div className="text-sm font-bold mb-0.5">{t('reader.swipePageTurn')}</div>
+                  <div className="text-[10px] md:text-xs" style={{ opacity: settings.pageTurnMethod === 'swipe' ? 0.9 : 0.6 }}>{t('reader.swipePageTurnDesc')}</div>
                 </div>
               </button>
               <button
@@ -1004,8 +1018,8 @@ export default function ReadingSettingsPanel({
                 }}
               >
                 <div className="text-center">
-                  <div className="text-sm font-bold mb-0.5">点击翻页</div>
-                  <div className="text-[10px] md:text-xs" style={{ opacity: settings.pageTurnMethod === 'click' ? 0.9 : 0.6 }}>快速便捷</div>
+                  <div className="text-sm font-bold mb-0.5">{t('reader.clickPageTurn')}</div>
+                  <div className="text-[10px] md:text-xs" style={{ opacity: settings.pageTurnMethod === 'click' ? 0.9 : 0.6 }}>{t('reader.clickPageTurnDesc')}</div>
                 </div>
               </button>
             </div>
@@ -1014,7 +1028,7 @@ export default function ReadingSettingsPanel({
           {/* 滑动翻页模式（滑动翻页时有效） */}
           {settings.pageTurnMethod === 'swipe' && (
             <div className="mb-4">
-              <label className="block text-sm font-semibold mb-2">滑动翻页模式</label>
+              <label className="block text-sm font-semibold mb-2">{t('reader.swipePageTurnMode')}</label>
               <div className="grid grid-cols-2 gap-1.5 md:gap-2">
                 <button
                   onClick={() => updateSetting('pageTurnMode', 'horizontal')}
@@ -1034,9 +1048,9 @@ export default function ReadingSettingsPanel({
                   }}
                 >
                   <div className="text-center">
-                    <div className="text-sm font-bold mb-0.5">左右滑动翻页</div>
+                    <div className="text-sm font-bold mb-0.5">{t('reader.horizontalSwipe')}</div>
                     <div className="text-[10px] md:text-xs" style={{ opacity: settings.pageTurnMode === 'horizontal' ? 0.9 : 0.6 }}>
-                      左→右下一页 · 右→左上一页
+                      {t('reader.horizontalSwipeDesc')}
                     </div>
                   </div>
                 </button>
@@ -1058,9 +1072,9 @@ export default function ReadingSettingsPanel({
                   }}
                 >
                   <div className="text-center">
-                    <div className="text-sm font-bold mb-0.5">上滑翻页</div>
+                    <div className="text-sm font-bold mb-0.5">{t('reader.verticalSwipe')}</div>
                     <div className="text-[10px] md:text-xs" style={{ opacity: settings.pageTurnMode === 'vertical' ? 0.9 : 0.6 }}>
-                      下→上下一页 · 上→下上一页
+                      {t('reader.verticalSwipeDesc')}
                     </div>
                   </div>
                 </button>
@@ -1071,7 +1085,7 @@ export default function ReadingSettingsPanel({
           {/* 翻页模式（点击翻页时有效） */}
           {settings.pageTurnMethod === 'click' && (
             <div className="mb-4">
-              <label className="block text-sm font-semibold mb-2">翻页模式</label>
+              <label className="block text-sm font-semibold mb-2">{t('reader.pageTurnMode')}</label>
               <div className="grid grid-cols-2 gap-1.5 md:gap-2">
                 <button
                   onClick={() => updateSetting('pageTurnMode', 'horizontal')}
@@ -1091,8 +1105,8 @@ export default function ReadingSettingsPanel({
                   }}
                 >
                   <div className="text-center">
-                    <div className="text-sm font-bold mb-0.5">左右翻页</div>
-                    <div className="text-[10px]" style={{ opacity: settings.pageTurnMode === 'horizontal' ? 0.9 : 0.6 }}>点击左/右</div>
+                    <div className="text-sm font-bold mb-0.5">{t('reader.horizontalPageTurn')}</div>
+                    <div className="text-[10px]" style={{ opacity: settings.pageTurnMode === 'horizontal' ? 0.9 : 0.6 }}>{t('reader.horizontalPageTurnDesc')}</div>
                   </div>
                 </button>
                 <button
@@ -1113,8 +1127,8 @@ export default function ReadingSettingsPanel({
                   }}
                 >
                   <div className="text-center">
-                    <div className="text-sm font-bold mb-0.5">上下翻页</div>
-                    <div className="text-[10px]" style={{ opacity: settings.pageTurnMode === 'vertical' ? 0.9 : 0.6 }}>点击上/下</div>
+                    <div className="text-sm font-bold mb-0.5">{t('reader.verticalPageTurn')}</div>
+                    <div className="text-[10px]" style={{ opacity: settings.pageTurnMode === 'vertical' ? 0.9 : 0.6 }}>{t('reader.verticalPageTurnDesc')}</div>
                   </div>
                 </button>
               </div>
@@ -1132,9 +1146,9 @@ export default function ReadingSettingsPanel({
                 : (settings.theme === 'dark' ? 'rgba(255,255,255,0.02)' : 'rgba(0,0,0,0.01)')
             }}>
               <div>
-                <label className="text-sm font-semibold block">底部信息栏</label>
+                <label className="text-sm font-semibold block">{t('reader.bottomInfoBar')}</label>
                 <div className="text-[10px] mt-0.5" style={{ opacity: 0.6 }}>
-                  书名 · 页码 · 时间
+                  {t('reader.bottomInfoBarDesc')}
                 </div>
               </div>
               <button
@@ -1144,7 +1158,7 @@ export default function ReadingSettingsPanel({
                     ? 'bg-gradient-to-r from-blue-500 to-blue-600' 
                     : 'bg-gray-300 dark:bg-gray-600'
                 }`}
-                aria-label="切换底部信息栏"
+                aria-label={t('reader.toggleBottomInfoBar')}
               >
                 <span
                   className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-sm transition-transform ${
@@ -1159,7 +1173,7 @@ export default function ReadingSettingsPanel({
 
           {/* 阅读区域宽度（PC端专用） */}
           <div className="mb-4 hidden md:block">
-            <label className="block text-sm font-semibold mb-2">阅读区域宽度</label>
+            <label className="block text-sm font-semibold mb-2">{t('reader.readingAreaWidth')}</label>
             <div className="grid grid-cols-2 gap-2">
               <button
                 onClick={() => updateSetting('readerWidth', 'centered')}
@@ -1179,8 +1193,8 @@ export default function ReadingSettingsPanel({
                 }}
               >
                 <div className="text-center">
-                  <div className="text-sm font-bold mb-0.5">居中</div>
-                  <div className="text-[10px]" style={{ opacity: settings.readerWidth === 'centered' ? 0.9 : 0.6 }}>980px 舒适</div>
+                  <div className="text-sm font-bold mb-0.5">{t('reader.centered')}</div>
+                  <div className="text-[10px]" style={{ opacity: settings.readerWidth === 'centered' ? 0.9 : 0.6 }}>{t('reader.centeredDesc')}</div>
                 </div>
               </button>
               <button
@@ -1201,8 +1215,8 @@ export default function ReadingSettingsPanel({
                 }}
               >
                 <div className="text-center">
-                  <div className="text-sm font-bold mb-0.5">全宽</div>
-                  <div className="text-[10px]" style={{ opacity: settings.readerWidth === 'full' ? 0.9 : 0.6 }}>铺满屏幕</div>
+                  <div className="text-sm font-bold mb-0.5">{t('reader.fullWidth')}</div>
+                  <div className="text-[10px]" style={{ opacity: settings.readerWidth === 'full' ? 0.9 : 0.6 }}>{t('reader.fullWidthDesc')}</div>
                 </div>
               </button>
             </div>

@@ -9,6 +9,8 @@ import { StickyNote, Plus, X, Edit, Trash2, Save } from 'lucide-react';
 import api from '../../utils/api';
 import toast from 'react-hot-toast';
 import { ReadingSettings } from '../../types/reader';
+import { useTranslation } from 'react-i18next';
+import i18n from '../../i18n/config';
 
 interface Note {
   id: string;
@@ -42,6 +44,7 @@ export default function NotesPanel({
   onNoteClick,
   theme = 'light',
 }: NotesPanelProps) {
+  const { t } = useTranslation();
   const [notes, setNotes] = useState<Note[]>([]);
   const [loading, setLoading] = useState(false);
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -120,7 +123,7 @@ export default function NotesPanel({
       setNotes(response.data.notes || []);
     } catch (error: any) {
       console.error('获取笔记失败:', error);
-      toast.error(error.response?.data?.error || '获取笔记失败');
+      toast.error(error.response?.data?.error || t('notes.fetchFailed'));
     } finally {
       setLoading(false);
     }
@@ -128,7 +131,7 @@ export default function NotesPanel({
 
   const handleCreateNote = async () => {
     if (!noteContent.trim()) {
-      toast.error('请输入笔记内容');
+      toast.error(t('notes.pleaseEnterContent'));
       return;
     }
 
@@ -140,29 +143,29 @@ export default function NotesPanel({
         chapterIndex: currentChapterIndex,
         selectedText: noteSelectedText || null,
       });
-      toast.success('笔记创建成功');
+      toast.success(t('notes.createSuccess'));
       setShowCreateModal(false);
       setNoteContent('');
       setNoteSelectedText('');
       fetchNotes();
     } catch (error: any) {
       console.error('创建笔记失败:', error);
-      toast.error(error.response?.data?.error || '创建笔记失败');
+      toast.error(error.response?.data?.error || t('notes.createFailed'));
     }
   };
 
   const handleEditNote = async () => {
     if (!editingNote || !noteContent.trim()) {
-      toast.error('请输入笔记内容');
+      toast.error(t('notes.pleaseEnterContent'));
       return;
     }
 
     try {
-      await api.put(`/notes/${editingNote.id}`, {
+      await api.post(`/notes/${editingNote.id}`, { _method: 'PUT', 
         content: noteContent,
         selectedText: noteSelectedText || null,
-      });
-      toast.success('笔记更新成功');
+       });
+      toast.success(t('notes.updateSuccess'));
       setShowEditModal(false);
       setEditingNote(null);
       setNoteContent('');
@@ -170,22 +173,22 @@ export default function NotesPanel({
       fetchNotes();
     } catch (error: any) {
       console.error('更新笔记失败:', error);
-      toast.error(error.response?.data?.error || '更新笔记失败');
+      toast.error(error.response?.data?.error || t('notes.updateFailed'));
     }
   };
 
   const handleDeleteNote = async (noteId: string) => {
-    if (!confirm('确定要删除这条笔记吗？')) {
+    if (!confirm(t('notes.confirmDelete'))) {
       return;
     }
 
     try {
-      await api.delete(`/notes/${noteId}`);
-      toast.success('笔记已删除');
+      await api.post(`/notes/${noteId}`, { _method: 'DELETE' });
+      toast.success(t('notes.deleteSuccess'));
       fetchNotes();
     } catch (error: any) {
       console.error('删除笔记失败:', error);
-      toast.error(error.response?.data?.error || '删除笔记失败');
+      toast.error(error.response?.data?.error || t('notes.deleteFailed'));
     }
   };
 
@@ -233,14 +236,14 @@ export default function NotesPanel({
         >
           <h2 className="text-base font-semibold flex items-center gap-2">
             <StickyNote className="w-5 h-5" />
-            笔记
+            {t('reader.notes')}
           </h2>
           <div className="flex items-center gap-2">
             <button
               onClick={openCreateModal}
               className="p-2 rounded-lg transition-colors"
               style={{ color: theme === 'dark' ? '#60a5fa' : '#2563eb' }}
-              title="新建笔记"
+              title={t('notes.createNote')}
             >
               <Plus className="w-5 h-5" />
             </button>
@@ -263,7 +266,7 @@ export default function NotesPanel({
           ) : notes.length === 0 ? (
             <div className="text-center py-12">
               <StickyNote className="w-16 h-16 text-gray-400 mx-auto mb-4" />
-              <p style={{ color: themeStyles.subText }}>还没有笔记</p>
+              <p style={{ color: themeStyles.subText }}>{t('notes.noNotes')}</p>
             </div>
           ) : (
             <div className="space-y-3">
@@ -293,11 +296,11 @@ export default function NotesPanel({
                   </p>
                   <div className="flex items-center justify-between text-xs" style={{ color: themeStyles.subText }}>
                     <span>
-                      {note.page_number && `第 ${note.page_number} 页`}
+                      {note.page_number && t('notes.pageNumber', { page: note.page_number })}
                       {note.page_number && note.chapter_index !== undefined && ' · '}
-                      {note.chapter_index !== undefined && `章节 ${note.chapter_index + 1}`}
+                      {note.chapter_index !== undefined && t('notes.chapterNumber', { chapter: note.chapter_index + 1 })}
                     </span>
-                    <span>{new Date(note.created_at).toLocaleDateString('zh-CN')}</span>
+                    <span>{new Date(note.created_at).toLocaleDateString(i18n.language === 'zh' ? 'zh-CN' : 'en-US')}</span>
                   </div>
                   <div className="flex items-center justify-end gap-2 mt-2 pt-2 border-t" style={{ borderTopColor: themeStyles.border }}>
                     <button
@@ -307,7 +310,7 @@ export default function NotesPanel({
                       }}
                       className="p-1.5 transition-colors"
                       style={{ color: themeStyles.subText }}
-                      title="编辑"
+                      title={t('common.edit')}
                     >
                       <Edit className="w-4 h-4" />
                     </button>
@@ -318,7 +321,7 @@ export default function NotesPanel({
                       }}
                       className="p-1.5 transition-colors"
                       style={{ color: themeStyles.subText }}
-                      title="删除"
+                      title={t('common.delete')}
                     >
                       <Trash2 className="w-4 h-4" />
                     </button>
@@ -336,7 +339,7 @@ export default function NotesPanel({
           <div className="bg-white dark:bg-gray-800 rounded-lg max-w-lg w-full max-h-[90vh] overflow-y-auto">
             <div className="p-6">
               <div className="flex items-center justify-between mb-4">
-                <h3 className="text-lg font-bold">新建笔记</h3>
+                <h3 className="text-lg font-bold">{t('notes.createNote')}</h3>
                 <button
                   onClick={() => {
                     setShowCreateModal(false);
@@ -356,9 +359,9 @@ export default function NotesPanel({
               )}
 
               <div className="mb-4">
-                <label className="block text-sm font-medium mb-2">笔记内容 *</label>
+                <label className="block text-sm font-medium mb-2">{t('notes.content')}</label>
                 <textarea
-                  placeholder="输入笔记内容..."
+                  placeholder={t('notes.contentPlaceholder')}
                   value={noteContent}
                   onChange={(e) => setNoteContent(e.target.value)}
                   className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 resize-none"
@@ -376,14 +379,14 @@ export default function NotesPanel({
                   }}
                   className="px-4 py-2 border border-gray-300 dark:border-gray-700 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
                 >
-                  取消
+                  {t('common.cancel')}
                 </button>
                 <button
                   onClick={handleCreateNote}
                   className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors flex items-center gap-2"
                 >
                   <Save className="w-4 h-4" />
-                  保存
+                  {t('common.save')}
                 </button>
               </div>
             </div>
@@ -397,7 +400,7 @@ export default function NotesPanel({
           <div className="bg-white dark:bg-gray-800 rounded-lg max-w-lg w-full max-h-[90vh] overflow-y-auto">
             <div className="p-6">
               <div className="flex items-center justify-between mb-4">
-                <h3 className="text-lg font-bold">编辑笔记</h3>
+                <h3 className="text-lg font-bold">{t('notes.editNote')}</h3>
                 <button
                   onClick={() => {
                     setShowEditModal(false);
@@ -418,9 +421,9 @@ export default function NotesPanel({
               )}
 
               <div className="mb-4">
-                <label className="block text-sm font-medium mb-2">笔记内容 *</label>
+                <label className="block text-sm font-medium mb-2">{t('notes.content')}</label>
                 <textarea
-                  placeholder="输入笔记内容..."
+                  placeholder={t('notes.contentPlaceholder')}
                   value={noteContent}
                   onChange={(e) => setNoteContent(e.target.value)}
                   className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 resize-none"
@@ -439,14 +442,14 @@ export default function NotesPanel({
                   }}
                   className="px-4 py-2 border border-gray-300 dark:border-gray-700 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
                 >
-                  取消
+                  {t('common.cancel')}
                 </button>
                 <button
                   onClick={handleEditNote}
                   className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors flex items-center gap-2"
                 >
                   <Save className="w-4 h-4" />
-                  保存
+                  {t('common.save')}
                 </button>
               </div>
             </div>

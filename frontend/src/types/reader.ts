@@ -83,6 +83,45 @@ export interface TOCItem {
   chapterIndex?: number; // 对应的章节索引（用于EPUB）
 }
 
+export interface Highlight {
+  id: string;
+  bookId: string;
+  cfiRange: string;
+  selectedText?: string;
+  color?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// 检测是否在APK/Capacitor环境中
+function isCapacitorEnvironment(): boolean {
+  try {
+    // 检查是否存在Capacitor
+    if (typeof window !== 'undefined' && (window as any).Capacitor) {
+      return true;
+    }
+    // 检查是否是移动应用（没有有效的origin）
+    if (typeof window !== 'undefined' && window.location) {
+      const origin = window.location.origin;
+      if (!origin || origin === 'null' || origin.startsWith('file://') || origin.startsWith('capacitor://')) {
+        return true;
+      }
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 获取默认阅读主题
+ * APK环境默认为亮色，其他环境默认为深色
+ */
+function getDefaultReadingTheme(): 'light' | 'dark' {
+  const isAPK = isCapacitorEnvironment();
+  return isAPK ? 'light' : 'dark';
+}
+
 /**
  * 默认阅读设置
  * 
@@ -97,7 +136,7 @@ export interface TOCItem {
  * - lineHeight: 1.8 - 舒适的行距，符合中文阅读习惯
  * - margin: 20px - 适中的页边距
  * - textIndent: 2em - 首行缩进2个字符（中文排版标准）
- * - theme: 'dark' - 默认深色主题
+ * - theme: APK默认'light'，其他环境默认'dark'
  * - readerWidth: 'centered' - PC端默认居中显示（980px宽）
  * - pageTurnMethod: 'click' - 默认点击翻页（上下点击翻页）
  */
@@ -105,7 +144,7 @@ export const defaultSettings: ReadingSettings = {
   fontSize: 18,
   fontFamily: 'default',
   lineHeight: 1.8,
-  theme: 'dark',
+  theme: getDefaultReadingTheme(),
   brightness: 100,
   margin: 20,
   textIndent: 2,
@@ -118,7 +157,7 @@ export const defaultSettings: ReadingSettings = {
   pdfCropHorizontal: false, // PDF默认不裁剪左右白边
   pdfCropVertical: false, // PDF默认不裁剪上下白边
   pdfRenderQuality: 'ultra', // PDF默认使用最佳清晰度渲染
-  pdfAutoFit: false, // PDF默认不自适应屏幕
+  pdfAutoFit: true, // PDF默认自适应屏幕
   pdfAutoRotate: false, // PDF默认不自动旋转页面
   officeZoom: 100, // Office文档默认100%缩放
   keyboardShortcuts: {

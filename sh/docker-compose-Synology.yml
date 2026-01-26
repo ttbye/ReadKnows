@@ -4,22 +4,23 @@ services:
     image: ttbye/readknows-backend:latest
     platform: linux/amd64  # 指定平台，兼容 x86_64 和 ARM64
     build:
-      context: ../backend
-      dockerfile: Dockerfile.debian
+      context: ..  # 项目根目录，用于读取 package.json
+      dockerfile: backend/Dockerfile.debian
     container_name: readknows-backend
     restart: unless-stopped
     # 使用root用户运行以避免权限问题（特别是在NAS上）
     # 如果需要更安全的配置，请确保宿主机目录权限为1000:1000
     user: "0:0"
     ports:
-      - "1281:1281"
+      - "1281:1281"      # HTTP 端口
+      - "1244:1244"      # HTTPS 端口
     environment:
       - NODE_ENV=production
       - PORT=1281
-      - JWT_SECRET=${JWT_SECRET:-change-this-secret-key-in-production}
+      - JWT_SECRET=${JWT_SECRET:-gDKI70dyQwnmILUTsCBJAtU4ooh259Vy7wzXd+Uk+0M=}
       - JWT_EXPIRES_IN=${JWT_EXPIRES_IN:-7d}
       - DB_PATH=./data/database.db
-      - BOOKS_DIR=./books
+      - BOOKS_DIR=./data/books
       - DOUBAN_API_BASE=${DOUBAN_API_BASE:-}
       - AI_PROVIDER=${AI_PROVIDER:-ollama}
       # 通过nginx代理访问ollama服务器（nginx在前端容器中）
@@ -27,15 +28,19 @@ services:
       - AI_API_URL=${AI_API_URL:-http://frontend:1280/ollama-proxy}
       - AI_API_KEY=${AI_API_KEY:-}
       - AI_MODEL=${AI_MODEL:-llama2}
+      # 前端端口配置（用于后端生成正确的URL）
+      - FRONTEND_HTTP_PORT=1280
+      - FRONTEND_HTTPS_PORT=1243
+      # 后端HTTPS端口配置
+      - HTTPS_PORT=1244
     volumes:
-      # 数据持久化
+      # 数据持久化（统一挂载 data 目录，所有子目录都在其中）
       - /volume5/docker/ReadKnows/data:/app/data
-      - /volume5/docker/ReadKnows/books:/app/books
-      - /volume5/docker/ReadKnows/covers:/app/covers
-      - /volume5/docker/ReadKnows/fonts:/app/fonts
-      - /volume5/docker/ReadKnows/import:/app/import
+      # SSL 证书目录（用于后端HTTPS）
+      - /volume5/docker/ReadKnows/data/ssl:/app/data/ssl:ro
       # Calibre 安装缓存（用于加速重复安装）
-      - ../cache/calibre:/app/cache/calibre:rw
+      # 使用绝对路径
+      - /volume5/docker/ReadKnows/cache/calibre:/app/cache/calibre:rw
       # 扫描目录（可选，用于批量扫描本地书籍）
       # 将宿主机的书籍目录挂载到容器的/app/scan目录
       # 示例：- /path/to/your/books:/app/scan:ro
@@ -59,12 +64,17 @@ services:
     image: ttbye/readknows-frontend:latest
     platform: linux/amd64  # 指定平台，兼容 x86_64 和 ARM64
     build:
-      context: ../frontend
-      dockerfile: Dockerfile
+      context: ..  # 项目根目录，用于读取 package.json
+      dockerfile: frontend/Dockerfile
     container_name: readknows-frontend
     restart: unless-stopped
     ports:
-      - "1280:1280"
+      - "1280:80"      # HTTP 端口（外部1280映射到容器80）
+      - "1243:443"     # HTTPS 端口（外部1243映射到容器443）
+    volumes:
+      # SSL 证书目录（挂载到data目录下的ssl子目录）
+      - /volume5/docker/ReadKnows/data/ssl:/etc/nginx/ssl:ro  # 只读挂载，证书文件放在 data/ssl/ 目录下
+      # 注意：SSL证书文件应命名为 cert.pem 和 key.pem (或 fullchain.pem 和 privkey.pem)
     # 注意：Ollama 地址现在只在系统后台管理中配置，不再使用环境变量
     # 所有用户都使用系统设置中配置的统一 Ollama 地址
     # 在Linux上支持host.docker.internal（Docker Desktop自动支持，但Linux需要手动配置）
@@ -80,8 +90,29 @@ services:
       timeout: 10s
       retries: 3
 
+  # 豆瓣 API 服务（可选，默认不启动）
+  # 如需启用，请使用: docker-compose --profile douban up -d
+  # 或在启动脚本中选择启用
+  # 启用后，请在系统设置中将 douban_api_base 设置为: http://douban-rs-api:1482
+  douban-rs-api:
+    profiles:
+      - douban  # 使用 profile，默认不启动
+    restart: unless-stopped
+    image: ghcr.io/cxfksword/douban-api-rs:latest
+    container_name: douban-rs-api
+    ports:
+      - "1482:1482"
+    networks:
+      - readknows-network
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:1482/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
 networks:
   readknows-network:
+    name: readknows-network
     driver: bridge
     # 允许容器访问宿主机局域网
     # 默认情况下，bridge网络应该可以访问宿主机可以访问的网络

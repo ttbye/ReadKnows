@@ -75,13 +75,13 @@ build_backend() {
         exit 1
     fi
     
-    print_info "后端构建上下文: $BACKEND_DIR"
+    print_info "后端构建上下文: $PROJECT_ROOT (项目根目录，用于读取 package.json)"
     
-    # 构建镜像
+    # 构建镜像（使用项目根目录作为构建上下文）
     docker build \
         -t ttbye/readknows-backend:latest \
-        -f "$BACKEND_DIR/Dockerfile" \
-        "$BACKEND_DIR"
+        -f "$BACKEND_DIR/Dockerfile.debian" \
+        "$PROJECT_ROOT"
     
     if [ $? -eq 0 ]; then
         print_success "后端镜像构建成功: ttbye/readknows-backend:latest"
@@ -102,13 +102,13 @@ build_frontend() {
         exit 1
     fi
     
-    print_info "前端构建上下文: $FRONTEND_DIR"
+    print_info "前端构建上下文: $PROJECT_ROOT (项目根目录，用于读取 package.json)"
     
-    # 构建镜像
+    # 构建镜像（使用项目根目录作为构建上下文）
     docker build \
         -t ttbye/readknows-frontend:latest \
         -f "$FRONTEND_DIR/Dockerfile" \
-        "$FRONTEND_DIR"
+        "$PROJECT_ROOT"
     
     if [ $? -eq 0 ]; then
         print_success "前端镜像构建成功: ttbye/readknows-frontend:latest"

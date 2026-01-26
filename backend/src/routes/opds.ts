@@ -11,20 +11,31 @@ const router = express.Router();
 
 // 获取正确的基础URL（优先使用前端端口，确保外部客户端可以访问）
 function getBaseUrl(req: express.Request): string {
-  // 1. 优先使用 X-Forwarded-Host（如果通过反向代理访问）
+  const protocol = req.get('X-Forwarded-Proto') || req.protocol;
+  const isHttps = protocol === 'https';
+  
+  // 1. 优先使用 X-Forwarded-Host（如果通过反向代理访问，nginx会传递包含端口的完整host）
   const forwardedHost = req.get('X-Forwarded-Host');
   if (forwardedHost) {
-    const protocol = req.get('X-Forwarded-Proto') || req.protocol;
+    // X-Forwarded-Host 可能已经包含端口，直接使用
     return `${protocol}://${forwardedHost}`;
   }
 
-  // 2. 检查 Referer 头（如果从浏览器访问）
+  // 2. 检查 X-Forwarded-Port（nginx传递的端口信息）
+  const forwardedPort = req.get('X-Forwarded-Port');
+  if (forwardedPort) {
+    const host = req.get('host') || 'localhost';
+    const hostname = host.split(':')[0]; // 移除可能存在的端口
+    return `${protocol}://${hostname}:${forwardedPort}`;
+  }
+
+  // 3. 检查 Referer 头（如果从浏览器访问）
   const referer = req.get('Referer');
   if (referer) {
     try {
       const refererUrl = new URL(referer);
-      // 如果 Referer 是前端端口，使用它
-      if (refererUrl.port === '1280') {
+      // 如果 Referer 是前端端口（HTTP 1280 或 HTTPS 1243），使用它
+      if (refererUrl.port === '1280' || refererUrl.port === '1243') {
         return `${refererUrl.protocol}//${refererUrl.host}`;
       }
     } catch (e) {
@@ -32,12 +43,14 @@ function getBaseUrl(req: express.Request): string {
     }
   }
 
-  // 3. 从环境变量获取前端端口（如果配置了）
-  const frontendPort = process.env.FRONTEND_PORT || '1280';
+  // 4. 从环境变量获取前端端口（如果配置了）
+  const frontendHttpPort = process.env.FRONTEND_HTTP_PORT || '1280';
+  const frontendHttpsPort = process.env.FRONTEND_HTTPS_PORT || '1243';
+  const frontendPort = isHttps ? frontendHttpsPort : frontendHttpPort;
   const backendPort = process.env.PORT || '1281';
   const host = req.get('host') || 'localhost:1281';
   
-  // 4. 解析当前 Host
+  // 5. 解析当前 Host
   let hostname: string;
   let currentPort: string;
   
@@ -45,17 +58,18 @@ function getBaseUrl(req: express.Request): string {
     [hostname, currentPort] = host.split(':');
   } else {
     hostname = host;
-    currentPort = req.protocol === 'https' ? '443' : '80';
+    // 如果是HTTPS，使用1243端口；如果是HTTP，使用1280端口
+    currentPort = isHttps ? frontendHttpsPort : frontendHttpPort;
   }
   
-  // 5. 如果当前端口是后端端口（1281），替换为前端端口（1280）
+  // 6. 如果当前端口是后端端口（1281），替换为前端端口
   // 这样确保外部客户端可以通过前端端口访问 OPDS
   if (currentPort === backendPort) {
-    return `${req.protocol}://${hostname}:${frontendPort}`;
+    return `${protocol}://${hostname}:${frontendPort}`;
   }
 
-  // 6. 如果 Host 已经是前端端口或其他端口，直接使用
-  return `${req.protocol}://${host}`;
+  // 7. 如果 Host 已经是前端端口或其他端口，直接使用
+  return `${protocol}://${host}`;
 }
 
 // OPDS根目录
@@ -101,8 +115,9 @@ router.get('/books', (req, res) => {
   const limit = parseInt(req.query.limit as string) || 20;
   const offset = (page - 1) * limit;
 
+  // 仅公开书籍，且只查主书籍（避免多格式重复）；不暴露私人书籍
   const books = db
-    .prepare('SELECT * FROM books ORDER BY created_at DESC LIMIT ? OFFSET ?')
+    .prepare('SELECT * FROM books WHERE parent_book_id IS NULL AND is_public = 1 ORDER BY created_at DESC LIMIT ? OFFSET ?')
     .all(limit, offset) as any[];
 
   const total = db.prepare('SELECT COUNT(*) as count FROM books').get() as any;
@@ -167,12 +182,12 @@ router.get('/books', (req, res) => {
   res.send(feed);
 });
 
-// 获取最新书籍
+// 获取最新书籍（仅公开且主书籍，不暴露私人书籍）
 router.get('/books/recent', (req, res) => {
   const limit = parseInt(req.query.limit as string) || 20;
 
   const books = db
-    .prepare('SELECT * FROM books ORDER BY created_at DESC LIMIT ?')
+    .prepare('SELECT * FROM books WHERE parent_book_id IS NULL AND is_public = 1 ORDER BY created_at DESC LIMIT ?')
     .all(limit) as any[];
 
   const baseUrl = getBaseUrl(req);
@@ -227,7 +242,7 @@ router.get('/books/recent', (req, res) => {
   res.send(feed);
 });
 
-// 搜索书籍
+// 搜索书籍（仅公开且主书籍，不暴露私人书籍）
 router.get('/search', (req, res) => {
   const query = req.query.q as string;
   if (!query) {
@@ -235,7 +250,7 @@ router.get('/search', (req, res) => {
   }
 
   const books = db
-    .prepare('SELECT * FROM books WHERE title LIKE ? OR author LIKE ? LIMIT 50')
+    .prepare('SELECT * FROM books WHERE parent_book_id IS NULL AND is_public = 1 AND (title LIKE ? OR author LIKE ?) LIMIT 50')
     .all(`%${query}%`, `%${query}%`) as any[];
 
   const baseUrl = getBaseUrl(req);

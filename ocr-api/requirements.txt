@@ -1,0 +1,27 @@
+# OCR API 依赖
+# 使用 PaddleOCR 进行 OCR 识别
+
+# Web 框架
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+python-multipart==0.0.6
+python-dotenv==1.0.0
+pydantic==2.5.0
+pydantic-settings==2.1.0
+
+# OCR 引擎
+# 使用 2.6.x 版本（更稳定，兼容性更好）
+paddlepaddle>=2.5.0,<3.0.0
+paddleocr>=2.6.1.3,<2.7.0
+
+# 基础依赖（PaddlePaddle 需要）
+setuptools>=65.0.0
+protobuf>=3.20.0
+
+# 图像处理
+Pillow>=10.0.0
+numpy>=1.24.0
+opencv-python-headless>=4.8.0
+
+# HTTP 请求
+requests>=2.31.0

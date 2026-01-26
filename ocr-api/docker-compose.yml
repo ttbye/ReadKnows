@@ -1,0 +1,31 @@
+version: '3.8'
+
+services:
+  ocr-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ttbye/ocr-api:latest
+    container_name: ocr-api
+    ports:
+      - "5080:5080"
+    environment:
+      - PORT=5080
+      - NODE_ENV=production
+      - API_KEY=${API_KEY:-}
+      - TEMP_DIR=/app/temp
+      - USE_GPU=${USE_GPU:-false}
+    volumes:
+      - ./ocr-temp:/app/temp
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - ocr-network
+
+networks:
+  ocr-network:
+    driver: bridge

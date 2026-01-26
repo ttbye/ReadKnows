@@ -5,7 +5,7 @@ services:
     image: ttbye/tts-api-lite:latest
     platform: linux/amd64  
     build:
-      context: ../TTS-API-Lite
+      context: ../tts-api-lite
       dockerfile: Dockerfile
     container_name: readknow-tts-api-lite
     ports:
@@ -33,5 +33,6 @@ networks:
   tts-lite-network:
     driver: bridge
   readknows-network:
-    driver: bridge
+    external: true
+    name: readknows-network
 

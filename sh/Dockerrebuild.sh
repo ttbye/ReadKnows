@@ -99,7 +99,7 @@ build_backend() {
         exit 1
     fi
     
-    print_info "后端构建上下文: $BACKEND_DIR"
+    print_info "后端构建上下文: $PROJECT_ROOT (项目根目录，用于读取 package.json)"
     
     # 使用 docker-compose 构建（推荐，因为会使用缓存）
     if [ "$USE_COMPOSE" = true ]; then
@@ -114,11 +114,11 @@ build_backend() {
         fi
     else
         # 直接使用 docker build
-        print_info "使用 docker build 构建后端..."
+        print_info "使用 docker build 构建后端（构建上下文: $PROJECT_ROOT）..."
         docker build \
             -t ttbye/readknows-backend:latest \
-            -f "$BACKEND_DIR/Dockerfile" \
-            "$BACKEND_DIR"
+            -f "$BACKEND_DIR/Dockerfile.debian" \
+            "$PROJECT_ROOT"
         
         if [ $? -eq 0 ]; then
             print_success "后端镜像构建成功: ttbye/readknows-backend:latest"
@@ -156,11 +156,12 @@ build_frontend() {
         fi
     else
         # 直接使用 docker build
-        print_info "使用 docker build 构建前端..."
+        PROJECT_ROOT=$(get_project_root)
+        print_info "使用 docker build 构建前端（构建上下文: $PROJECT_ROOT）..."
         docker build \
             -t ttbye/readknows-frontend:latest \
             -f "$FRONTEND_DIR/Dockerfile" \
-            "$FRONTEND_DIR"
+            "$PROJECT_ROOT"
         
         if [ $? -eq 0 ]; then
             print_success "前端镜像构建成功: ttbye/readknows-frontend:latest"
@@ -176,6 +177,20 @@ start_containers() {
     print_header "启动容器"
     
     if [ "$USE_COMPOSE" = true ]; then
+        # 检查并创建必要的目录
+        SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+        # 自动检测使用的 compose 文件
+        COMPOSE_FILE="docker-compose-Linux.yml"
+        if [ -f "$SCRIPT_DIR/docker-compose-Synology.yml" ]; then
+            COMPOSE_FILE="docker-compose-Synology.yml"
+        elif [ -f "$SCRIPT_DIR/docker-compose.yml" ]; then
+            COMPOSE_FILE="docker-compose.yml"
+        fi
+        if [ -f "$SCRIPT_DIR/create-docker-dirs.sh" ]; then
+            print_info "检查 Docker 挂载目录..."
+            "$SCRIPT_DIR/create-docker-dirs.sh" "$COMPOSE_FILE" > /dev/null 2>&1 || true
+        fi
+        
         print_info "使用 docker-compose 启动服务..."
         $COMPOSE_CMD up -d
         

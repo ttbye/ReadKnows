@@ -6,13 +6,15 @@
 
 import { useEffect, useState } from 'react';
 import { useAuthStore } from '../store/authStore';
-import { StickyNote, Plus, Search, Trash2, Edit, BookOpen, X, Save, Calendar, RefreshCw } from 'lucide-react';
+import { StickyNote, Plus, Search, Trash2, Edit, BookOpen, X, Save, Calendar, RefreshCw, Activity } from 'lucide-react';
 import api from '../utils/api';
 import toast from 'react-hot-toast';
 import { Link, useNavigate } from 'react-router-dom';
 import { getCoverUrl } from '../utils/coverHelper';
 import { usePullToRefresh } from '../hooks/usePullToRefresh';
 import PullToRefreshIndicator from '../components/PullToRefresh';
+import { useTranslation } from 'react-i18next';
+import { formatTimeWithTimezone } from '../utils/timezone';
 
 interface Note {
   id: string;
@@ -32,6 +34,7 @@ interface Note {
 export default function Notes() {
   const { isAuthenticated } = useAuthStore();
   const navigate = useNavigate();
+  const { t, i18n } = useTranslation();
   const [notes, setNotes] = useState<Note[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
@@ -41,15 +44,33 @@ export default function Notes() {
   const [noteContent, setNoteContent] = useState('');
   const [selectedBookId, setSelectedBookId] = useState('');
   const [selectedText, setSelectedText] = useState('');
+  const [isPublic, setIsPublic] = useState(false);
+  const [shareToGroupId, setShareToGroupId] = useState('');
+  const [availableGroups, setAvailableGroups] = useState<any[]>([]);
   
   // 检测是否为移动设备
   const [isMobile, setIsMobile] = useState(false);
 
   useEffect(() => {
     if (isAuthenticated) {
+      // 立即加载笔记（关键数据）
       fetchNotes();
+      // 延迟加载群组列表（非关键数据）
+      const timer = setTimeout(() => {
+        fetchGroups();
+      }, 500);
+      return () => clearTimeout(timer);
     }
   }, [isAuthenticated]);
+
+  const fetchGroups = async () => {
+    try {
+      const response = await api.get('/groups');
+      setAvailableGroups(response.data.groups || []);
+    } catch (error: any) {
+      console.error('获取群组列表失败:', error);
+    }
+  };
 
   // 检测设备类型
   useEffect(() => {
@@ -69,7 +90,9 @@ export default function Notes() {
   const fetchNotes = async () => {
     try {
       setLoading(true);
-      const response = await api.get('/notes');
+      const response = await api.get('/notes', {
+        timeout: 5000, // 5秒超时
+      });
       setNotes(response.data.notes || []);
     } catch (error: any) {
       console.error('获取笔记失败:', error);
@@ -81,8 +104,8 @@ export default function Notes() {
         }
       } else {
         // 只有在在线且确实失败时才显示错误
-        if (navigator.onLine) {
-          toast.error(error.response?.data?.error || '获取笔记失败');
+        if (navigator.onLine && error.code !== 'ECONNABORTED' && error.code !== 'ERR_NETWORK' && error.code !== 'ERR_ADDRESS_INVALID') {
+          toast.error(error.response?.data?.error || t('notes.fetchNotesFailed'));
         }
       }
     } finally {
@@ -92,7 +115,7 @@ export default function Notes() {
 
   const handleCreateNote = async () => {
     if (!noteContent.trim()) {
-      toast.error('请输入笔记内容');
+      toast.error(t('notes.enterNoteContent'));
       return;
     }
 
@@ -101,54 +124,62 @@ export default function Notes() {
         bookId: selectedBookId && selectedBookId.trim() ? selectedBookId.trim() : null,
         content: noteContent,
         selectedText: selectedText || null,
+        isPublic,
+        shareToGroupId: shareToGroupId || null,
       });
-      toast.success('笔记创建成功');
+      toast.success(t('notes.noteCreated'));
       setShowCreateModal(false);
       setNoteContent('');
       setSelectedBookId('');
       setSelectedText('');
+      setIsPublic(false);
+      setShareToGroupId('');
       fetchNotes();
     } catch (error: any) {
       console.error('创建笔记失败:', error);
-      toast.error(error.response?.data?.error || '创建笔记失败');
+      toast.error(error.response?.data?.error || t('notes.createNoteFailed'));
     }
   };
 
   const handleEditNote = async () => {
     if (!editingNote || !noteContent.trim()) {
-      toast.error('请输入笔记内容');
+      toast.error(t('notes.enterNoteContent'));
       return;
     }
 
     try {
-      await api.put(`/notes/${editingNote.id}`, {
+      await api.post(`/notes/${editingNote.id}`, { _method: 'PUT', 
         content: noteContent,
         selectedText: selectedText || null,
-      });
-      toast.success('笔记更新成功');
+        isPublic,
+        shareToGroupId: shareToGroupId || null,
+       });
+      toast.success(t('notes.noteUpdated'));
       setShowEditModal(false);
       setEditingNote(null);
       setNoteContent('');
       setSelectedText('');
+      setIsPublic(false);
+      setShareToGroupId('');
       fetchNotes();
     } catch (error: any) {
       console.error('更新笔记失败:', error);
-      toast.error(error.response?.data?.error || '更新笔记失败');
+      toast.error(error.response?.data?.error || t('notes.updateNoteFailed'));
     }
   };
 
   const handleDeleteNote = async (noteId: string) => {
-    if (!confirm('确定要删除这条笔记吗？')) {
+    if (!confirm(t('notes.confirmDeleteNote'))) {
       return;
     }
 
     try {
-      await api.delete(`/notes/${noteId}`);
-      toast.success('笔记已删除');
+      await api.post(`/notes/${noteId}`, { _method: 'DELETE' });
+      toast.success(t('notes.noteDeleted'));
       fetchNotes();
     } catch (error: any) {
       console.error('删除笔记失败:', error);
-      toast.error(error.response?.data?.error || '删除笔记失败');
+      toast.error(error.response?.data?.error || t('notes.deleteNoteFailed'));
     }
   };
 
@@ -156,6 +187,9 @@ export default function Notes() {
     setEditingNote(note);
     setNoteContent(note.content);
     setSelectedText(note.selected_text || '');
+    // 从note对象获取可见性设置（如果API返回了这些字段）
+    setIsPublic((note as any).is_public === 1 || false);
+    setShareToGroupId((note as any).share_to_group_id || '');
     setShowEditModal(true);
   };
 
@@ -169,14 +203,14 @@ export default function Notes() {
   const handleRefresh = async () => {
     await fetchNotes();
     toast.success(
-      (t) => (
+      (toastInstance) => (
         <div className="flex items-center gap-3">
           <div className="flex-shrink-0 w-8 h-8 rounded-full bg-white/20 flex items-center justify-center">
             <RefreshCw className="w-5 h-5 text-white animate-spin" style={{ animationDuration: '0.5s' }} />
           </div>
           <div>
-            <div className="font-semibold text-white">刷新成功</div>
-            <div className="text-xs text-white/80 mt-0.5">笔记已更新</div>
+            <div className="font-semibold text-white">{t('notes.refreshSuccess')}</div>
+            <div className="text-xs text-white/80 mt-0.5">{t('notes.notesUpdated')}</div>
           </div>
         </div>
       ),
@@ -225,149 +259,237 @@ export default function Notes() {
       >
         <div className="text-center">
         <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-          <p className="mt-4 text-gray-500 dark:text-gray-400 text-sm">加载中...</p>
+          <p className="mt-4 text-gray-500 dark:text-gray-400 text-sm">{t('common.loading')}</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div 
-      className="min-h-screen bg-gray-50 dark:bg-gray-950"
-      style={{
-        paddingTop: getTopPadding(),
-        paddingLeft: 'env(safe-area-inset-left, 0px)',
-        paddingRight: 'env(safe-area-inset-right, 0px)',
-        paddingBottom: 'calc(5rem + env(safe-area-inset-bottom, 0px))', // 底部导航栏 + 安全区域
-      }}
-    >
-      <PullToRefreshIndicator 
+    <div className="w-full max-w-6xl mx-auto px-3 sm:px-4 py-4">
+      <PullToRefreshIndicator
         pullDistance={pullDistance}
         isRefreshing={isRefreshing}
       />
-      <div className="container mx-auto px-4 sm:px-6 lg:px-8">
-        {/* 页面标题 */}
-        <div className="mb-6">
-          <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 dark:text-gray-100 flex items-center gap-2">
-            <StickyNote className="w-6 h-6 sm:w-8 sm:h-8 text-blue-600 dark:text-blue-400" />
-            我的笔记
-          </h1>
-          <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-            记录阅读中的思考和感悟
-          </p>
-        </div>
 
-        {/* 搜索框和新建按钮 */}
-        <div className="mb-6 flex flex-col sm:flex-row items-stretch sm:items-center gap-3 sm:gap-4">
-        <div className="flex-1 relative">
-          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 dark:text-gray-500 w-5 h-5" />
-          <input
-            type="text"
-            placeholder="搜索笔记..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-10 pr-4 py-2.5 sm:py-2 border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 focus:border-transparent transition-all"
-          />
+      {/* 紧凑的页面头部 */}
+      <div className="mb-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <StickyNote className="w-6 h-6 text-blue-600" />
+            <h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100">笔记管理</h1>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => { fetchNotes(); }}
+              className="p-2 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors"
+              title="刷新"
+            >
+              <RefreshCw className="w-5 h-5" />
+            </button>
+            <button
+              onClick={() => setShowCreateModal(true)}
+              className="p-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors"
+              title="新建笔记"
+            >
+              <Plus className="w-5 h-5" />
+            </button>
+          </div>
         </div>
-        <button
-          onClick={() => setShowCreateModal(true)}
-            className="flex items-center justify-center gap-2 px-4 py-2.5 sm:py-2 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white rounded-lg transition-colors shrink-0 shadow-md hover:shadow-lg"
-        >
-            <Plus className="w-4 h-4 sm:w-5 sm:h-5" />
-            <span className="text-sm sm:text-base font-medium">新建笔记</span>
-        </button>
       </div>
 
-      {/* 笔记列表 */}
+      {/* 紧凑的统计信息 */}
+      <div className="mb-4">
+        <div className="bg-gray-50 dark:bg-gray-800/50 p-2 rounded-lg border border-gray-200 dark:border-gray-700">
+          <div className="flex items-center gap-1.5 mb-1">
+            <Activity className="w-3.5 h-3.5 text-blue-600" />
+            <span className="text-xs text-gray-600 dark:text-gray-400">笔记统计</span>
+          </div>
+          <div className="text-base font-semibold text-gray-900 dark:text-gray-100">{notes.length} 个笔记</div>
+        </div>
+      </div>
+
+      {/* 紧凑的操作栏 */}
+      <div className="mb-4">
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 dark:text-gray-500 w-4 h-4" />
+          <input
+            type="text"
+            className="w-full pl-9 pr-4 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
+            placeholder="搜索笔记内容..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+          />
+        </div>
+      </div>
+
+      {/* 笔记列表 - 响应式布局 */}
       {filteredNotes.length === 0 ? (
-          <div className="text-center py-16 sm:py-20">
-            <div className="inline-flex items-center justify-center w-20 h-20 sm:w-24 sm:h-24 rounded-full bg-gray-100 dark:bg-gray-800 mb-4">
-              <StickyNote className="w-10 h-10 sm:w-12 sm:h-12 text-gray-400 dark:text-gray-500" />
-            </div>
-            <p className="text-gray-500 dark:text-gray-400 text-base sm:text-lg">
-            {searchQuery ? '没有找到匹配的笔记' : '还没有笔记，开始阅读并添加笔记吧'}
+        <div className="bg-gray-50 dark:bg-gray-800/50 p-8 text-center rounded-lg border border-gray-200 dark:border-gray-700">
+          <StickyNote className="w-12 h-12 mx-auto mb-2 text-gray-400" />
+          <p className="text-gray-500 dark:text-gray-400">
+            {searchQuery ? '未找到匹配的笔记' : '还没有笔记'}
           </p>
-            {!searchQuery && (
-              <button
-                onClick={() => setShowCreateModal(true)}
-                className="mt-4 inline-flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors text-sm sm:text-base"
-              >
-                <Plus className="w-4 h-4" />
-                创建第一条笔记
-              </button>
-            )}
+          {!searchQuery && (
+            <button
+              onClick={() => setShowCreateModal(true)}
+              className="mt-4 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded-lg transition-colors flex items-center gap-2 mx-auto"
+            >
+              <Plus className="w-4 h-4" />
+              创建第一条笔记
+            </button>
+          )}
         </div>
       ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
-          {filteredNotes.map((note) => (
-            <div
-              key={note.id}
-                className="card-gradient rounded-xl p-4 sm:p-5 hover:shadow-lg dark:hover:shadow-xl transition-all duration-200"
-            >
-              {note.book_title && (
-                <Link
-                  to={`/books/${note.book_id}`}
+          <div className="space-y-2">
+          {/* 桌面端网格布局 */}
+          <div className="hidden md:grid md:grid-cols-2 lg:grid-cols-3 gap-3">
+            {filteredNotes.map((note) => (
+              <div
+                key={note.id}
+                className="bg-white dark:bg-gray-800 p-4 rounded-lg border border-gray-200 dark:border-gray-700 hover:shadow-md transition-shadow"
+              >
+                {note.book_title && (
+                  <Link
+                    to={`/books/${note.book_id}`}
                     className="text-sm font-medium text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 hover:underline mb-3 flex items-center gap-1.5 transition-colors"
-                >
+                  >
                     <BookOpen className="w-4 h-4 flex-shrink-0" />
                     <span className="truncate">{note.book_title}</span>
-                  {note.book_author && (
-                      <span className="text-gray-500 dark:text-gray-400 text-xs truncate"> - {note.book_author}</span>
-                  )}
-                </Link>
-              )}
-              
-              {note.selected_text && (
-                  <div className="mb-3 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg text-xs sm:text-sm text-gray-700 dark:text-gray-300 italic border-l-3 border-blue-500 max-h-24 overflow-y-auto">
-                    <div className="font-medium text-blue-600 dark:text-blue-400 mb-1 text-xs">引用：</div>
+                    {note.book_author && (
+                      <span className="text-gray-500 dark:text-gray-400 text-xs truncate ml-1">- {note.book_author}</span>
+                    )}
+                  </Link>
+                )}
+
+                {note.selected_text && (
+                  <div className="mb-3 p-2 bg-blue-50 dark:bg-blue-900/20 rounded text-xs text-gray-700 dark:text-gray-300 italic border-l-2 border-blue-500">
+                    <div className="font-medium text-blue-600 dark:text-blue-400 mb-1">引用</div>
                     <div className="whitespace-pre-wrap break-words">"{note.selected_text}"</div>
-                </div>
-              )}
-              
-                <p className="text-gray-700 dark:text-gray-300 mb-4 line-clamp-4 whitespace-pre-wrap text-sm sm:text-base leading-relaxed">
-                {note.content}
-              </p>
-              
-                <div className="flex items-center justify-between text-xs text-gray-500 dark:text-gray-400 mb-3">
-                  <div className="flex items-center gap-1.5">
-                    <Calendar className="w-3.5 h-3.5" />
-                    <span>{new Date(note.created_at).toLocaleDateString('zh-CN', { 
-                      year: 'numeric', 
-                      month: 'short', 
-                      day: 'numeric' 
+                  </div>
+                )}
+
+                <p className="text-gray-700 dark:text-gray-300 mb-3 line-clamp-3 text-sm leading-relaxed">
+                  {note.content}
+                </p>
+
+                <div className="flex items-center justify-between text-xs text-gray-500 dark:text-gray-400">
+                  <div className="flex items-center gap-1">
+                    <Calendar className="w-3 h-3" />
+                    <span>{formatTimeWithTimezone(note.created_at, {
+                      showTime: false,
+                      showDate: true,
+                      relative: false,
                     })}</span>
+                  </div>
+                  {note.page_number && (
+                    <span className="px-1.5 py-0.5 bg-gray-100 dark:bg-gray-700 rounded text-xs">第{note.page_number}页</span>
+                  )}
                 </div>
-                {note.page_number && (
-                    <span className="px-2 py-0.5 bg-gray-100 dark:bg-gray-700 rounded text-xs">第 {note.page_number} 页</span>
+
+                <div className="flex items-center justify-between gap-2 mt-3 pt-2 border-t border-gray-200 dark:border-gray-700">
+                  <Link
+                    to={`/reader/${note.book_id}`}
+                    className="text-sm font-medium text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 hover:underline"
+                  >
+                    继续阅读
+                  </Link>
+                  <div className="flex items-center gap-1">
+                    <button
+                      onClick={() => openEditModal(note)}
+                      className="p-1.5 text-gray-600 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded transition-colors"
+                      title="编辑"
+                    >
+                      <Edit className="w-4 h-4" />
+                    </button>
+                    <button
+                      onClick={() => handleDeleteNote(note.id)}
+                      className="p-1.5 text-gray-600 dark:text-gray-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-colors"
+                      title="删除"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* 移动端卡片列表 */}
+          <div className="md:hidden space-y-2">
+            {filteredNotes.map((note) => (
+              <div key={note.id} className="bg-white dark:bg-gray-800 p-3 rounded-lg border border-gray-200 dark:border-gray-700">
+                <div className="flex items-start justify-between mb-2">
+                  <div className="flex items-center gap-2 min-w-0 flex-1">
+                    {note.book_title && (
+                      <Link
+                        to={`/books/${note.book_id}`}
+                        className="flex items-center gap-1.5 min-w-0 flex-1"
+                      >
+                        <BookOpen className="w-4 h-4 text-blue-600 flex-shrink-0" />
+                        <div className="min-w-0 flex-1">
+                          <span className="text-sm font-medium text-blue-600 dark:text-blue-400 truncate block">{note.book_title}</span>
+                          {note.book_author && (
+                            <span className="text-xs text-gray-500 dark:text-gray-400 truncate block">{note.book_author}</span>
+                          )}
+                        </div>
+                      </Link>
+                    )}
+                  </div>
+                  <div className="flex gap-1 flex-shrink-0">
+                    <button
+                      onClick={() => openEditModal(note)}
+                      className="p-1.5 text-gray-600 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded transition-colors"
+                    >
+                      <Edit className="w-4 h-4" />
+                    </button>
+                    <button
+                      onClick={() => handleDeleteNote(note.id)}
+                      className="p-1.5 text-gray-600 dark:text-gray-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-colors"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+
+                {note.selected_text && (
+                  <div className="mb-2 p-2 bg-blue-50 dark:bg-blue-900/20 rounded text-xs text-gray-700 dark:text-gray-300 italic border-l-2 border-blue-500">
+                    <div className="font-medium text-blue-600 dark:text-blue-400 mb-1">引用</div>
+                    <div className="whitespace-pre-wrap break-words">"{note.selected_text}"</div>
+                  </div>
+                )}
+
+                <p className="text-gray-700 dark:text-gray-300 mb-2 line-clamp-2 text-sm leading-relaxed">
+                  {note.content}
+                </p>
+
+                <div className="flex items-center justify-between text-xs text-gray-500 dark:text-gray-400">
+                  <div className="flex items-center gap-1">
+                    <Calendar className="w-3 h-3" />
+                    <span>{formatTimeWithTimezone(note.created_at, {
+                      showTime: false,
+                      showDate: true,
+                      relative: false,
+                    })}</span>
+                  </div>
+                  {note.page_number && (
+                    <span className="px-1.5 py-0.5 bg-gray-100 dark:bg-gray-700 rounded text-xs">第{note.page_number}页</span>
+                  )}
+                </div>
+
+                {note.book_id && (
+                  <div className="mt-2 pt-2 border-t border-gray-200 dark:border-gray-700">
+                    <Link
+                      to={`/reader/${note.book_id}`}
+                      className="text-sm font-medium text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 hover:underline"
+                    >
+                      继续阅读 →
+                    </Link>
+                  </div>
                 )}
               </div>
-              
-                <div className="flex items-center justify-between gap-2 pt-3 border-t border-gray-200 dark:border-gray-700">
-                <Link
-                  to={`/reader/${note.book_id}`}
-                    className="text-sm font-medium text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 hover:underline transition-colors"
-                >
-                  继续阅读
-                </Link>
-                  <div className="flex items-center gap-1">
-                  <button
-                    onClick={() => openEditModal(note)}
-                      className="p-2 text-gray-600 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-lg transition-colors"
-                    title="编辑"
-                  >
-                    <Edit className="w-4 h-4" />
-                  </button>
-                  <button
-                    onClick={() => handleDeleteNote(note.id)}
-                      className="p-2 text-gray-600 dark:text-gray-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors"
-                    title="删除"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
-                </div>
-              </div>
-            </div>
-          ))}
+            ))}
+          </div>
         </div>
       )}
 
@@ -376,16 +498,27 @@ export default function Notes() {
           <div 
             className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-2 sm:p-4"
             style={{
-              paddingTop: 'max(env(safe-area-inset-top, 0px), 8px)',
-              paddingBottom: 'max(env(safe-area-inset-bottom, 0px), 8px)',
+              paddingTop: typeof window !== 'undefined' && window.innerWidth < 1024
+                ? `max(clamp(20px, env(safe-area-inset-top, 20px), 44px), 8px)`
+                : 'max(env(safe-area-inset-top, 0px), 8px)',
+              paddingBottom: typeof window !== 'undefined' && window.innerWidth < 1024
+                ? `max(clamp(10px, env(safe-area-inset-bottom, 10px), 34px), 8px)`
+                : 'max(env(safe-area-inset-bottom, 0px), 8px)',
               paddingLeft: 'max(env(safe-area-inset-left, 0px), 8px)',
               paddingRight: 'max(env(safe-area-inset-right, 0px), 8px)',
             }}
           >
-            <div className="card-gradient rounded-xl sm:rounded-lg max-w-2xl w-full max-h-[calc(100vh-2rem)] sm:max-h-[90vh] overflow-y-auto shadow-2xl">
-            <div className="p-6">
+            <div 
+              className="card-gradient rounded-xl sm:rounded-lg max-w-2xl w-full flex flex-col shadow-2xl"
+              style={{
+                maxHeight: typeof window !== 'undefined' && window.innerWidth < 1024
+                  ? `calc(100vh - max(clamp(20px, env(safe-area-inset-top, 20px), 44px), 8px) - max(clamp(10px, env(safe-area-inset-bottom, 10px), 34px), 8px) - ${typeof window !== 'undefined' && window.innerWidth >= 768 ? '64px' : '56px'} - 2rem)`
+                  : 'calc(90vh - 2rem)',
+              }}
+            >
+              <div className="flex-1 overflow-y-auto p-6">
               <div className="flex items-center justify-between mb-4">
-                <h2 className="text-xl font-bold text-gray-900 dark:text-gray-100">新建笔记</h2>
+                <h2 className="text-xl font-bold text-gray-900 dark:text-gray-100">{t('notes.createNote')}</h2>
                 <button
                   onClick={() => {
                     setShowCreateModal(false);
@@ -400,10 +533,10 @@ export default function Notes() {
               </div>
               
               <div className="mb-4">
-                <label className="block text-sm font-medium mb-2">选择书籍（可选）</label>
+                <label className="block text-sm font-medium mb-2">{t('notes.selectBook')}</label>
                 <input
                   type="text"
-                  placeholder="书籍ID（留空则创建独立笔记）"
+                  placeholder={t('notes.bookIdPlaceholder')}
                   value={selectedBookId}
                   onChange={(e) => setSelectedBookId(e.target.value)}
                   className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900"
@@ -411,9 +544,9 @@ export default function Notes() {
               </div>
               
               <div className="mb-4">
-                <label className="block text-sm font-medium mb-2">选中的文本（可选）</label>
+                <label className="block text-sm font-medium mb-2">{t('notes.selectedText')}</label>
                 <textarea
-                  placeholder="记录选中的文本..."
+                  placeholder={t('notes.selectedTextPlaceholder')}
                   value={selectedText}
                   onChange={(e) => setSelectedText(e.target.value)}
                   className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 resize-none"
@@ -422,18 +555,25 @@ export default function Notes() {
               </div>
               
               <div className="mb-4">
-                <label className="block text-sm font-medium mb-2">笔记内容 *</label>
+                <label className="block text-sm font-medium mb-2">{t('notes.noteContent')}</label>
                 <textarea
-                  placeholder="输入笔记内容..."
+                  placeholder={t('notes.noteContentPlaceholder')}
                   value={noteContent}
                   onChange={(e) => setNoteContent(e.target.value)}
                   className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 resize-none"
-                  rows={8}
+                  rows={3}
                   autoFocus
                 />
               </div>
               
-              <div className="flex justify-end gap-2">
+              <div 
+                className="flex justify-end gap-2 mt-4"
+                style={{
+                  paddingTop: typeof window !== 'undefined' && window.innerWidth < 1024
+                    ? `calc(1rem + ${typeof window !== 'undefined' && window.innerWidth >= 768 ? '64px' : '56px'} + clamp(10px, env(safe-area-inset-bottom, 10px), 34px))`
+                    : '1rem'
+                }}
+              >
                 <button
                   onClick={() => {
                     setShowCreateModal(false);
@@ -443,14 +583,14 @@ export default function Notes() {
                   }}
                   className="px-4 py-2 border border-gray-300 dark:border-gray-700 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
                 >
-                  取消
+                  {t('common.cancel')}
                 </button>
                 <button
                   onClick={handleCreateNote}
                   className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors flex items-center gap-2"
                 >
                   <Save className="w-4 h-4" />
-                  保存
+                  {t('common.save')}
                 </button>
               </div>
             </div>
@@ -463,16 +603,27 @@ export default function Notes() {
           <div 
             className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-2 sm:p-4"
             style={{
-              paddingTop: 'max(env(safe-area-inset-top, 0px), 8px)',
-              paddingBottom: 'max(env(safe-area-inset-bottom, 0px), 8px)',
+              paddingTop: typeof window !== 'undefined' && window.innerWidth < 1024
+                ? `max(clamp(20px, env(safe-area-inset-top, 20px), 44px), 8px)`
+                : 'max(env(safe-area-inset-top, 0px), 8px)',
+              paddingBottom: typeof window !== 'undefined' && window.innerWidth < 1024
+                ? `max(clamp(10px, env(safe-area-inset-bottom, 10px), 34px), 8px)`
+                : 'max(env(safe-area-inset-bottom, 0px), 8px)',
               paddingLeft: 'max(env(safe-area-inset-left, 0px), 8px)',
               paddingRight: 'max(env(safe-area-inset-right, 0px), 8px)',
             }}
           >
-            <div className="card-gradient rounded-xl sm:rounded-lg max-w-2xl w-full max-h-[calc(100vh-2rem)] sm:max-h-[90vh] overflow-y-auto shadow-2xl">
-            <div className="p-6">
+            <div 
+              className="card-gradient rounded-xl sm:rounded-lg max-w-2xl w-full flex flex-col shadow-2xl"
+              style={{
+                maxHeight: typeof window !== 'undefined' && window.innerWidth < 1024
+                  ? `calc(100vh - max(clamp(20px, env(safe-area-inset-top, 20px), 44px), 8px) - max(clamp(10px, env(safe-area-inset-bottom, 10px), 34px), 8px) - ${typeof window !== 'undefined' && window.innerWidth >= 768 ? '64px' : '56px'} - 2rem)`
+                  : 'calc(90vh - 2rem)',
+              }}
+            >
+              <div className="flex-1 overflow-y-auto p-6">
               <div className="flex items-center justify-between mb-4">
-                <h2 className="text-xl font-bold text-gray-900 dark:text-gray-100">编辑笔记</h2>
+                <h2 className="text-xl font-bold text-gray-900 dark:text-gray-100">{t('notes.editNote')}</h2>
                 <button
                   onClick={() => {
                     setShowEditModal(false);
@@ -493,9 +644,9 @@ export default function Notes() {
               )}
               
               <div className="mb-4">
-                <label className="block text-sm font-medium mb-2">选中的文本（可选）</label>
+                <label className="block text-sm font-medium mb-2">{t('notes.selectedText')}</label>
                 <textarea
-                  placeholder="记录选中的文本..."
+                  placeholder={t('notes.selectedTextPlaceholder')}
                   value={selectedText}
                   onChange={(e) => setSelectedText(e.target.value)}
                   className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 resize-none"
@@ -504,42 +655,90 @@ export default function Notes() {
               </div>
               
               <div className="mb-4">
-                <label className="block text-sm font-medium mb-2">笔记内容 *</label>
+                <label className="block text-sm font-medium mb-2">{t('notes.noteContent')}</label>
                 <textarea
-                  placeholder="输入笔记内容..."
+                  placeholder={t('notes.noteContentPlaceholder')}
                   value={noteContent}
                   onChange={(e) => setNoteContent(e.target.value)}
                   className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 resize-none"
-                  rows={8}
+                  rows={3}
                   autoFocus
                 />
               </div>
+
+              {/* 可见性设置 */}
+              <div className="mb-4 space-y-3">
+                <div className="flex items-center">
+                  <input
+                    type="checkbox"
+                    id="isPublicNoteEdit"
+                    checked={isPublic}
+                    onChange={(e) => {
+                      setIsPublic(e.target.checked);
+                      if (e.target.checked) {
+                        setShareToGroupId(''); // 如果设为公开，清除群组分享
+                      }
+                    }}
+                    className="h-4 w-4 text-blue-600"
+                  />
+                  <label htmlFor="isPublicNoteEdit" className="ml-2 text-sm text-gray-700 dark:text-gray-300">
+                    {t('notes.isPublic') || '公开笔记（所有用户可见）'}
+                  </label>
+                </div>
+                {!isPublic && availableGroups.length > 0 && (
+                  <div>
+                    <label className="block text-sm font-medium mb-2 text-gray-900 dark:text-gray-100">
+                      {t('notes.shareToGroup') || '分享给群组（可选）'}
+                    </label>
+                    <select
+                      value={shareToGroupId}
+                      onChange={(e) => setShareToGroupId(e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900"
+                    >
+                      <option value="">{t('notes.noGroupShare') || '不分享给群组'}</option>
+                      {availableGroups.map((g) => (
+                        <option key={g.id} value={g.id}>
+                          {g.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+              </div>
               
-              <div className="flex justify-end gap-2">
+              <div 
+                className="flex justify-end gap-2 mt-4"
+                style={{
+                  paddingTop: typeof window !== 'undefined' && window.innerWidth < 1024
+                    ? `calc(1rem + ${typeof window !== 'undefined' && window.innerWidth >= 768 ? '64px' : '56px'} + clamp(10px, env(safe-area-inset-bottom, 10px), 34px))`
+                    : '1rem'
+                }}
+              >
                 <button
                   onClick={() => {
                     setShowEditModal(false);
                     setEditingNote(null);
                     setNoteContent('');
                     setSelectedText('');
+                    setIsPublic(false);
+                    setShareToGroupId('');
                   }}
                   className="px-4 py-2 border border-gray-300 dark:border-gray-700 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
                 >
-                  取消
+                  {t('common.cancel')}
                 </button>
                 <button
-                  onClick={handleEditNote}
+                  onClick={handleUpdateNote}
                   className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors flex items-center gap-2"
                 >
                   <Save className="w-4 h-4" />
-                  保存
+                  {t('common.save')}
                 </button>
               </div>
             </div>
           </div>
         </div>
       )}
-      </div>
     </div>
   );
 }

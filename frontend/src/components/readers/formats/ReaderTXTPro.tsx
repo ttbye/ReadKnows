@@ -7,8 +7,10 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { BookData, ReadingSettings, ReadingPosition, TOCItem } from '../../../types/reader';
 import { offlineStorage } from '../../../utils/offlineStorage';
+import { getFullApiUrl, getFullBookUrl } from '../../../utils/api';
 import toast from 'react-hot-toast';
 import { X, Clock, Search, Bookmark, BookmarkCheck } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 
 interface ReaderTXTProProps {
   book: BookData;
@@ -49,6 +51,7 @@ export default function ReaderTXTPro({
   onTOCChange,
   onClose,
 }: ReaderTXTProProps) {
+  const { t } = useTranslation();
   // 核心状态
   const containerRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
@@ -141,7 +144,8 @@ export default function ReaderTXTPro({
             const token = localStorage.getItem('auth-storage');
             if (token) {
               const parsed = JSON.parse(token);
-              return parsed.state?.token || null;
+              // Zustand persist stores state directly, but may also have a 'state' wrapper
+              return parsed.state?.token || parsed.token || null;
             }
           } catch (e) {
             // 忽略解析错误
@@ -158,7 +162,9 @@ export default function ReaderTXTPro({
           headers['Authorization'] = `Bearer ${token}`;
         }
         
-        const response = await fetch(`/api/tts/paragraphs?bookId=${encodeURIComponent(book.id)}&chapter=0`, { 
+        // 使用统一的 API URL 配置
+        const apiUrl = getFullApiUrl(`/tts/paragraphs?bookId=${encodeURIComponent(book.id)}&chapter=0`);
+        const response = await fetch(apiUrl, { 
           headers,
           credentials: 'include', // 包含cookies
         });
@@ -389,7 +395,8 @@ export default function ReaderTXTPro({
       return offlineStorage.createBlobURL(blob);
     } catch (error) {
       console.error('离线存储失败，使用服务器URL', error);
-      return serverUrl;
+      // 构建完整URL以支持自定义API URL
+      return getFullBookUrl(serverUrl);
     }
   };
 
@@ -404,7 +411,13 @@ export default function ReaderTXTPro({
         const fileUrl = await getFileUrl();
         
         // 对于大文件，使用流式读取
-        const response = await fetch(fileUrl);
+        // 如果URL不是blob URL，需要添加认证头
+        const headers: HeadersInit = {};
+        if (!fileUrl.startsWith('blob:')) {
+          const { getAuthHeaders } = await import('../../../utils/api');
+          Object.assign(headers, getAuthHeaders());
+        }
+        const response = await fetch(fileUrl, { headers });
         if (!response.ok) {
           throw new Error(`加载失败: ${response.status} ${response.statusText}`);
         }
@@ -717,13 +730,13 @@ export default function ReaderTXTPro({
         if (currentPageIndex < pages.length - 1) {
           setCurrentPageIndex(currentPageIndex + 1);
         } else {
-          toast('已经是最后一页了');
+          toast(t('reader.alreadyLastPage'));
         }
       } else {
         if (currentPageIndex > 0) {
           setCurrentPageIndex(currentPageIndex - 1);
         } else {
-          toast('已经是第一页了');
+          toast(t('reader.alreadyFirstPage'));
         }
       }
 
@@ -870,7 +883,7 @@ export default function ReaderTXTPro({
     if (results.length > 0) {
       toast.success(`找到 ${results.length} 个匹配结果`);
     } else {
-      toast('未找到匹配结果');
+      toast(t('reader.noSearchResults'));
     }
   }, [textLines]);
 
@@ -909,16 +922,27 @@ export default function ReaderTXTPro({
   }, [searchResults, currentSearchIndex, goToSearchResult]);
 
   // 高亮搜索关键词
+  // HTML转义函数，防止XSS攻击
+  const escapeHtml = useCallback((text: string): string => {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+  }, []);
+
   const highlightText = useCallback((text: string, searchTerm: string): string => {
-    if (!searchTerm.trim()) return text;
+    if (!searchTerm.trim()) return escapeHtml(text);
+    
+    // 先转义HTML，防止XSS攻击
+    const escapedText = escapeHtml(text);
+    const escapedSearchTerm = escapeHtml(searchTerm);
     
     const regex = new RegExp(
-      `(${searchTerm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`,
+      `(${escapedSearchTerm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`,
       'gi'
     );
     
-    return text.replace(regex, '<mark style="background-color: yellow; color: black;">$1</mark>');
-  }, []);
+    return escapedText.replace(regex, '<mark style="background-color: yellow; color: black;">$1</mark>');
+  }, [escapeHtml]);
 
   // 标记笔记文本
   const markNotesInText = useCallback((text: string, pageNumber: number): string => {
@@ -969,7 +993,7 @@ export default function ReaderTXTPro({
     );
 
     if (exists) {
-      toast('当前页面已添加书签');
+      toast(t('reader.bookmarkAlreadyExists'));
       return;
     }
 
@@ -977,14 +1001,14 @@ export default function ReaderTXTPro({
       (a, b) => a.pageNumber - b.pageNumber
     );
     saveBookmarks(newBookmarks);
-    toast.success('书签已添加');
+    toast.success(t('reader.bookmarkAdded'));
   }, [pages, currentPageIndex, bookmarks, saveBookmarks]);
 
   // 删除书签
   const removeBookmark = useCallback((pageNumber: number) => {
     const newBookmarks = bookmarks.filter(b => b.pageNumber !== pageNumber);
     saveBookmarks(newBookmarks);
-    toast.success('书签已删除');
+    toast.success(t('reader.bookmarkDeleted'));
   }, [bookmarks, saveBookmarks]);
 
   // 跳转到书签
@@ -1052,6 +1076,28 @@ export default function ReaderTXTPro({
   const handleClick = useCallback((e: React.MouseEvent) => {
     const target = e.target as HTMLElement;
     if (target.closest('button') || target.closest('a') || target.closest('input')) return;
+
+    // 检查是否点击了功能条、导航栏等 UI 元素
+    if (target && (
+      target.closest('.text-selection-toolbar') ||
+      target.closest('[data-settings-panel]') ||
+      target.closest('[data-toc-panel]') ||
+      target.closest('[data-notes-panel]') ||
+      target.closest('[data-bookmarks-panel]')
+    )) {
+      return;
+    }
+
+    // 优先检查并隐藏 UI 元素（功能条、导航栏等）
+    // 如果隐藏了 UI，则不翻页
+    const checkAndHideUI = (window as any).__readerCheckAndHideUI;
+    if (checkAndHideUI && typeof checkAndHideUI === 'function') {
+      const hasHiddenUI = checkAndHideUI();
+      if (hasHiddenUI) {
+        // 如果隐藏了 UI，不执行翻页
+        return;
+      }
+    }
 
     const rect = e.currentTarget.getBoundingClientRect();
     const x = e.clientX - rect.left;
@@ -1159,11 +1205,20 @@ export default function ReaderTXTPro({
     <div
       ref={containerRef}
       className="relative h-full w-full overflow-hidden"
-      style={{ backgroundColor: themeStyles.bg }}
+      style={{
+        backgroundColor: themeStyles.bg,
+        WebkitTouchCallout: 'none', // 屏蔽iOS长按系统菜单
+        WebkitUserSelect: 'none', // 阻止文本选择
+        userSelect: 'none'
+      }}
       onTouchStart={handleTouchStart}
       onTouchMove={handleTouchMove}
       onTouchEnd={handleTouchEnd}
       onClick={handleClick}
+      onContextMenu={(e) => {
+        // 屏蔽浏览器默认右键菜单（阅读器内交互由应用接管）
+        e.preventDefault();
+      }}
     >
       {/* 阅读内容区域 */}
       <div
@@ -1172,7 +1227,7 @@ export default function ReaderTXTPro({
         style={{
           transform: `translateX(${touchOffset}px)`,
           transition: touchOffset === 0 && pageTransition === 'none' ? 'transform 0.3s cubic-bezier(0.4, 0, 0.2, 1)' : 'none',
-          paddingBottom: showBottomBar ? '80px' : '0',
+          paddingBottom: showBottomBar ? '30px' : '0',
         }}
       >
         {currentPage ? (
@@ -1194,9 +1249,10 @@ export default function ReaderTXTPro({
                 wordWrap: 'break-word',
               }}
               dangerouslySetInnerHTML={{
+                // 安全修复：对内容进行HTML转义，防止XSS攻击
                 __html: showSearch && searchTerm
                   ? highlightText(currentPage.content, searchTerm)
-                  : currentPage.content.replace(/\n/g, '<br/>')
+                  : escapeHtml(currentPage.content).replace(/\n/g, '<br/>')
               }}
             />
           </div>
@@ -1209,7 +1265,7 @@ export default function ReaderTXTPro({
         ) : (
           <div className="flex items-center justify-center h-full">
             <div className="text-center">
-              <p style={{ color: themeStyles.text }}>无法显示内容</p>
+              <p style={{ color: themeStyles.text }}>{t('reader.cannotDisplayContent')}</p>
             </div>
           </div>
         )}
@@ -1256,7 +1312,7 @@ export default function ReaderTXTPro({
                 showBars();
               }}
               className="p-2 rounded-lg hover:bg-opacity-10 hover:bg-black dark:hover:bg-white dark:hover:bg-opacity-10 transition-colors"
-              aria-label="搜索"
+              aria-label={t('reader.search')}
             >
               <Search className="w-4 h-4" style={{ color: themeStyles.text }} />
             </button>
@@ -1266,14 +1322,14 @@ export default function ReaderTXTPro({
                 showBars();
               }}
               className="p-2 rounded-lg hover:bg-opacity-10 hover:bg-black dark:hover:bg-white dark:hover:bg-opacity-10 transition-colors"
-              aria-label="书签"
+              aria-label={t('reader.bookmark')}
             >
               <Bookmark className="w-4 h-4" style={{ color: themeStyles.text }} />
             </button>
             <button
               onClick={hasBookmark ? () => removeBookmark(currentPage?.pageNumber || 0) : addBookmark}
               className="p-2 rounded-lg hover:bg-opacity-10 hover:bg-black dark:hover:bg-white dark:hover:bg-opacity-10 transition-colors"
-              aria-label={hasBookmark ? "删除书签" : "添加书签"}
+              aria-label={hasBookmark ? t('reader.deleteBookmark') : t('reader.addBookmark')}
             >
               {hasBookmark ? (
                 <BookmarkCheck className="w-4 h-4" style={{ color: '#ff9800' }} />
@@ -1290,7 +1346,7 @@ export default function ReaderTXTPro({
         <div className="fixed inset-0 z-50 flex items-end sm:items-center sm:justify-center bg-black bg-opacity-50">
           <div className="bg-white dark:bg-gray-800 rounded-t-2xl sm:rounded-2xl p-6 max-w-md w-full mx-4 max-h-[85vh] overflow-y-auto">
             <div className="flex items-center justify-between mb-4">
-              <h2 className="text-xl font-bold">搜索</h2>
+              <h2 className="text-xl font-bold">{t('reader.search')}</h2>
               <button onClick={() => setShowSearch(false)}>
                 <X className="w-5 h-5" />
               </button>
@@ -1305,7 +1361,7 @@ export default function ReaderTXTPro({
                     performSearch(searchTerm);
                   }
                 }}
-                placeholder="输入搜索关键词..."
+                placeholder={t('reader.searchPlaceholder')}
                 className="w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                 autoFocus
               />
@@ -1314,20 +1370,20 @@ export default function ReaderTXTPro({
               <div className="mb-4">
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-sm text-gray-600">
-                    找到 {searchResults.length} 个结果
+                    {t('reader.searchResultsFound', { count: searchResults.length })}
                   </span>
                   <div className="flex gap-2">
                     <button
                       onClick={prevSearchResult}
                       className="px-3 py-1 text-sm bg-gray-200 rounded hover:bg-gray-300"
                     >
-                      上一个
+                      {t('common.previous')}
                     </button>
                     <button
                       onClick={nextSearchResult}
                       className="px-3 py-1 text-sm bg-gray-200 rounded hover:bg-gray-300"
                     >
-                      下一个
+                      {t('common.next')}
                     </button>
                   </div>
                 </div>
@@ -1342,7 +1398,7 @@ export default function ReaderTXTPro({
                           : 'hover:bg-gray-100 dark:hover:bg-gray-700'
                       }`}
                     >
-                      <div className="text-sm font-medium">第 {result.lineIndex + 1} 行</div>
+                      <div className="text-sm font-medium">{t('reader.lineNumber', { line: result.lineIndex + 1 })}</div>
                       <div className="text-xs text-gray-500 truncate">
                         {textLines[result.lineIndex]?.substring(Math.max(0, result.charIndex - 20), result.charIndex + 50)}
                       </div>
@@ -1355,7 +1411,7 @@ export default function ReaderTXTPro({
               onClick={() => performSearch(searchTerm)}
               className="w-full px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600"
             >
-              搜索
+              {t('reader.search')}
             </button>
           </div>
         </div>
@@ -1366,7 +1422,7 @@ export default function ReaderTXTPro({
         <div className="fixed inset-0 z-50 flex items-end sm:items-center sm:justify-center bg-black bg-opacity-50">
           <div className="bg-white dark:bg-gray-800 rounded-t-2xl sm:rounded-2xl p-6 max-w-md w-full mx-4 max-h-[85vh] overflow-y-auto">
             <div className="flex items-center justify-between mb-4">
-              <h2 className="text-xl font-bold">书签</h2>
+              <h2 className="text-xl font-bold">{t('reader.bookmark')}</h2>
               <button onClick={() => setShowBookmarks(false)}>
                 <X className="w-5 h-5" />
               </button>
@@ -1374,7 +1430,7 @@ export default function ReaderTXTPro({
             {bookmarks.length === 0 ? (
               <div className="text-center py-8 text-gray-500">
                 <Bookmark className="w-12 h-12 mx-auto mb-2 opacity-50" />
-                <p>暂无书签</p>
+                <p>{t('reader.noBookmarks')}</p>
               </div>
             ) : (
               <div className="space-y-2">
@@ -1387,7 +1443,7 @@ export default function ReaderTXTPro({
                       onClick={() => goToBookmark(bookmark.pageNumber)}
                       className="flex-1 text-left"
                     >
-                      <div className="font-medium">第 {bookmark.pageNumber} 页</div>
+                      <div className="font-medium">{t('reader.pageNumber', { page: bookmark.pageNumber })}</div>
                       <div className="text-sm text-gray-500 truncate mt-1">
                         {bookmark.preview}
                       </div>

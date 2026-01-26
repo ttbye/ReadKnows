@@ -83,7 +83,7 @@ find_image_files() {
         exit 1
     fi
     
-    # 查找所有 ttbye/* 镜像文件
+    # 查找所有镜像文件（包括 ttbye/* 和外部服务镜像）
     IMAGE_FILES=$(find "$IMAGE_DIR" -name "*.tar.gz" -type f 2>/dev/null | sort || true)
     
     if [ -z "$IMAGE_FILES" ]; then
@@ -162,11 +162,23 @@ verify_images() {
     print_header "验证镜像"
     
     echo ""
-    print_info "已导入的 ttbye/* 镜像:"
+    print_info "已导入的镜像:"
     TTBYE_IMAGES=$(docker images --format "{{.Repository}}:{{.Tag}}" | grep "^ttbye/" || true)
+    DOUBAN_IMAGE=$(docker images --format "{{.Repository}}:{{.Tag}}" | grep "^ghcr.io/cxfksword/douban-api-rs" || true)
+    
     if [ -n "$TTBYE_IMAGES" ]; then
+        echo ""
+        print_info "ttbye/* 镜像:"
         docker images --format "table {{.Repository}}\t{{.Tag}}\t{{.Size}}\t{{.CreatedAt}}" | grep -E "^ttbye/|^REPOSITORY" || true
-    else
+    fi
+    
+    if [ -n "$DOUBAN_IMAGE" ]; then
+        echo ""
+        print_info "外部服务镜像:"
+        docker images --format "table {{.Repository}}\t{{.Tag}}\t{{.Size}}\t{{.CreatedAt}}" | grep -E "^ghcr.io/cxfksword/douban-api-rs|^REPOSITORY" || true
+    fi
+    
+    if [ -z "$TTBYE_IMAGES" ] && [ -z "$DOUBAN_IMAGE" ]; then
         print_warning "未找到相关镜像"
     fi
 }

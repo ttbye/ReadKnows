@@ -176,7 +176,7 @@ async function extractPdfCoverWithPdfjs(
     console.log('[PDF封面提取] 封面文件已保存:', coverFilePath, '大小:', buffer.length, 'bytes');
 
     // 返回相对于booksDir的路径
-    const booksDir = process.env.BOOKS_DIR || './books';
+    const { booksDir } = require('../config/paths');
     const relativePath = path.relative(booksDir, coverFilePath);
     const coverUrl = `/books/${relativePath.replace(/\\/g, '/')}`;
 

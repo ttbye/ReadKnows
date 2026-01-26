@@ -76,6 +76,11 @@ cache/calibre/
 coverage/
 .nyc_output/
 
+# APK 个人配置（不应提交）
+apk.sh
+frontend/apk-config.json
+frontend/apk-profiles.json
+
 # 其他
 *.pid
 *.seed

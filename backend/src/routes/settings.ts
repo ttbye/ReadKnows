@@ -13,6 +13,7 @@ import path from 'path';
 import { getWatcherStatus, triggerManualScan } from '../utils/fileWatcher';
 import nodemailer from 'nodemailer';
 import { getVersion, getVersionInfo } from '../utils/version';
+import { checkCalibreAvailable } from '../utils/epubConverter';
 
 const router = express.Router();
 
@@ -50,7 +51,16 @@ router.get('/version', async (req, res) => {
 // 获取所有设置
 router.get('/', authenticateToken, async (req: AuthRequest, res) => {
   try {
-    const settings = db.prepare('SELECT * FROM system_settings ORDER BY key').all() as any[];
+    let settings: any[] = [];
+    try {
+      settings = db.prepare('SELECT * FROM system_settings ORDER BY key').all() as any[];
+    } catch (dbError: any) {
+      if (dbError.message && dbError.message.includes('no such table')) {
+        console.warn('system_settings 表不存在，返回空设置');
+        return res.json({ settings: {} });
+      }
+      throw dbError;
+    }
     const settingsObj: any = {};
     settings.forEach((setting) => {
       settingsObj[setting.key] = {
@@ -63,13 +73,26 @@ router.get('/', authenticateToken, async (req: AuthRequest, res) => {
     res.json({ settings: settingsObj });
   } catch (error: any) {
     console.error('获取设置失败:', error);
-    res.status(500).json({ error: '获取设置失败' });
+    console.error('错误消息:', error.message);
+    console.error('错误堆栈:', error.stack);
+    res.status(500).json({ error: '获取设置失败: ' + (error.message || '未知错误') });
   }
 });
 
 // 更新设置
 router.put('/:key', authenticateToken, async (req: AuthRequest, res) => {
+  // 设置响应超时（Docker 环境下可能需要更长时间）
+  req.setTimeout(120000); // 120秒超时
+  
   try {
+    // 排除 book-categories 路径，这些路径由专门的路由处理
+    if (req.path.startsWith('/book-categories')) {
+      if (!res.headersSent) {
+        return res.status(404).json({ error: '路径不存在' });
+      }
+      return;
+    }
+    
     const { key } = req.params;
     const { value } = req.body;
 
@@ -77,38 +100,236 @@ router.put('/:key', authenticateToken, async (req: AuthRequest, res) => {
       return res.status(400).json({ error: '请提供设置值' });
     }
 
-    // 检查设置是否存在
-    const existing = db.prepare('SELECT id FROM system_settings WHERE key = ?').get(key) as any;
-
-    if (existing) {
-      // 更新现有设置
-      db.prepare(
-        'UPDATE system_settings SET value = ?, updated_at = CURRENT_TIMESTAMP WHERE key = ?'
-      ).run(value, key);
-    } else {
-      // 创建新设置
-      const id = uuidv4();
-      db.prepare(
-        'INSERT INTO system_settings (id, key, value) VALUES (?, ?, ?)'
-      ).run(id, key, value);
-    }
-
-    // 如果是路径设置，验证路径是否存在
-    if (key === 'books_storage_path' || key === 'books_scan_path') {
-      if (value && !fs.existsSync(value)) {
-        try {
-          fs.mkdirSync(value, { recursive: true });
-        } catch (error: any) {
-          return res.status(400).json({ error: `无法创建目录: ${error.message}` });
-        }
+    // 安全设置需要管理员权限
+    const securityKeys = ['api_key', 'private_access_key'];
+    if (securityKeys.includes(key)) {
+      // 检查是否为管理员
+      if (req.userRole !== 'admin') {
+        return res.status(403).json({ 
+          error: '需要管理员权限',
+          message: '只有管理员可以修改安全密钥，请使用 /api/settings/security-keys 接口'
+        });
       }
     }
 
-    const setting = db.prepare('SELECT * FROM system_settings WHERE key = ?').get(key);
-    res.json({ message: '设置已更新', setting });
+    // 使用事务确保操作的原子性
+    const updateSetting = db.transaction((settingKey: string, settingValue: string) => {
+      try {
+        // 检查设置是否存在
+        const existing = db.prepare('SELECT id FROM system_settings WHERE key = ?').get(settingKey) as any;
+
+        if (existing) {
+          // 更新现有设置
+          const result = db.prepare(
+            'UPDATE system_settings SET value = ?, updated_at = CURRENT_TIMESTAMP WHERE key = ?'
+          ).run(settingValue, settingKey);
+          
+          if (result.changes === 0) {
+            throw new Error('设置更新失败：未找到要更新的设置');
+          }
+        } else {
+          // 创建新设置
+          const id = uuidv4();
+          db.prepare(
+            'INSERT INTO system_settings (id, key, value) VALUES (?, ?, ?)'
+          ).run(id, settingKey, settingValue);
+        }
+
+        // 如果是路径设置，验证路径是否存在
+        if (settingKey === 'books_storage_path' || settingKey === 'books_scan_path') {
+          if (settingValue && !fs.existsSync(settingValue)) {
+            try {
+              fs.mkdirSync(settingValue, { recursive: true });
+            } catch (error: any) {
+              throw new Error(`无法创建目录: ${error.message}`);
+            }
+          }
+        }
+
+        // 获取更新后的设置
+        const setting = db.prepare('SELECT * FROM system_settings WHERE key = ?').get(settingKey);
+        return setting;
+      } catch (error: any) {
+        console.error('更新设置事务错误:', error);
+        throw error;
+      }
+    });
+
+    // 执行更新操作
+    const setting = updateSetting(key, value);
+
+    // 确保响应已发送
+    if (!res.headersSent) {
+      res.json({ message: '设置已更新', setting });
+    }
   } catch (error: any) {
     console.error('更新设置失败:', error);
-    res.status(500).json({ error: '更新设置失败' });
+    
+    // 确保响应已发送
+    if (!res.headersSent) {
+      const errorMessage = error.message || '更新设置失败';
+      const statusCode = error.code === 'SQLITE_CONSTRAINT' || error.message?.includes('无法创建目录') ? 400 : 500;
+      res.status(statusCode).json({ error: errorMessage });
+    }
+  }
+});
+
+// ========== 密钥管理 API（仅管理员） ==========
+// 注意：这些路由必须在 /:key 路由之前，否则会被 /:key 捕获
+
+// 生成随机密钥的函数
+const generateRandomKey = (length: number = 16): string => {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*';
+  let result = '';
+  for (let i = 0; i < length; i++) {
+    result += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return result;
+};
+
+// 获取API Key和私有访问密钥（仅管理员）
+router.get('/security-keys', authenticateToken, requireAdmin, async (req: AuthRequest, res) => {
+  try {
+    const apiKeySetting = db.prepare("SELECT value FROM system_settings WHERE key = 'api_key'").get() as any;
+    const privateKeySetting = db.prepare("SELECT value FROM system_settings WHERE key = 'private_access_key'").get() as any;
+    
+    res.json({
+      apiKey: apiKeySetting?.value || '',
+      privateAccessKey: privateKeySetting?.value || '',
+    });
+  } catch (error: any) {
+    console.error('获取密钥失败:', error);
+    res.status(500).json({ error: '获取密钥失败' });
+  }
+});
+
+// 更新API Key（仅管理员）
+router.put('/security-keys/api-key', authenticateToken, requireAdmin, async (req: AuthRequest, res) => {
+  try {
+    const { value, generate } = req.body;
+    
+    let newApiKey: string;
+    
+    if (generate) {
+      // 生成新的随机API Key
+      newApiKey = generateRandomKey(16);
+    } else if (value && typeof value === 'string' && value.trim() !== '') {
+      // 使用提供的值
+      newApiKey = value.trim();
+      
+      // 验证长度（至少8位）
+      if (newApiKey.length < 8) {
+        return res.status(400).json({ error: 'API Key长度至少8位' });
+      }
+    } else {
+      return res.status(400).json({ error: '请提供API Key值或设置generate为true' });
+    }
+    
+    // 更新API Key
+    const existing = db.prepare("SELECT id FROM system_settings WHERE key = 'api_key'").get() as any;
+    if (existing) {
+      db.prepare("UPDATE system_settings SET value = ?, updated_at = CURRENT_TIMESTAMP WHERE key = 'api_key'").run(newApiKey);
+    } else {
+      const id = uuidv4();
+      db.prepare("INSERT INTO system_settings (id, key, value, description) VALUES (?, 'api_key', ?, 'API访问密钥（用于API请求认证）')").run(id, newApiKey);
+    }
+    
+    res.json({ 
+      message: 'API Key已更新',
+      apiKey: newApiKey,
+      warning: '请确保更新所有使用该API Key的客户端配置'
+    });
+  } catch (error: any) {
+    console.error('更新API Key失败:', error);
+    res.status(500).json({ error: '更新API Key失败' });
+  }
+});
+
+// 更新私有访问密钥（仅管理员）
+router.put('/security-keys/private-access-key', authenticateToken, requireAdmin, async (req: AuthRequest, res) => {
+  try {
+    const { value, generate } = req.body;
+    
+    let newPrivateKey: string;
+    
+    if (generate) {
+      // 生成新的随机私有访问密钥
+      newPrivateKey = generateRandomKey(20);
+    } else if (value && typeof value === 'string' && value.trim() !== '') {
+      // 使用提供的值
+      newPrivateKey = value.trim();
+      
+      // 验证长度（至少8位）
+      if (newPrivateKey.length < 8) {
+        return res.status(400).json({ error: '私有访问密钥长度至少8位' });
+      }
+    } else {
+      return res.status(400).json({ error: '请提供私有访问密钥值或设置generate为true' });
+    }
+    
+    // 更新私有访问密钥
+    const existing = db.prepare("SELECT id FROM system_settings WHERE key = 'private_access_key'").get() as any;
+    if (existing) {
+      db.prepare("UPDATE system_settings SET value = ?, updated_at = CURRENT_TIMESTAMP WHERE key = 'private_access_key'").run(newPrivateKey);
+    } else {
+      const id = uuidv4();
+      db.prepare("INSERT INTO system_settings (id, key, value, description) VALUES (?, 'private_access_key', ?, '私有访问密钥')").run(id, newPrivateKey);
+    }
+    
+    res.json({ 
+      message: '私有访问密钥已更新',
+      privateAccessKey: newPrivateKey,
+      warning: '请确保通知所有需要此密钥的用户'
+    });
+  } catch (error: any) {
+    console.error('更新私有访问密钥失败:', error);
+    res.status(500).json({ error: '更新私有访问密钥失败' });
+  }
+});
+
+// 生成新的API Key和私有访问密钥（仅管理员）
+router.post('/security-keys/generate', authenticateToken, requireAdmin, async (req: AuthRequest, res) => {
+  try {
+    const { type } = req.body; // 'api-key', 'private-key', 或 'both'
+    
+    const result: any = {};
+    
+    if (type === 'api-key' || type === 'both') {
+      const newApiKey = generateRandomKey(16);
+      const existing = db.prepare("SELECT id FROM system_settings WHERE key = 'api_key'").get() as any;
+      if (existing) {
+        db.prepare("UPDATE system_settings SET value = ?, updated_at = CURRENT_TIMESTAMP WHERE key = 'api_key'").run(newApiKey);
+      } else {
+        const id = uuidv4();
+        db.prepare("INSERT INTO system_settings (id, key, value, description) VALUES (?, 'api_key', ?, 'API访问密钥（用于API请求认证）')").run(id, newApiKey);
+      }
+      result.apiKey = newApiKey;
+    }
+    
+    if (type === 'private-key' || type === 'both') {
+      const newPrivateKey = generateRandomKey(20);
+      const existing = db.prepare("SELECT id FROM system_settings WHERE key = 'private_access_key'").get() as any;
+      if (existing) {
+        db.prepare("UPDATE system_settings SET value = ?, updated_at = CURRENT_TIMESTAMP WHERE key = 'private_access_key'").run(newPrivateKey);
+      } else {
+        const id = uuidv4();
+        db.prepare("INSERT INTO system_settings (id, key, value, description) VALUES (?, 'private_access_key', ?, '私有访问密钥')").run(id, newPrivateKey);
+      }
+      result.privateAccessKey = newPrivateKey;
+    }
+    
+    if (!type || (type !== 'api-key' && type !== 'private-key' && type !== 'both')) {
+      return res.status(400).json({ error: '请指定要生成的密钥类型: api-key, private-key, 或 both' });
+    }
+    
+    res.json({ 
+      message: '密钥已生成',
+      ...result,
+      warning: '请妥善保管新生成的密钥'
+    });
+  } catch (error: any) {
+    console.error('生成密钥失败:', error);
+    res.status(500).json({ error: '生成密钥失败' });
   }
 });
 
@@ -170,35 +391,66 @@ router.put('/book-categories/:id', authenticateToken, requireAdmin, async (req: 
     const { id } = req.params;
     const { name, display_order } = req.body;
 
+    // 验证ID格式
+    if (!id || typeof id !== 'string' || id.trim() === '') {
+      if (!res.headersSent) {
+        return res.status(400).json({ error: '无效的书籍类型ID' });
+      }
+      return;
+    }
+
     // 检查书籍类型是否存在
     const existing = db.prepare('SELECT * FROM book_categories WHERE id = ?').get(id) as any;
     if (!existing) {
-      return res.status(404).json({ error: '书籍类型不存在' });
-    }
-
-    // 如果提供了新名称，检查是否与其他类型冲突
-    if (name && name.trim() !== existing.name) {
-      const nameConflict = db.prepare('SELECT id FROM book_categories WHERE name = ? AND id != ?').get(name.trim(), id) as any;
-      if (nameConflict) {
-        return res.status(400).json({ error: '该书籍类型名称已存在' });
+      if (!res.headersSent) {
+        return res.status(404).json({ error: '书籍类型不存在' });
       }
+      return;
     }
 
     const updates: string[] = [];
     const params: any[] = [];
 
+    // 如果提供了新名称，验证并检查是否与其他类型冲突
     if (name !== undefined) {
+      if (typeof name !== 'string' || name.trim() === '') {
+        if (!res.headersSent) {
+          return res.status(400).json({ error: '书籍类型名称不能为空' });
+        }
+        return;
+      }
+
+      const trimmedName = name.trim();
+      if (trimmedName !== existing.name) {
+        const nameConflict = db.prepare('SELECT id FROM book_categories WHERE name = ? AND id != ?').get(trimmedName, id) as any;
+        if (nameConflict) {
+          if (!res.headersSent) {
+            return res.status(400).json({ error: '该书籍类型名称已存在' });
+          }
+          return;
+        }
+      }
       updates.push('name = ?');
-      params.push(name.trim());
+      params.push(trimmedName);
     }
 
     if (display_order !== undefined) {
+      const order = Number(display_order);
+      if (isNaN(order) || order < 0) {
+        if (!res.headersSent) {
+          return res.status(400).json({ error: '显示顺序必须是有效的非负数字' });
+        }
+        return;
+      }
       updates.push('display_order = ?');
-      params.push(Number(display_order));
+      params.push(order);
     }
 
     if (updates.length === 0) {
-      return res.status(400).json({ error: '请提供要更新的字段' });
+      if (!res.headersSent) {
+        return res.status(400).json({ error: '请提供要更新的字段' });
+      }
+      return;
     }
 
     updates.push('updated_at = CURRENT_TIMESTAMP');
@@ -211,10 +463,14 @@ router.put('/book-categories/:id', authenticateToken, requireAdmin, async (req: 
     `).run(...params);
 
     const category = db.prepare('SELECT * FROM book_categories WHERE id = ?').get(id);
-    res.json({ message: '书籍类型更新成功', category });
+    if (!res.headersSent) {
+      res.json({ message: '书籍类型更新成功', category });
+    }
   } catch (error: any) {
     console.error('更新书籍类型失败:', error);
-    res.status(500).json({ error: '更新书籍类型失败' });
+    if (!res.headersSent) {
+      res.status(500).json({ error: '更新书籍类型失败', details: error.message });
+    }
   }
 });
 
@@ -223,32 +479,78 @@ router.delete('/book-categories/:id', authenticateToken, requireAdmin, async (re
   try {
     const { id } = req.params;
 
+    // 验证ID格式
+    if (!id || typeof id !== 'string' || id.trim() === '') {
+      if (!res.headersSent) {
+        return res.status(400).json({ error: '无效的书籍类型ID' });
+      }
+      return;
+    }
+
     // 检查书籍类型是否存在
     const existing = db.prepare('SELECT * FROM book_categories WHERE id = ?').get(id) as any;
     if (!existing) {
-      return res.status(404).json({ error: '书籍类型不存在' });
+      if (!res.headersSent) {
+        return res.status(404).json({ error: '书籍类型不存在' });
+      }
+      return;
     }
 
     // 检查是否有书籍使用此类型
     const booksUsingCategory = db.prepare('SELECT COUNT(*) as count FROM books WHERE category = ?').get(existing.name) as any;
-    if (booksUsingCategory.count > 0) {
-      return res.status(400).json({ 
-        error: `无法删除：仍有 ${booksUsingCategory.count} 本书籍使用此类型`,
-        booksCount: booksUsingCategory.count
-      });
+    if (booksUsingCategory && booksUsingCategory.count > 0) {
+      if (!res.headersSent) {
+        return res.status(400).json({ 
+          error: `无法删除：仍有 ${booksUsingCategory.count} 本书籍使用此类型`,
+          booksCount: booksUsingCategory.count
+        });
+      }
+      return;
     }
 
     db.prepare('DELETE FROM book_categories WHERE id = ?').run(id);
-    res.json({ message: '书籍类型删除成功' });
+    if (!res.headersSent) {
+      res.json({ message: '书籍类型删除成功' });
+    }
   } catch (error: any) {
     console.error('删除书籍类型失败:', error);
-    res.status(500).json({ error: '删除书籍类型失败' });
+    if (!res.headersSent) {
+      res.status(500).json({ error: '删除书籍类型失败', details: error.message });
+    }
+  }
+});
+
+// 检查 Calibre 可用性（用于 MOBI 转 EPUB）
+router.get('/calibre-check', authenticateToken, async (req: AuthRequest, res) => {
+  try {
+    const calibreInfo = await checkCalibreAvailable();
+    res.json(calibreInfo);
+  } catch (error: any) {
+    console.error('检查 Calibre 可用性失败:', error);
+    res.status(500).json({
+      available: false,
+      error: error.message || '检查 Calibre 可用性失败',
+    });
   }
 });
 
 // 获取单个设置
 router.get('/:key', authenticateToken, async (req: AuthRequest, res) => {
   try {
+    // 排除特殊路径
+    if (req.path.startsWith('/book-categories')) {
+      if (!res.headersSent) {
+        return res.status(404).json({ error: '路径不存在' });
+      }
+      return;
+    }
+    
+    // 排除 calibre-check 路径
+    if (req.path === '/calibre-check') {
+      // 这个路由已经在上面定义了，不会到达这里
+      return;
+    }
+    
     const { key } = req.params;
     const setting = db.prepare('SELECT * FROM system_settings WHERE key = ?').get(key) as any;
 
@@ -298,7 +600,7 @@ router.get('/auto-import/status', authenticateToken, async (req: AuthRequest, re
     const status = getWatcherStatus();
     
     // 获取导入目录中的文件数量
-    const importDir = process.env.IMPORT_DIR || './import';
+    const { importDir } = require('../config/paths');
     let filesCount = 0;
     let supportedFilesCount = 0;
     
@@ -331,14 +633,14 @@ router.get('/auto-import/status', authenticateToken, async (req: AuthRequest, re
 // 手动触发扫描
 router.post('/auto-import/scan', authenticateToken, async (req: AuthRequest, res) => {
   try {
-    console.log('[API] 收到手动扫描请求');
+    // console.log('[API] 收到手动扫描请求');
     triggerManualScan();
     res.json({
       message: '手动扫描已触发',
       timestamp: new Date().toISOString(),
     });
   } catch (error: any) {
-    console.error('[API] 手动扫描失败:', error);
+    // console.error('[API] 手动扫描失败:', error);
     res.status(500).json({ error: '扫描失败', message: error.message });
   }
 });

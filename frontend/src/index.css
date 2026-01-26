@@ -25,6 +25,41 @@
   box-sizing: border-box;
 }
 
+/* 防止按钮和交互元素文字被选中 */
+button,
+.btn,
+[role="button"],
+input[type="button"],
+input[type="submit"],
+input[type="reset"] {
+  user-select: none;
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+}
+
+/* Android WebView 缩放修复 */
+@supports (-webkit-appearance: none) {
+  /* 防止 Android WebView 自动缩放文字 */
+  html {
+    -webkit-text-size-adjust: 100%;
+    -moz-text-size-adjust: 100%;
+    -ms-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+  }
+  
+  body {
+    -webkit-text-size-adjust: 100%;
+    -moz-text-size-adjust: 100%;
+    -ms-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+  }
+}
+
+/* 注意：不要在 html 或 body 上使用 transform，因为这会创建新的包含块 */
+/* 导致 position: fixed 的子元素相对于 html/body 定位，而不是 viewport */
+/* 如果需要修复 Android WebView 缩放，应该在 main.tsx 中使用 JavaScript 动态修复 */
+
 :root {
   --bg-primary: #ffffff;
   --bg-secondary: #f5f5f5;
@@ -38,6 +73,8 @@
   --success-color: #10b981;
   --error-color: #ef4444;
   --warning-color: #f59e0b;
+  /* PWA/iOS 顶部状态栏安全区背景色 */
+  --status-bar-bg: #ffffff;
   --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
   --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
   --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
@@ -55,6 +92,8 @@
   --text-secondary: #b3b3b3;
   --text-tertiary: #808080;
   --border-color: #404040;
+  /* 与 dark:bg-gray-900 对齐，避免顶部“断层” */
+  --status-bar-bg: #111827;
 }
 
 /* 保留媒体查询作为后备（仅在未设置class时使用） */
@@ -67,6 +106,7 @@
     --text-secondary: #b3b3b3;
     --text-tertiary: #808080;
     --border-color: #404040;
+    --status-bar-bg: #111827;
   }
 }
 
@@ -75,6 +115,38 @@ html {
   width: 100%;
   height: 100%;
   /* 背景色由各个页面组件动态设置 */
+  /* iOS PWA模式：确保状态栏区域有正确的背景色 */
+  position: relative;
+}
+
+/* ✅ 修复：iOS PWA模式：在状态栏区域添加背景色覆盖层（备用方案，优先使用React组件） */
+/* 注意：这个CSS方案作为备用，主要的状态栏背景由Layout组件中的div处理 */
+html::before {
+  content: '';
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: env(safe-area-inset-top, 0px);
+  background-color: var(--status-bar-bg, #ffffff);
+  z-index: 9999;
+  pointer-events: none;
+  /* 只在PWA模式下显示 */
+  display: none;
+}
+
+/* 检测PWA模式并显示状态栏覆盖层 */
+@media (display-mode: standalone) {
+  html::before {
+    display: block;
+  }
+}
+
+/* iOS Safari PWA检测 */
+@supports (-webkit-touch-callout: none) {
+  html::before {
+    display: block;
+  }
 }
 
 body {
@@ -362,13 +434,43 @@ nav.fixed {
   bottom: 0 !important;
 }
 
+/* 阅读器底部导航栏固定定位修复 - 确保始终固定在 viewport 底部 */
+.fixed[style*="position: fixed"][style*="bottom"] {
+  position: fixed !important;
+  bottom: var(--bottom-position, 0) !important;
+}
+
+/* 确保通过 Portal 渲染的底部导航栏不受滚动影响 */
+body > div[style*="position: fixed"][style*="bottom"],
+body > div[data-bottom-nav="true"] {
+  position: fixed !important;
+  /* 确保不随页面滚动移动 */
+  transform-origin: center bottom;
+}
+
+/* 更强的选择器：直接针对底部导航栏 */
+div[data-bottom-nav="true"] {
+  position: fixed !important;
+  /* 覆盖任何可能影响定位的样式 */
+  inset: auto 0 0 0 !important;
+  /* 确保创建新的层叠上下文，不受父容器影响 */
+  isolation: isolate;
+  /* 确保元素相对于 viewport 定位 */
+  contain: layout style paint;
+}
+
 @supports (padding: env(safe-area-inset-top)) {
   /* 顶部固定元素（如header）- 从屏幕最顶部开始，用padding-top适配安全区域 */
   /* 使用统一的安全区域方案：最小值20px，最大44px */
-  header.sticky,
-  header.fixed {
+  /* 注意：PC端普通浏览器不需要安全区域，只在移动端和PWA模式下应用 */
+  /* 移动端/iPad顶部导航栏 */
+  header.sticky.lg\\:hidden,
+  header.fixed.lg\\:hidden {
     padding-top: clamp(20px, env(safe-area-inset-top, 20px), 44px);
   }
+  
+  /* PC端顶部导航栏 - 默认不需要安全区域，由内联样式控制（仅在PWA模式下应用） */
+  /* 这里不设置默认值，让Layout组件通过内联样式控制 */
   
   /* 底部固定元素 - 紧贴屏幕底部，用padding-bottom适配安全区域 */
   /* 使用统一的安全区域方案：最小值10px，最大34px */
@@ -377,8 +479,18 @@ nav.fixed {
   }
   
   /* 主内容区域底部padding，避免被底部导航栏遮挡 */
+  /* 注意：PC端的footer padding由Layout组件内联样式控制 */
   main {
-    padding-bottom: 5rem; /* 底部导航栏高度 */
+    padding-bottom: 5rem; /* 移动端底部导航栏高度 */
+  }
+  
+  /* PC端footer固定定位样式 */
+  footer.fixed {
+    position: fixed !important;
+    bottom: 0 !important;
+    left: 0 !important;
+    right: 0 !important;
+    z-index: 40 !important;
   }
   
   /* 底部安全区域padding（用于预留底部导航栏空间） */
@@ -544,13 +656,13 @@ nav.fixed {
 }
 
 .ipad-nav-footer {
-  height: 40px;
-  padding-top: 4px;
-  padding-bottom: 4px;
+  height: 56px;
+  padding-top: 8px;
+  padding-bottom: 8px;
 }
 
 .ipad-main-content {
-  padding-bottom: calc(3.5rem + env(safe-area-inset-bottom, 0px));
+  padding-bottom: calc(4rem + env(safe-area-inset-bottom, 0px));
 }
 
 /* iPad模式导航栏高度增加 */
@@ -565,9 +677,9 @@ nav.fixed {
   
   /* iPad底部导航栏 - 增加高度 */
   .ipad-nav-footer {
-    height: 56px !important;
-    padding-top: 8px !important;
-    padding-bottom: 8px !important;
+    height: 64px !important;
+    padding-top: 10px !important;
+    padding-bottom: 10px !important;
   }
   
   /* iPad主内容区域 - 增加底部padding以适配更高的底部导航栏 */
@@ -719,6 +831,64 @@ nav.fixed {
   }
 }
 
+/* 语音消息波形动画 - 微信风格 */
+@keyframes wave {
+  0%, 100% {
+    height: 6px;
+    opacity: 0.4;
+  }
+  50% {
+    height: 18px;
+    opacity: 1;
+  }
+}
+
+/* 有声小说播放器定位 - 区分移动端和PC端 */
+.audiobook-player-container {
+  /* 移动端：需要避开底部导航栏（高度约 56-64px） */
+  /* PC端：紧贴底部，不需要额外间距 */
+}
+
+/* 移动端和iPad：播放器需要避开底部导航栏 */
+@media (max-width: 1279px) {
+  .audiobook-player-container {
+    /* 底部导航栏实际高度计算：
+     * - 内容区域：py-2 (上下各8px) + 图标高度(24px) + 文字高度(约14px) + 间距 = 约64px
+     * - 安全区域：clamp(10px, env(safe-area-inset-bottom, 10px), 34px)
+     * 总高度约为 64px + 安全区域
+     */
+    bottom: calc(64px + clamp(10px, env(safe-area-inset-bottom, 10px), 34px)) !important;
+    /* 移除额外的paddingBottom，避免双重计算 */
+    padding-bottom: 0 !important;
+  }
+}
+
+/* PC端：播放器紧贴底部（没有底部导航栏） */
+@media (min-width: 1280px) {
+  .audiobook-player-container {
+    bottom: env(safe-area-inset-bottom, 0px) !important;
+  }
+}
+
+/* 播放器面板深色模式样式 */
+@media (prefers-color-scheme: dark) {
+  .audiobook-player-panel {
+    background-color: rgba(31, 41, 55, 0.75) !important;
+    backdrop-filter: blur(20px) saturate(180%) !important;
+    -webkit-backdrop-filter: blur(20px) saturate(180%) !important;
+    border-color: rgba(75, 85, 99, 0.5) !important;
+    box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(255, 255, 255, 0.05) inset !important;
+  }
+}
+
+.dark .audiobook-player-panel {
+  background-color: rgba(31, 41, 55, 0.75) !important;
+  backdrop-filter: blur(20px) saturate(180%) !important;
+  -webkit-backdrop-filter: blur(20px) saturate(180%) !important;
+  border-color: rgba(75, 85, 99, 0.5) !important;
+  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(255, 255, 255, 0.05) inset !important;
+}
+
 /* 隐藏滚动条但保持滚动功能 */
 .hide-scrollbar {
   -ms-overflow-style: none;  /* IE and Edge */
@@ -798,5 +968,29 @@ nav.fixed {
 
 .hide-scrollbar::-webkit-scrollbar {
   display: none;
+}
+
+/* AI阅读页面高度设置 - 考虑导航栏和安全区域 */
+/* 移动端：考虑顶部导航栏(44px) + 安全区域 + 底部导航栏(56px) + 安全区域 + 内容padding(3rem) */
+.ai-reading-container {
+  /* 优先使用 dvh（动态视口高度），更好地处理移动端浏览器地址栏 */
+  height: calc(100vh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) - 44px - 56px - 3rem);
+  min-height: calc(100vh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) - 44px - 56px - 3rem);
+}
+
+/* 如果支持 dvh，使用 dvh（更好的移动端体验） */
+@supports (height: 100dvh) {
+  .ai-reading-container {
+    height: calc(100dvh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) - 44px - 56px - 3rem);
+    min-height: calc(100dvh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) - 44px - 56px - 3rem);
+  }
+}
+
+/* 桌面端：考虑顶部导航栏(56px) + 内容padding(4rem) */
+@media (min-width: 1024px) {
+  .ai-reading-container {
+    height: calc(100vh - 56px - 4rem);
+    min-height: calc(100vh - 56px - 4rem);
+  }
 }
 

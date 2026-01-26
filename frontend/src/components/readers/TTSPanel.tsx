@@ -6,9 +6,10 @@
 
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { X, Play, Pause, SkipBack, SkipForward, Volume2 } from 'lucide-react';
-import api from '../../utils/api';
+import api, { getFullApiUrl, getApiKeyHeader } from '../../utils/api';
 import toast from 'react-hot-toast';
 import { ReadingSettings } from '../../types/reader';
+import { useTranslation } from 'react-i18next';
 
 // 获取认证token的辅助函数
 const getAuthToken = (): string => {
@@ -16,7 +17,8 @@ const getAuthToken = (): string => {
     const token = localStorage.getItem('auth-storage');
     if (token) {
       const parsed = JSON.parse(token);
-      return parsed.state?.token || '';
+      // Zustand persist stores state directly, but may also have a 'state' wrapper
+      return parsed.state?.token || parsed.token || '';
     }
   } catch (e) {
     // 忽略解析错误
@@ -81,6 +83,7 @@ export default function TTSPanel({
   hideUI = false,
   onStateChange,
 }: TTSPanelProps) {
+  const { t } = useTranslation();
   const [paragraphs, setParagraphs] = useState<Paragraph[]>([]);
   const [loading, setLoading] = useState(false);
   const [profiles, setProfiles] = useState<VoiceProfile[]>([]);
@@ -557,6 +560,7 @@ export default function TTSPanel({
       const token = getAuthToken();
       const headers: HeadersInit = {
         'Content-Type': 'application/json',
+        ...getApiKeyHeader(), // 添加 API Key
       };
       if (token) {
         headers['Authorization'] = `Bearer ${token}`;
@@ -569,7 +573,8 @@ export default function TTSPanel({
       
       if (textLength > 300) {
         // 使用POST请求生成音频
-        response = await fetch('/api/tts/synthesize', {
+        const synthesizeUrl = getFullApiUrl('/tts/synthesize');
+        response = await fetch(synthesizeUrl, {
           method: 'POST',
           headers,
           body: JSON.stringify({
@@ -586,12 +591,12 @@ export default function TTSPanel({
         
         if (response.ok) {
           // 生成成功后，再获取音频
-          const audioUrl = `/api/tts/audio?bookId=${encodeURIComponent(bookId)}&chapterId=${encodeURIComponent(chapter || '0')}&paragraphId=${encodeURIComponent(nextParaId)}&speed=${speed}&model=${encodeURIComponent(currentModel)}&voice=${encodeURIComponent(currentVoice)}&autoRole=${autoRole ? 'true' : 'false'}`;
+          const audioUrl = getFullApiUrl(`/tts/audio?bookId=${encodeURIComponent(bookId)}&chapterId=${encodeURIComponent(chapter || '0')}&paragraphId=${encodeURIComponent(nextParaId)}&speed=${speed}&model=${encodeURIComponent(currentModel)}&voice=${encodeURIComponent(currentVoice)}&autoRole=${autoRole ? 'true' : 'false'}`);
           response = await fetch(audioUrl, { headers });
         }
       } else {
         // 文本较短，可以直接使用GET请求
-        const audioUrl = `/api/tts/audio?bookId=${encodeURIComponent(bookId)}&chapterId=${encodeURIComponent(chapter || '0')}&paragraphId=${encodeURIComponent(nextParaId)}&speed=${speed}&model=${encodeURIComponent(currentModel)}&voice=${encodeURIComponent(currentVoice)}&autoRole=${autoRole ? 'true' : 'false'}&text=${encodeURIComponent(nextPara.text)}`;
+        const audioUrl = getFullApiUrl(`/tts/audio?bookId=${encodeURIComponent(bookId)}&chapterId=${encodeURIComponent(chapter || '0')}&paragraphId=${encodeURIComponent(nextParaId)}&speed=${speed}&model=${encodeURIComponent(currentModel)}&voice=${encodeURIComponent(currentVoice)}&autoRole=${autoRole ? 'true' : 'false'}&text=${encodeURIComponent(nextPara.text)}`);
         response = await fetch(audioUrl, { headers });
       }
       
@@ -744,6 +749,7 @@ export default function TTSPanel({
     const token = getAuthToken();
     const headers: HeadersInit = {
       'Content-Type': 'application/json',
+      ...getApiKeyHeader(), // 添加 API Key
     };
     if (token) {
       headers['Authorization'] = `Bearer ${token}`;
@@ -768,7 +774,8 @@ export default function TTSPanel({
           throw new Error(`缺少必需参数: bookId=${bookId}, paragraphId=${segmentParaId}, text=${segmentText ? '有' : '无'}, model=${currentModel}, voice=${currentVoice}`);
         }
         
-        response = await fetch('/api/tts/synthesize', {
+        const synthesizeUrl = getFullApiUrl('/tts/synthesize');
+        response = await fetch(synthesizeUrl, {
           method: 'POST',
           headers,
           body: JSON.stringify({
@@ -818,8 +825,8 @@ export default function TTSPanel({
       throw new Error(`生成第 ${segmentIndex + 1} 段音频失败`);
     }
     
-    // 获取音频
-    const audioUrl = `/api/tts/audio?bookId=${encodeURIComponent(bookId)}&chapterId=${encodeURIComponent(chapter || '0')}&paragraphId=${encodeURIComponent(segmentParaId)}&speed=${speed}&model=${encodeURIComponent(currentModel)}&voice=${encodeURIComponent(currentVoice)}&autoRole=${autoRole ? 'true' : 'false'}`;
+    // 获取音频 - 使用统一的 API URL 配置
+    const audioUrl = getFullApiUrl(`/tts/audio?bookId=${encodeURIComponent(bookId)}&chapterId=${encodeURIComponent(chapter || '0')}&paragraphId=${encodeURIComponent(segmentParaId)}&speed=${speed}&model=${encodeURIComponent(currentModel)}&voice=${encodeURIComponent(currentVoice)}&autoRole=${autoRole ? 'true' : 'false'}`);
     const audioResponse = await fetch(audioUrl, { headers });
     
     if (!audioResponse.ok) {
@@ -912,7 +919,7 @@ export default function TTSPanel({
     
     // 防止重复加载
     if (loadingParagraphsRef.current.has(paraId)) {
-      console.log(`[TTSPanel] 文本正在加载中，跳过重复加载`);
+      // console.log(`[TTSPanel] 文本正在加载中，跳过重复加载`);
       return;
     }
     loadingParagraphsRef.current.add(paraId);
@@ -933,11 +940,8 @@ export default function TTSPanel({
         throw new Error('文本内容为空');
       }
 
-      // 在播放前，尝试高亮显示当前页面的文本
-      // 通过文本内容匹配找到对应的DOM元素并高亮
+
       if (bookType?.toLowerCase() === 'epub' && (window as any).__setCurrentReadingParagraph) {
-        // 对于EPUB，尝试通过文本内容找到对应的元素并高亮
-        // 使用文本的前50个字符作为搜索关键词
         const searchText = trimmedText.substring(0, Math.min(50, trimmedText.length));
         // 通知阅读器高亮包含该文本的元素
         setTimeout(() => {
@@ -1118,6 +1122,7 @@ export default function TTSPanel({
         const token = getAuthToken();
         const headers: HeadersInit = {
           'Content-Type': 'application/json',
+          ...getApiKeyHeader(), // 添加 API Key
         };
         if (token) {
           headers['Authorization'] = `Bearer ${token}`;
@@ -1133,7 +1138,8 @@ export default function TTSPanel({
             throw new Error(`缺少必需参数: bookId=${bookId}, paragraphId=${paraId}, text=${para.text ? '有' : '无'}, model=${currentModel}, voice=${currentVoice}`);
           }
           
-          response = await fetch('/api/tts/synthesize', {
+          const synthesizeUrl = getFullApiUrl('/tts/synthesize');
+          response = await fetch(synthesizeUrl, {
             method: 'POST',
             headers,
             body: JSON.stringify({
@@ -1150,12 +1156,12 @@ export default function TTSPanel({
           
           if (response.ok) {
             // 生成成功后，再获取音频（不传text参数，因为已经生成缓存）
-            const audioUrl = `/api/tts/audio?bookId=${encodeURIComponent(bookId)}&chapterId=${encodeURIComponent(chapter || '0')}&paragraphId=${encodeURIComponent(paraId)}&speed=${speed}&model=${encodeURIComponent(currentModel)}&voice=${encodeURIComponent(currentVoice)}&autoRole=${autoRole ? 'true' : 'false'}`;
+            const audioUrl = getFullApiUrl(`/tts/audio?bookId=${encodeURIComponent(bookId)}&chapterId=${encodeURIComponent(chapter || '0')}&paragraphId=${encodeURIComponent(paraId)}&speed=${speed}&model=${encodeURIComponent(currentModel)}&voice=${encodeURIComponent(currentVoice)}&autoRole=${autoRole ? 'true' : 'false'}`);
             response = await fetch(audioUrl, { headers });
           }
         } else {
           // 文本较短，可以直接使用GET请求
-          const audioUrl = `/api/tts/audio?bookId=${encodeURIComponent(bookId)}&chapterId=${encodeURIComponent(chapter || '0')}&paragraphId=${encodeURIComponent(paraId)}&speed=${speed}&model=${encodeURIComponent(currentModel)}&voice=${encodeURIComponent(currentVoice)}&autoRole=${autoRole ? 'true' : 'false'}&text=${encodeURIComponent(para.text)}`;
+          const audioUrl = getFullApiUrl(`/tts/audio?bookId=${encodeURIComponent(bookId)}&chapterId=${encodeURIComponent(chapter || '0')}&paragraphId=${encodeURIComponent(paraId)}&speed=${speed}&model=${encodeURIComponent(currentModel)}&voice=${encodeURIComponent(currentVoice)}&autoRole=${autoRole ? 'true' : 'false'}&text=${encodeURIComponent(para.text)}`);
           response = await fetch(audioUrl, { headers });
         }
 
@@ -1812,20 +1818,39 @@ export default function TTSPanel({
 
   if (!isSupported) {
     return (
-      <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center" onClick={onClose}>
+      <div 
+        className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" 
+        onClick={onClose}
+        style={{
+          paddingTop: typeof window !== 'undefined' && window.innerWidth < 1024
+            ? `max(clamp(20px, env(safe-area-inset-top, 20px), 44px), 1rem)`
+            : 'max(env(safe-area-inset-top, 0px), 1rem)',
+          paddingBottom: typeof window !== 'undefined' && window.innerWidth < 1024
+            ? `max(clamp(10px, env(safe-area-inset-bottom, 10px), 34px), 1rem)`
+            : 'max(env(safe-area-inset-bottom, 0px), 1rem)',
+          paddingLeft: 'max(env(safe-area-inset-left, 0px), 1rem)',
+          paddingRight: 'max(env(safe-area-inset-right, 0px), 1rem)',
+        }}
+      >
         <div
-          className="bg-white dark:bg-gray-800 rounded-lg p-6 max-w-md mx-4"
+          className="bg-white dark:bg-gray-800 rounded-lg p-6 max-w-md w-full"
           onClick={(e) => e.stopPropagation()}
-          style={{ backgroundColor: themeStyles.bg, color: themeStyles.text }}
+          style={{ 
+            backgroundColor: themeStyles.bg, 
+            color: themeStyles.text,
+            maxHeight: typeof window !== 'undefined' && window.innerWidth < 1024
+              ? `calc(100vh - max(clamp(20px, env(safe-area-inset-top, 20px), 44px), 1rem) - max(clamp(10px, env(safe-area-inset-bottom, 10px), 34px), 1rem) - ${typeof window !== 'undefined' && window.innerWidth >= 768 ? '64px' : '56px'} - 2rem)`
+              : 'calc(80vh - 2rem)',
+          }}
         >
-          <h2 className="text-lg font-bold mb-4">朗读功能</h2>
-          <p className="mb-4">当前格式（{bookType}）暂不支持朗读功能。</p>
-          <p className="text-sm opacity-70 mb-4">支持格式：EPUB、TXT、MD</p>
+          <h2 className="text-lg font-bold mb-4">{t('tts.readAloud')}</h2>
+          <p className="mb-4">{t('tts.formatNotSupported', { format: bookType })}</p>
+          <p className="text-sm opacity-70 mb-4">{t('tts.supportedFormats')}</p>
           <button
             onClick={onClose}
             className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
           >
-            关闭
+            {t('common.close')}
           </button>
         </div>
       </div>
@@ -1841,8 +1866,12 @@ export default function TTSPanel({
         style={{
           backgroundColor: themeStyles.bg,
           color: themeStyles.text,
-          paddingTop: 'clamp(20px, env(safe-area-inset-top, 20px), 44px)',
-          paddingBottom: 'clamp(10px, env(safe-area-inset-bottom, 10px), 34px)',
+          paddingTop: typeof window !== 'undefined' && window.innerWidth < 1024
+            ? `clamp(20px, env(safe-area-inset-top, 20px), 44px)`
+            : 'env(safe-area-inset-top, 0px)',
+          paddingBottom: typeof window !== 'undefined' && window.innerWidth < 1024
+            ? `calc(${typeof window !== 'undefined' && window.innerWidth >= 768 ? '64px' : '56px'} + clamp(10px, env(safe-area-inset-bottom, 10px), 34px))`
+            : 'clamp(10px, env(safe-area-inset-bottom, 10px), 34px)',
         }}
         onClick={(e) => e.stopPropagation()}
       >
@@ -1865,7 +1894,7 @@ export default function TTSPanel({
         <div className="p-4 border-b space-y-3" style={{ borderColor: themeStyles.border }}>
           {/* 模型选择 */}
           <div className="flex flex-col gap-2">
-            <span className="text-sm font-medium">模型选择：</span>
+            <span className="text-sm font-medium">{t('tts.modelSelection')}</span>
             <select
               value={currentModel}
               onChange={(e) => handleModelChange(e.target.value)}
@@ -1874,7 +1903,7 @@ export default function TTSPanel({
             >
               {models.filter(m => m.available).map((m) => (
                 <option key={m.id} value={m.id}>
-                  {m.name} ({m.type === 'online' ? '在线' : '离线'})
+                  {m.name} ({m.type === 'online' ? t('tts.online') : t('tts.offline')})
                 </option>
               ))}
             </select>
@@ -1882,7 +1911,7 @@ export default function TTSPanel({
 
           {/* 语音选择 */}
           <div className="flex flex-col gap-2">
-            <span className="text-sm font-medium">语音选择：</span>
+            <span className="text-sm font-medium">{t('tts.voiceSelection')}</span>
             <select
               value={currentVoice}
               onChange={(e) => handleVoiceChange(e.target.value)}
@@ -1891,9 +1920,9 @@ export default function TTSPanel({
               disabled={loadingVoices}
             >
               {loadingVoices ? (
-                <option value="">加载中...</option>
+                <option value="">{t('common.loading')}</option>
               ) : voices.length === 0 ? (
-                <option value="">暂无可用音色</option>
+                <option value="">{t('tts.noAvailableVoices')}</option>
               ) : (
                 voices.map((v) => (
                   <option key={v.id} value={v.id}>
@@ -1906,7 +1935,7 @@ export default function TTSPanel({
 
           {/* 倍速选择 */}
           <div className="flex items-center gap-2">
-            <span className="text-sm">倍速：</span>
+            <span className="text-sm">{t('tts.speed')}</span>
             <select
               value={speed}
               onChange={(e) => handleSpeedChange(Number(e.target.value))}
@@ -1954,7 +1983,7 @@ export default function TTSPanel({
               onChange={(e) => setAutoNext(e.target.checked)}
               className="rounded"
             />
-            <span>自动播放下一段</span>
+            <span>{t('tts.autoPlayNext')}</span>
           </label>
         </div>
 
@@ -1965,7 +1994,7 @@ export default function TTSPanel({
               <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
             </div>
           ) : paragraphs.length === 0 ? (
-            <div className="text-center py-12 text-sm opacity-70">暂无段落</div>
+            <div className="text-center py-12 text-sm opacity-70">{t('tts.noParagraphs')}</div>
           ) : (
             <div className="space-y-2">
               {paragraphs.map((para, idx) => (

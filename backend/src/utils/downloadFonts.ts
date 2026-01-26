@@ -9,8 +9,7 @@ import path from 'path';
 import https from 'https';
 import http from 'http';
 import { db } from '../db';
-
-const fontsDir = process.env.FONTS_DIR || './fonts';
+import { fontsDir } from '../config/paths';
 
 // 常用字体下载配置（使用可靠的CDN和直接下载链接）
 const fontsToDownload = [

@@ -7,9 +7,9 @@
 import { useEffect, useState, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { Link, useNavigate } from 'react-router-dom';
-import api from '../utils/api';
+import api, { getCurrentApiUrl, debugApiConfig, getCustomApiUrl } from '../utils/api';
 import toast from 'react-hot-toast';
-import { Book, Trash2, Grid3x3, List, ArrowUpDown, Clock, ArrowUp, ArrowDown, Star, Calendar, Search, X, ChevronLeft, ChevronRight, RefreshCw } from 'lucide-react';
+import { Book, Trash2, Grid3x3, List, ArrowUpDown, Clock, ArrowUp, ArrowDown, Star, Calendar, Search, X, ChevronLeft, ChevronRight, RefreshCw, Music } from 'lucide-react';
 import { getCoverUrl } from '../utils/coverHelper';
 import { usePullToRefresh } from '../hooks/usePullToRefresh';
 import PullToRefreshIndicator from '../components/PullToRefresh';
@@ -17,6 +17,7 @@ import { useAuthStore } from '../store/authStore';
 import { offlineDataCache } from '../utils/offlineDataCache';
 import { useNetworkStatus } from '../hooks/useNetworkStatus';
 import BookDetailModal from '../components/BookDetailModal';
+import { useTranslation } from 'react-i18next';
 
 interface ShelfBook {
   id: string;
@@ -47,8 +48,10 @@ interface BookItem {
 export default function MyShelf() {
   const navigate = useNavigate();
   const { isAuthenticated } = useAuthStore();
+  const { t } = useTranslation();
   const [books, setBooks] = useState<ShelfBook[]>([]);
   const [recentReadBooks, setRecentReadBooks] = useState<BookItem[]>([]);
+  const [audiobooks, setAudiobooks] = useState<BookItem[]>([]);
   const [loading, setLoading] = useState(true);
   // 从localStorage加载视图模式，如果没有则默认为grid
   const [viewMode, setViewMode] = useState<ViewMode>(() => {
@@ -75,15 +78,39 @@ export default function MyShelf() {
   const { isOnline, checkAndResetOfflineFlag } = useNetworkStatus();
 
   useEffect(() => {
+    // 安全修复：仅在开发环境显示API配置，避免生产环境泄露敏感信息
+    if (import.meta.env.DEV) {
+      debugApiConfig();
+      console.log('[MyShelf] 当前 API 地址:', getCurrentApiUrl());
+    }
+    
+    // 如果配置了自定义服务器地址，优先从网络获取，不使用缓存
+    const customApiUrl = getCustomApiUrl();
+    if (customApiUrl && customApiUrl.trim()) {
+      console.log('[MyShelf] 检测到自定义服务器地址，跳过缓存，直接从网络获取');
+      // 直接从网络获取，不使用缓存
+      fetchShelf();
+      if (isAuthenticated) {
+        fetchRecentReadBooks();
+        fetchAudiobooks();
+      }
+      return;
+    }
+    
+    // 如果没有自定义服务器地址，才使用缓存策略
     // 先尝试从缓存加载数据（快速显示）
     loadFromCache().then((hasData) => {
       // 如果从缓存加载到数据，先显示缓存数据
       // 然后从网络获取最新数据（如果在线）
       if (offlineDataCache.isOnline()) {
-        fetchShelf();
-        if (isAuthenticated) {
-          fetchRecentReadBooks();
-        }
+        // 延迟200ms再获取网络数据，让缓存数据先显示
+        setTimeout(() => {
+          fetchShelf();
+          if (isAuthenticated) {
+            fetchRecentReadBooks();
+            fetchAudiobooks();
+          }
+        }, 200);
       } else {
         // 离线时，如果缓存有数据，就不显示loading了
         if (hasData) {
@@ -99,6 +126,7 @@ export default function MyShelf() {
         fetchShelf();
         if (isAuthenticated) {
           fetchRecentReadBooks();
+          fetchAudiobooks();
         }
       } else {
         // 离线且无缓存，显示空状态
@@ -112,7 +140,10 @@ export default function MyShelf() {
     const onBooksChanged = () => {
       if (offlineDataCache.isOnline()) {
         fetchShelf();
-        if (isAuthenticated) fetchRecentReadBooks();
+        if (isAuthenticated) {
+        fetchRecentReadBooks();
+        fetchAudiobooks();
+      }
       } else {
         // 离线：尽量用缓存重载
         loadFromCache().catch(() => undefined);
@@ -133,6 +164,7 @@ export default function MyShelf() {
         fetchShelf();
         if (isAuthenticated) {
           fetchRecentReadBooks();
+          fetchAudiobooks();
         }
       }, 500);
     }
@@ -190,6 +222,7 @@ export default function MyShelf() {
           sort: sortBy,
           order: sortOrder,
         },
+        timeout: 5000, // 5秒超时
       });
       const allBooks = response.data.books || [];
       setBooks(allBooks);
@@ -261,17 +294,81 @@ export default function MyShelf() {
     }
   };
 
+  const fetchAudiobooks = async () => {
+    try {
+      const response = await api.get('/audiobooks/shelf/list', {
+        params: { page: 1, pageSize: 100 },
+      });
+      const audiobooksList: (BookItem & { progress?: any; lastPlayedAt?: number })[] = response.data.audiobooks?.map((ab: any) => {
+        // 调试：输出完整的progress对象结构
+
+        // 使用与AudiobookDetail.tsx相同的进度数据结构
+        // ab.progress 应该包含与 /audiobooks/${id}/progress API 相同的字段
+        let lastPlayedAt = 0;
+        if (ab.progress) {
+          // 尝试多种可能的最后播放时间字段，保持与AudiobookDetail.tsx的一致性
+          const possibleTimeFields = ['updated_at', 'last_played_at', 'created_at', 'modified_at'];
+          for (const field of possibleTimeFields) {
+            if (ab.progress[field]) {
+              lastPlayedAt = new Date(ab.progress[field]).getTime();
+              break;
+            }
+          }
+
+          // 如果没有找到时间字段但有进度，设置一个默认时间
+          if (lastPlayedAt === 0 && ab.progress.progress > 0) {
+            console.warn(`[MyShelf] ${ab.title} 有进度但无时间字段，使用当前时间作为最后播放时间`);
+            lastPlayedAt = Date.now(); // 使用当前时间作为fallback
+          }
+        }
+
+        return {
+          id: ab.id,
+          title: ab.title,
+          author: ab.author,
+          cover_url: ab.cover_url,
+          file_type: 'audiobook',
+          rating: ab.rating,
+          progress: ab.progress, // 播放进度信息，与AudiobookDetail.tsx结构一致
+          lastPlayedAt, // 最后播放时间戳
+        };
+      }) || [];
+
+
+
+      // 按最近播放时间排序：有播放记录的排前面，按最后播放时间降序
+      audiobooksList.sort((a, b) => {
+        // 有播放记录的优先（lastPlayedAt > 0）
+        const aHasProgress = a.lastPlayedAt > 0;
+        const bHasProgress = b.lastPlayedAt > 0;
+
+        if (aHasProgress && !bHasProgress) return -1;
+        if (!aHasProgress && bHasProgress) return 1;
+
+        // 都有或都没有播放记录，按最后播放时间降序
+        return b.lastPlayedAt - a.lastPlayedAt;
+      });
+
+
+      
+      setAudiobooks(audiobooksList);
+    } catch (error: any) {
+      console.error('获取有声小说书架失败:', error);
+      // 静默失败，不显示错误提示
+    }
+  };
+
   const handleRemove = async (bookId: string) => {
-    if (!confirm('确定要从书架移除这本书吗？')) {
+    if (!confirm(t('shelf.confirmRemove'))) {
       return;
     }
 
     try {
-      await api.delete(`/shelf/remove/${bookId}`);
-      toast.success('已从书架移除');
+      await api.post(`/shelf/remove/${bookId}`, { _method: 'DELETE' });
+      toast.success(t('shelf.removed'));
       fetchShelf();
     } catch (error: any) {
-      toast.error(error.response?.data?.error || '移除失败');
+      toast.error(error.response?.data?.error || t('shelf.removeFailed'));
     }
   };
 
@@ -280,16 +377,17 @@ export default function MyShelf() {
     await Promise.all([
       fetchShelf(),
       isAuthenticated && fetchRecentReadBooks(),
+      isAuthenticated && fetchAudiobooks(),
     ]);
     toast.success(
-      (t) => (
+      (toastInstance) => (
         <div className="flex items-center gap-3">
           <div className="flex-shrink-0 w-8 h-8 rounded-full bg-white/20 flex items-center justify-center">
             <RefreshCw className="w-5 h-5 text-white animate-spin" style={{ animationDuration: '0.5s' }} />
           </div>
           <div>
-            <div className="font-semibold text-white">刷新成功</div>
-            <div className="text-xs text-white/80 mt-0.5">书架已更新</div>
+            <div className="font-semibold text-white">{t('shelf.refreshSuccess')}</div>
+            <div className="text-xs text-white/80 mt-0.5">{t('shelf.shelfUpdated')}</div>
           </div>
         </div>
       ),
@@ -336,6 +434,7 @@ export default function MyShelf() {
                     alt={book.title}
                     className="w-full h-full object-cover object-center group-hover:scale-105 transition-transform duration-300"
                     style={{ minWidth: '100%', minHeight: '100%' }}
+                    onContextMenu={(e) => e.preventDefault()}
                     onError={(e) => {
                       const target = e.target as HTMLImageElement;
                       target.style.display = 'none';
@@ -354,7 +453,7 @@ export default function MyShelf() {
                   />
                   {book.category === '笔记' && (
                     <div className="absolute top-2 left-2 px-2 py-0.5 rounded-md text-[10px] font-bold tracking-wide bg-black/70 text-white backdrop-blur">
-                      笔记
+                      {t('shelf.note')}
                     </div>
                   )}
                 </>
@@ -376,7 +475,7 @@ export default function MyShelf() {
               {book.title.length > 20 ? `${book.title.substring(0, 20)}...` : book.title}
             </h3>
             <p className="text-[10px] text-gray-500 dark:text-gray-400 line-clamp-1 mt-auto">
-              {book.author || '未知作者'}
+              {book.author || t('shelf.unknownAuthor')}
             </p>
           </div>
         </div>
@@ -387,12 +486,93 @@ export default function MyShelf() {
           handleRemove(book.id);
         }}
         className="absolute top-2 right-2 p-1.5 bg-red-500/90 backdrop-blur-sm text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-600 shadow-lg z-10"
-        title="从书架移除"
+        title={t('shelf.removeFromShelf')}
       >
         <Trash2 className="w-3 h-3" />
       </button>
     </div>
   );
+
+  // 有声小说卡片组件（用于HorizontalBookList）
+  const AudiobookCard = ({ audiobook }: { audiobook: BookItem & { progress?: any } }) => {
+    const handleClick = () => {
+      // ✅ 修复：基于用户意图跳转到正确的页面
+      // 如果用户点击了有声小说卡片，应该是想要播放这本书
+      // 无论是否有播放记录，都应该跳转到播放页面，让播放页面决定从哪里开始播放
+
+      console.log('[AudiobookCard] 用户点击有声小说卡片:', {
+        audiobookId: audiobook.id,
+        title: audiobook.title,
+        hasProgress: !!audiobook.progress,
+        progressFileId: audiobook.progress?.file_id,
+        progressPercent: audiobook.progress?.progress
+      });
+
+      // 总是跳转到播放页面，让播放页面使用最后播放的进度
+      // 不传递fileId参数，确保播放页面获取最新的API进度
+      navigate(`/audiobooks/${audiobook.id}/player?autoPlay=true`);
+    };
+    
+    return (
+    <div
+      onClick={handleClick}
+      className="group block h-full cursor-pointer"
+    >
+      <div className="card-gradient rounded-lg overflow-hidden hover:shadow-lg transition-all duration-300 hover:-translate-y-0.5 h-full flex flex-col">
+        <div className="aspect-[3/4] bg-gradient-to-br from-blue-100 to-purple-200 dark:from-blue-900/20 dark:to-purple-900/20 overflow-hidden relative flex-shrink-0 w-full">
+          {(() => {
+            const coverUrl = getCoverUrl(audiobook.cover_url);
+            return coverUrl ? (
+              <img
+                src={coverUrl}
+                alt={audiobook.title}
+                className="w-full h-full object-cover object-center group-hover:scale-105 transition-transform duration-300"
+                style={{ minWidth: '100%', minHeight: '100%' }}
+                onContextMenu={(e) => e.preventDefault()}
+                onError={(e) => {
+                  const target = e.target as HTMLImageElement;
+                  target.style.display = 'none';
+                  const parent = target.parentElement;
+                  if (parent) {
+                    parent.innerHTML = `
+                      <div class="w-full h-full flex items-center justify-center">
+                        <svg class="w-12 h-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3"></path>
+                        </svg>
+                      </div>
+                    `;
+                  }
+                }}
+                loading="lazy"
+              />
+            ) : (
+              <div className="w-full h-full flex items-center justify-center">
+                <Music className="w-12 h-12 text-gray-400 dark:text-gray-500" />
+              </div>
+            );
+          })()}
+          {/* 显示播放进度指示 */}
+          {audiobook.progress && audiobook.progress.progress > 0 && (
+            <div className="absolute bottom-0 left-0 right-0 h-1 bg-gray-200/80 dark:bg-gray-700/80">
+              <div 
+                className="h-full bg-blue-600 transition-all"
+                style={{ width: `${Math.min(100, audiobook.progress.progress)}%` }}
+              />
+            </div>
+          )}
+        </div>
+        <div className="p-1.5 flex-1 flex flex-col justify-between min-h-[48px]">
+          <h3 className="font-semibold text-xs line-clamp-2 mb-0.5 text-gray-900 dark:text-gray-100 group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors break-words" title={audiobook.title}>
+            {audiobook.title.length > 20 ? `${audiobook.title.substring(0, 20)}...` : audiobook.title}
+          </h3>
+          <p className="text-[10px] text-gray-500 dark:text-gray-400 line-clamp-1 mt-auto">
+            {audiobook.author || t('shelf.unknownAuthor')}
+          </p>
+        </div>
+      </div>
+    </div>
+    );
+  };
 
   // 最近阅读的卡片组件（用于HorizontalBookList）
   const RecentReadBookCard = ({ book }: { book: BookItem }) => (
@@ -414,6 +594,7 @@ export default function MyShelf() {
                   alt={book.title}
                   className="w-full h-full object-cover object-center group-hover:scale-105 transition-transform duration-300"
                   style={{ minWidth: '100%', minHeight: '100%' }}
+                  onContextMenu={(e) => e.preventDefault()}
                   onError={(e) => {
                     const target = e.target as HTMLImageElement;
                     target.style.display = 'none';
@@ -432,7 +613,7 @@ export default function MyShelf() {
                 />
                 {book.category === '笔记' && (
                   <div className="absolute top-2 left-2 px-2 py-0.5 rounded-md text-[10px] font-bold tracking-wide bg-black/70 text-white backdrop-blur">
-                    笔记
+                    {t('shelf.note')}
                   </div>
                 )}
               </>
@@ -454,12 +635,67 @@ export default function MyShelf() {
             {book.title.length > 20 ? `${book.title.substring(0, 20)}...` : book.title}
           </h3>
           <p className="text-[10px] text-gray-500 dark:text-gray-400 line-clamp-1 mt-auto">
-            {book.author || '未知作者'}
+            {book.author || t('shelf.unknownAuthor')}
           </p>
         </div>
       </div>
     </div>
   );
+
+  // 横向有声小说列表组件
+  const HorizontalAudiobookList = ({ title, audiobooks: audiobookList }: { title: string; audiobooks: BookItem[] }) => {
+    const scrollRef = useRef<HTMLDivElement>(null);
+
+    const scroll = (direction: 'left' | 'right') => {
+      if (scrollRef.current) {
+        const scrollAmount = 300;
+        scrollRef.current.scrollBy({
+          left: direction === 'left' ? -scrollAmount : scrollAmount,
+          behavior: 'smooth',
+        });
+      }
+    };
+
+    if (audiobookList.length === 0) return null;
+
+    return (
+      <div className="mb-6">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-base sm:text-lg font-bold text-gray-900 dark:text-gray-100 flex items-center gap-2">
+            <div className="w-1 h-5 bg-gradient-to-b from-blue-500 to-purple-500 rounded-full"></div>
+            {title}
+          </h2>
+          <div className="flex gap-1.5">
+            <button
+              onClick={() => scroll('left')}
+              className="p-1.5 rounded-lg bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
+              title={t('book.scrollLeft')}
+            >
+              <ChevronLeft className="w-4 h-4" />
+            </button>
+            <button
+              onClick={() => scroll('right')}
+              className="p-1.5 rounded-lg bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
+              title={t('book.scrollRight')}
+            >
+              <ChevronRight className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+        <div
+          ref={scrollRef}
+          className="flex gap-3 sm:gap-4 md:gap-5 overflow-x-auto scrollbar-hide pb-2 scroll-smooth"
+          style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
+        >
+          {audiobookList.map((audiobook) => (
+            <div key={audiobook.id} className="flex-shrink-0 w-32 sm:w-36 md:w-40 lg:w-44">
+              <AudiobookCard audiobook={audiobook} />
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  };
 
   // 横向书籍列表组件
   const HorizontalBookList = ({ title, books: bookList }: { title: string; books: BookItem[] }) => {
@@ -488,14 +724,14 @@ export default function MyShelf() {
             <button
               onClick={() => scroll('left')}
               className="p-1.5 rounded-lg bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
-              title="向左滚动"
+              title={t('book.scrollLeft')}
             >
               <ChevronLeft className="w-4 h-4" />
             </button>
             <button
               onClick={() => scroll('right')}
               className="p-1.5 rounded-lg bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
-              title="向右滚动"
+              title={t('book.scrollRight')}
             >
               <ChevronRight className="w-4 h-4" />
             </button>
@@ -534,6 +770,7 @@ export default function MyShelf() {
                 alt={book.title}
                 className="w-full h-full object-cover object-center"
                 style={{ minWidth: '100%', minHeight: '100%' }}
+                onContextMenu={(e) => e.preventDefault()}
                 onError={(e) => {
                   const target = e.target as HTMLImageElement;
                   target.style.display = 'none';
@@ -562,7 +799,7 @@ export default function MyShelf() {
             {book.title.length > 30 ? `${book.title.substring(0, 30)}...` : book.title}
           </h3>
           <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">
-            {book.author || '未知作者'}
+            {book.author || t('shelf.unknownAuthor')}
           </p>
           {book.rating && (
             <div className="flex items-center gap-1">
@@ -578,7 +815,7 @@ export default function MyShelf() {
           handleRemove(book.id);
         }}
         className="p-2 bg-red-500/90 text-white rounded-lg opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-600"
-        title="从书架移除"
+        title={t('shelf.removeFromShelf')}
       >
         <Trash2 className="w-4 h-4" />
       </button>
@@ -602,7 +839,12 @@ export default function MyShelf() {
       <div className="w-full overflow-hidden pt-4 lg:pt-6">
       {/* 最近阅读（仅登录用户）- 显示在页面顶部 */}
       {isAuthenticated && recentReadBooks.length > 0 && (
-        <HorizontalBookList title="最近阅读" books={recentReadBooks} />
+        <HorizontalBookList title={t('shelf.lastRead')} books={recentReadBooks} />
+      )}
+
+      {/* 有声小说（仅登录用户且有收藏）- 显示在最近阅读下方 */}
+      {isAuthenticated && audiobooks.length > 0 && (
+        <HorizontalAudiobookList title={t('audiobook.title') || '有声小说'} audiobooks={audiobooks} />
       )}
 
       {/* 我的笔记（从书架中筛选分类=笔记的书籍） */}
@@ -620,7 +862,7 @@ export default function MyShelf() {
           }));
 
         return noteBooks.length > 0 ? (
-          <HorizontalBookList title="我的笔记" books={noteBooks} />
+          <HorizontalBookList title={t('shelf.myNotes')} books={noteBooks} />
         ) : null;
       })()}
 
@@ -636,7 +878,7 @@ export default function MyShelf() {
                     ? 'bg-blue-600 text-white shadow-md'
                     : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700'
                 }`}
-                title="网格视图"
+                title={t('shelf.gridView')}
               >
                 <Grid3x3 className="w-5 h-5" />
               </button>
@@ -647,7 +889,7 @@ export default function MyShelf() {
                     ? 'bg-blue-600 text-white shadow-md'
                     : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700'
                 }`}
-                title="列表视图"
+                title={t('shelf.listView')}
               >
                 <List className="w-5 h-5" />
               </button>
@@ -668,15 +910,15 @@ export default function MyShelf() {
                   setSortMenuOpen(!sortMenuOpen);
                 }}
                 className="flex items-center gap-2 px-3 py-2 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors shadow-sm"
-                title="排序"
+                title={t('shelf.sort')}
               >
                 <ArrowUpDown className="w-4 h-4 text-gray-600 dark:text-gray-400" />
                 <span className="text-sm text-gray-700 dark:text-gray-300 hidden sm:inline">
-                  {sortBy === 'added_at' && (sortOrder === 'desc' ? '最近添加' : '最早添加')}
-                  {sortBy === 'title' && (sortOrder === 'asc' ? '标题 A-Z' : '标题 Z-A')}
-                  {sortBy === 'author' && (sortOrder === 'asc' ? '作者 A-Z' : '作者 Z-A')}
-                  {sortBy === 'rating' && (sortOrder === 'desc' ? '评分最高' : '评分最低')}
-                  {sortBy === 'created_at' && (sortOrder === 'desc' ? '书籍最新' : '书籍最早')}
+                  {sortBy === 'added_at' && (sortOrder === 'desc' ? t('shelf.recentAdded') : t('shelf.earliestAdded'))}
+                  {sortBy === 'title' && (sortOrder === 'asc' ? t('shelf.titleAZ') : t('shelf.titleZA'))}
+                  {sortBy === 'author' && (sortOrder === 'asc' ? t('shelf.authorAZ') : t('shelf.authorZA'))}
+                  {sortBy === 'rating' && (sortOrder === 'desc' ? t('shelf.ratingHighest') : t('shelf.ratingLowest'))}
+                  {sortBy === 'created_at' && (sortOrder === 'desc' ? t('shelf.bookNewest') : t('shelf.bookOldest'))}
                 </span>
               </button>
               
@@ -694,14 +936,14 @@ export default function MyShelf() {
                     }}
                   >
                     <div className="px-3 py-2 text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase border-b border-gray-200 dark:border-gray-700">
-                      排序方式
+                      {t('shelf.sortBy')}
                     </div>
                     
                     {/* 添加时间 */}
                     <div className="px-3 py-1.5">
                       <div className="text-xs text-gray-500 dark:text-gray-400 mb-1.5 flex items-center gap-1">
                         <Clock className="w-3 h-3" />
-                        添加时间
+                        {t('shelf.addTime')}
                       </div>
                       <div className="flex gap-1">
                         <button
@@ -717,7 +959,7 @@ export default function MyShelf() {
                           }`}
                         >
                           <ArrowDown className="w-3 h-3" />
-                          最近
+                          {t('shelf.recent')}
                         </button>
                         <button
                           onClick={() => {
@@ -732,7 +974,7 @@ export default function MyShelf() {
                           }`}
                         >
                           <ArrowUp className="w-3 h-3" />
-                          最早
+                          {t('shelf.earliest')}
                         </button>
                       </div>
                     </div>
@@ -741,7 +983,7 @@ export default function MyShelf() {
                     <div className="px-3 py-1.5">
                       <div className="text-xs text-gray-500 dark:text-gray-400 mb-1.5 flex items-center gap-1">
                         <Book className="w-3 h-3" />
-                        标题
+                        {t('book.title')}
                       </div>
                       <div className="flex gap-1">
                         <button
@@ -781,7 +1023,7 @@ export default function MyShelf() {
                     <div className="px-3 py-1.5">
                       <div className="text-xs text-gray-500 dark:text-gray-400 mb-1.5 flex items-center gap-1">
                         <Book className="w-3 h-3" />
-                        作者
+                        {t('book.author')}
                       </div>
                       <div className="flex gap-1">
                         <button
@@ -821,7 +1063,7 @@ export default function MyShelf() {
                     <div className="px-3 py-1.5">
                       <div className="text-xs text-gray-500 dark:text-gray-400 mb-1.5 flex items-center gap-1">
                         <Star className="w-3 h-3" />
-                        评分
+                        {t('shelf.rating')}
                       </div>
                       <div className="flex gap-1">
                         <button
@@ -837,7 +1079,7 @@ export default function MyShelf() {
                           }`}
                         >
                           <ArrowDown className="w-3 h-3" />
-                          最高
+                          {t('shelf.highest')}
                         </button>
                         <button
                           onClick={() => {
@@ -852,7 +1094,7 @@ export default function MyShelf() {
                           }`}
                         >
                           <ArrowUp className="w-3 h-3" />
-                          最低
+                          {t('shelf.lowest')}
                         </button>
                       </div>
                     </div>
@@ -861,7 +1103,7 @@ export default function MyShelf() {
                     <div className="px-3 py-1.5">
                       <div className="text-xs text-gray-500 dark:text-gray-400 mb-1.5 flex items-center gap-1">
                         <Calendar className="w-3 h-3" />
-                        创建时间
+                        {t('shelf.createTime')}
                       </div>
                       <div className="flex gap-1">
                         <button
@@ -877,7 +1119,7 @@ export default function MyShelf() {
                           }`}
                         >
                           <ArrowDown className="w-3 h-3" />
-                          最新
+                          {t('shelf.newest')}
                         </button>
                         <button
                           onClick={() => {
@@ -892,7 +1134,7 @@ export default function MyShelf() {
                           }`}
                         >
                           <ArrowUp className="w-3 h-3" />
-                          最早
+                          {t('shelf.oldest')}
                         </button>
                       </div>
                     </div>
@@ -910,12 +1152,12 @@ export default function MyShelf() {
           <div className="w-24 h-24 mx-auto mb-4 bg-gradient-to-br from-blue-100 to-purple-100 dark:from-blue-900/20 dark:to-purple-900/20 rounded-full flex items-center justify-center">
             <Book className="w-12 h-12 text-blue-600 dark:text-blue-400" />
           </div>
-          <p className="text-gray-600 dark:text-gray-400 mb-4 text-lg">书架是空的</p>
+          <p className="text-gray-600 dark:text-gray-400 mb-4 text-lg">{t('shelf.emptyShelf')}</p>
           <Link 
             to="/books" 
             className="inline-block px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors shadow-md hover:shadow-lg"
           >
-            去图书馆添加书籍
+            {t('shelf.goToLibrary')}
           </Link>
         </div>
       ) : (
@@ -934,7 +1176,7 @@ export default function MyShelf() {
                       : 'bg-gray-50/80 dark:bg-gray-800/80 backdrop-blur-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700/80 shadow-sm hover:shadow-md'
                   }`}
                 >
-                  全部
+                  {t('shelf.all')}
                 </button>
                 {bookCategories.map((cat) => (
                   <button
@@ -964,7 +1206,7 @@ export default function MyShelf() {
             if (filteredBooks.length === 0) {
               return (
                 <div className="text-center py-12 text-gray-500 dark:text-gray-400">
-                  该分类下暂无书籍
+                  {t('shelf.noBooksInCategory')}
                 </div>
               );
             }

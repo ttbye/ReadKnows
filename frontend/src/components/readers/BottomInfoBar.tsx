@@ -8,6 +8,8 @@
 import { useState, useEffect } from 'react';
 import { BookOpen } from 'lucide-react';
 import { BookData, ReadingPosition, ReadingSettings } from '../../types/reader';
+import { useTranslation } from 'react-i18next';
+import i18n from '../../i18n/config';
 
 interface BottomInfoBarProps {
   book: BookData;
@@ -36,6 +38,7 @@ export default function BottomInfoBar({
   settings,
   onToggleTOC,
 }: BottomInfoBarProps) {
+  const { t } = useTranslation();
   const [currentTime, setCurrentTime] = useState(new Date());
   const [isMobile, setIsMobile] = useState(false);
   const [isTablet, setIsTablet] = useState(false);
@@ -159,8 +162,8 @@ export default function BottomInfoBar({
             onMouseLeave={(e) => {
               e.currentTarget.style.backgroundColor = 'transparent';
             }}
-            aria-label="目录"
-            title="目录"
+            aria-label={t('reader.toc')}
+            title={t('reader.toc')}
           >
             <BookOpen className="w-4 h-4" style={{ width: isMobile ? '16px' : isTablet ? '18px' : '20px', height: isMobile ? '16px' : isTablet ? '18px' : '20px' }} />
           </button>
@@ -178,7 +181,7 @@ export default function BottomInfoBar({
             letterSpacing: '0.01em',
           }}
         >
-          {isEpub ? `${pct.toFixed(2)}%` : `${position.currentPage} / ${position.totalPages}`}
+          {isEpub ? `${pct.toFixed(2)}%` : t('reader.pageNumberFormat', { current: position.currentPage, total: position.totalPages })}
         </div>
 
         {/* 右侧：当前时间 */}
@@ -191,7 +194,7 @@ export default function BottomInfoBar({
             letterSpacing: '0.02em',
           }}
         >
-          {currentTime.toLocaleTimeString('zh-CN', { 
+          {currentTime.toLocaleTimeString(i18n.language === 'zh' ? 'zh-CN' : 'en-US', { 
             hour: '2-digit', 
             minute: '2-digit',
             hour12: false,

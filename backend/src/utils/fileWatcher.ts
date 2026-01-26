@@ -311,7 +311,7 @@ export function startFileWatcher(): void {
     return;
   }
 
-  const importDir = process.env.IMPORT_DIR || './import';
+  const { importDir } = require('../config/paths');
   
   // 创建监控器实例
   globalWatcher = new FileWatcher({

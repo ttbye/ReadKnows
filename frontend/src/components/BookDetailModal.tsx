@@ -10,10 +10,11 @@ import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../store/authStore';
 import api from '../utils/api';
 import toast from 'react-hot-toast';
-import { Book, Plus, Trash2, Edit, X, Star, Tag, Globe, Download, Send, RefreshCw, FileText, Search, Check, ChevronDown, Clock, BookOpen, Heart, Lock, Upload, Link as LinkIcon } from 'lucide-react';
+import { Book, Plus, Trash2, Edit, X, Star, Tag, Globe, Download, Send, RefreshCw, FileText, Search, Check, ChevronDown, Clock, BookOpen, Heart, Lock, Upload, Link as LinkIcon, Share2, Eye } from 'lucide-react';
 import { getCoverUrl } from '../utils/coverHelper';
 import CategoryCombobox from './CategoryCombobox';
 import { offlineDataCache } from '../utils/offlineDataCache';
+import { useTranslation } from 'react-i18next';
 
 interface BookDetail {
   id: string;
@@ -60,6 +61,7 @@ const stripHtmlTags = (html: string): string => {
 export default function BookDetailModal({ bookId, isOpen, onClose, onBookUpdated }: BookDetailModalProps) {
   const navigate = useNavigate();
   const { isAuthenticated, user } = useAuthStore();
+  const { t, i18n } = useTranslation();
   const [book, setBook] = useState<BookDetail | null>(null);
   const [formats, setFormats] = useState<BookDetail[]>([]);
   const [selectedFormatId, setSelectedFormatId] = useState<string | null>(null);
@@ -98,6 +100,14 @@ export default function BookDetailModal({ bookId, isOpen, onClose, onBookUpdated
   const [exportingNotes, setExportingNotes] = useState(false);
   const [creatingNoteBook, setCreatingNoteBook] = useState(false);
   const [showNotesModal, setShowNotesModal] = useState(false);
+  const [showShareModal, setShowShareModal] = useState(false);
+  const [showGroupVisibilityModal, setShowGroupVisibilityModal] = useState(false);
+  const [shareForm, setShareForm] = useState({ toUserId: '', toGroupId: '', permission: 'read' });
+  const [groupVisibility, setGroupVisibility] = useState({ groupOnly: false, groupIds: [] as string[] });
+  const [availableGroups, setAvailableGroups] = useState<any[]>([]);
+  const [availableUsers, setAvailableUsers] = useState<any[]>([]);
+  const [sharing, setSharing] = useState(false);
+  const [savingVisibility, setSavingVisibility] = useState(false);
 
   useEffect(() => {
     const checkPWA = () => {
@@ -122,20 +132,41 @@ export default function BookDetailModal({ bookId, isOpen, onClose, onBookUpdated
   // 当模态框打开时加载书籍数据
   useEffect(() => {
     if (isOpen && bookId) {
+      // 立即加载书籍数据（关键数据）
       fetchBook();
       setAutoExtractAttempted(false);
       setExtractCoverFailed(false);
+      
+      // 延迟加载非关键数据，避免阻塞页面
       if (isAuthenticated) {
-        checkShelf();
-        checkEmailPushEnabled();
+        // 使用 setTimeout 延迟非关键请求，让页面先显示
+        const timer1 = setTimeout(() => {
+          checkShelf();
+        }, 500); // 延迟500ms
+        
+        const timer2 = setTimeout(() => {
+          checkEmailPushEnabled();
+        }, 800); // 延迟800ms
+        
+        return () => {
+          clearTimeout(timer1);
+          clearTimeout(timer2);
+        };
       }
     }
   }, [isOpen, bookId, isAuthenticated]);
 
-  // 加载书籍类型列表
+  // 延迟加载书籍类型列表（非关键数据）
   useEffect(() => {
-    fetchBookCategories();
-  }, []);
+    if (isOpen) {
+      // 延迟加载，避免阻塞页面
+    const timer = setTimeout(() => {
+      fetchBookCategories();
+    }, 1000); // 延迟1秒，避免阻塞页面渲染
+      
+      return () => clearTimeout(timer);
+    }
+  }, [isOpen]);
 
   // 处理ESC键关闭模态框和防止背景滚动
   useEffect(() => {
@@ -159,7 +190,9 @@ export default function BookDetailModal({ bookId, isOpen, onClose, onBookUpdated
 
   const fetchBookCategories = async () => {
     try {
-      const response = await api.get('/settings/book-categories');
+      const response = await api.get('/settings/book-categories', {
+        timeout: 3000, // 3秒超时
+      });
       
       if (!response.data || !response.data.categories) {
         console.warn('API返回数据格式不正确:', response.data);
@@ -177,33 +210,59 @@ export default function BookDetailModal({ bookId, isOpen, onClose, onBookUpdated
 
   const checkEmailPushEnabled = async () => {
     try {
-      const response = await api.get('/settings');
+      const response = await api.get('/settings', {
+        timeout: 5000, // 5秒超时
+      });
       const settings = response.data.settings || {};
       const enabled = settings.email_push_enabled?.value === 'true';
       setEmailPushEnabled(enabled);
       setSmtpUserEmail(settings.smtp_user?.value || '');
       
-      // 如果推送功能启用，获取已保存的推送邮箱列表
+      // 如果推送功能启用，获取已保存的推送邮箱列表（延迟加载）
       if (enabled && isAuthenticated) {
-        try {
-          const emailsResponse = await api.get('/users/me/push-emails');
-          setSavedPushEmails(emailsResponse.data.emails || []);
-        } catch (error) {
-          console.error('获取推送邮箱列表失败:', error);
-        }
+        setTimeout(async () => {
+          try {
+            const emailsResponse = await api.get('/users/me/push-emails', {
+              timeout: 5000,
+            });
+            setSavedPushEmails(emailsResponse.data.emails || []);
+          } catch (error: any) {
+            // 静默失败
+            if (error.code !== 'ECONNABORTED' && error.code !== 'ERR_NETWORK' && error.code !== 'ERR_ADDRESS_INVALID') {
+              console.error('获取推送邮箱列表失败:', error);
+            }
+          }
+        }, 500);
       }
-    } catch (error) {
-      console.error('检查邮件推送设置失败:', error);
-      // 即使API调用失败，也尝试设置为false，避免显示按钮
+    } catch (error: any) {
+      // 静默失败，默认禁用
+      if (error.code !== 'ECONNABORTED' && error.code !== 'ERR_NETWORK' && error.code !== 'ERR_ADDRESS_INVALID') {
+        console.error('检查邮件推送设置失败:', error);
+      }
       setEmailPushEnabled(false);
     }
   };
 
   const fetchBook = async () => {
     try {
-      const response = await api.get(`/books/${bookId}`);
+      setLoading(true);
+      const response = await api.get(`/books/${bookId}`, {
+        timeout: 5000, // 5秒超时
+      });
+      
+      // 验证响应数据
+      if (!response.data) {
+        throw new Error('响应数据为空');
+      }
+      
       const bookData = response.data.book;
       const formatsData = response.data.formats || [];
+      
+      // 验证书籍数据是否存在
+      if (!bookData) {
+        console.error('书籍数据不存在:', response.data);
+        throw new Error('书籍数据不存在');
+      }
       
       setBook(bookData);
       setFormats(formatsData);
@@ -211,7 +270,7 @@ export default function BookDetailModal({ bookId, isOpen, onClose, onBookUpdated
       
       // 默认选中epub格式（如果有），否则选中第一个格式
       if (!selectedFormatId && formatsData.length > 0) {
-        const epubFormat = formatsData.find((f: BookDetail) => f.file_type.toLowerCase() === 'epub');
+        const epubFormat = formatsData.find((f: BookDetail) => f.file_type && f.file_type.toLowerCase() === 'epub');
         if (epubFormat) {
           setSelectedFormatId(epubFormat.id);
         } else {
@@ -220,80 +279,94 @@ export default function BookDetailModal({ bookId, isOpen, onClose, onBookUpdated
       }
       
       // 如果没有封面且是EPUB或PDF格式，自动尝试提取封面
-      const needsExtraction = !bookData.cover_url || 
-                             bookData.cover_url === 'cover' || 
-                             bookData.cover_url === 'pdf-cover';
-      
-      if (isAuthenticated && 
-          needsExtraction &&
-          !autoExtractAttempted &&
-          (bookData.file_type === 'epub' || bookData.file_type === 'pdf')) {
-        setAutoExtractAttempted(true);
-        handleExtractCover();
+      if (bookData && bookData.file_type) {
+        const needsExtraction = !bookData.cover_url || 
+                               bookData.cover_url === 'cover' || 
+                               bookData.cover_url === 'pdf-cover';
+        
+        if (isAuthenticated && 
+            needsExtraction &&
+            !autoExtractAttempted &&
+            (bookData.file_type.toLowerCase() === 'epub' || bookData.file_type.toLowerCase() === 'pdf')) {
+          setAutoExtractAttempted(true);
+          handleExtractCover();
+        }
       }
     } catch (error: any) {
       console.error('获取书籍详情失败:', error);
-      toast.error('获取书籍详情失败');
-      onClose();
+      
+      // 如果是网络错误，静默处理，不关闭模态框
+      if (error.code === 'ECONNABORTED' || error.code === 'ERR_NETWORK' || error.code === 'ERR_ADDRESS_INVALID') {
+        // 网络错误，使用缓存数据或显示友好提示
+        if (book) {
+          // 如果有缓存数据，继续使用
+          console.log('网络错误，使用缓存数据');
+        } else {
+          toast.error(t('bookDetail.networkError') || '网络连接失败，请检查网络设置');
+        }
+      } else {
+        toast.error(t('bookDetail.fetchBookFailed'));
+        onClose();
+      }
     } finally {
       setLoading(false);
     }
   };
 
   const buildNotesMarkdown = (bookInfo: BookDetail, notes: any[], highlights: any[]) => {
-    const title = bookInfo.title || '未命名书籍';
+    const title = bookInfo.title || t('bookDetail.unknownBook');
     const author = bookInfo.author || '';
-    const now = new Date().toLocaleString('zh-CN');
+    const now = new Date().toLocaleString(i18n.language === 'zh' ? 'zh-CN' : 'en-US');
 
     const md: string[] = [];
-    md.push(`# ${title} [笔记]`);
-    if (author) md.push(`- 作者：${author}`);
-    md.push(`- 导出时间：${now}`);
+    md.push(`# ${title} [${t('bookDetail.notes')}]`);
+    if (author) md.push(`- ${t('book.author')}：${author}`);
+    md.push(`- ${t('bookDetail.exportTime')}：${now}`);
     md.push('');
     md.push('---');
     md.push('');
 
-    md.push('## 高亮');
+    md.push(`## ${t('bookDetail.highlights')}`);
     if (!highlights?.length) {
       md.push('');
-      md.push('（无高亮）');
+      md.push(t('bookDetail.noHighlights'));
     } else {
       md.push('');
       highlights
         .filter((h: any) => !h.deleted_at)
         .forEach((h: any, idx: number) => {
           const text = (h.selected_text || '').toString().trim();
-          md.push(`- ${idx + 1}. ${text ? text : '（无文本）'}`);
+          md.push(`- ${idx + 1}. ${text ? text : t('bookDetail.noText')}`);
         });
     }
 
     md.push('');
-    md.push('## 笔记');
+    md.push(`## ${t('bookDetail.notes')}`);
     if (!notes?.length) {
       md.push('');
-      md.push('（无笔记）');
+      md.push(t('bookDetail.noNotes'));
     } else {
       md.push('');
       notes.forEach((n: any, idx: number) => {
         const content = (n.content || '').toString().trim();
         const sel = (n.selected_text || '').toString().trim();
-        const page = n.page_number != null ? `第${n.page_number}页` : '';
-        const chapter = n.chapter_index != null ? `章节${n.chapter_index}` : '';
+        const page = n.page_number != null ? t('bookDetail.page', { page: n.page_number }) : '';
+        const chapter = n.chapter_index != null ? t('bookDetail.chapter', { chapter: n.chapter_index }) : '';
         const loc = [chapter, page].filter(Boolean).join(' / ');
-        md.push(`### ${idx + 1}. ${loc || '位置未知'}`);
+        md.push(`### ${idx + 1}. ${loc || t('bookDetail.locationUnknown')}`);
         if (sel) {
           md.push('');
           md.push(`> ${sel.replace(/\n/g, '\n> ')}`);
         }
         md.push('');
-        md.push(content || '（空）');
+        md.push(content || t('bookDetail.empty'));
         md.push('');
       });
     }
 
     md.push('---');
     md.push('');
-    md.push('> 由 读士私人书库（ReadKnows）自动导出');
+    md.push(`> ${t('bookDetail.exportedBy')}`);
     md.push('');
     return md.join('\n');
   };
@@ -322,7 +395,7 @@ export default function BookDetailModal({ bookId, isOpen, onClose, onBookUpdated
 
   const handleExportNotesMarkdown = async () => {
     if (!isAuthenticated) {
-      toast.error('请先登录');
+      toast.error(t('bookDetail.pleaseLogin'));
       return;
     }
     if (!book) return;
@@ -330,21 +403,21 @@ export default function BookDetailModal({ bookId, isOpen, onClose, onBookUpdated
     try {
       const { notes, highlights } = await fetchNotesAndHighlights();
       const md = buildNotesMarkdown(book, notes, highlights);
-      const safeName = `${book.title || '未命名书籍'}-笔记.md`.replace(/[\\/:*?"<>|]/g, '_');
+      const safeName = `${book.title || t('bookDetail.unknownBook')}-笔记.md`.replace(/[\\/:*?"<>|]/g, '_');
       downloadTextFile(safeName, md);
-      toast.success('已导出 Markdown');
+      toast.success(t('bookDetail.exportedMarkdown'));
     } catch (e: any) {
       console.error('导出笔记失败:', e);
-      toast.error(e?.response?.data?.error || e?.message || '导出失败');
+      toast.error(e?.response?.data?.error || e?.message || t('bookDetail.exportFailed'));
     } finally {
       setExportingNotes(false);
     }
   };
 
-  // 导出为 Markdown 并上传为“我的私人书籍”
+  // 导出为 Markdown 并上传为"我的私人书籍"
   const handleExportAndCreatePrivateBook = async () => {
     if (!isAuthenticated) {
-      toast.error('请先登录');
+      toast.error(t('bookDetail.pleaseLogin'));
       return;
     }
     if (!book) return;
@@ -352,7 +425,7 @@ export default function BookDetailModal({ bookId, isOpen, onClose, onBookUpdated
     try {
       const { notes, highlights } = await fetchNotesAndHighlights();
       const md = buildNotesMarkdown(book, notes, highlights);
-      const baseTitle = `${book.title || '未命名书籍'}[笔记]`;
+      const baseTitle = `${book.title || t('bookDetail.unknownBook')}[笔记]`;
       const fileName = `${baseTitle}.md`.replace(/[\\/:*?"<>|]/g, '_');
       const file = new File([md], fileName, { type: 'text/markdown;charset=utf-8' });
 
@@ -365,11 +438,12 @@ export default function BookDetailModal({ bookId, isOpen, onClose, onBookUpdated
       formData.append('title', baseTitle);
       // 作者使用当前登录用户
       if (user?.username) formData.append('author', user.username);
-      // 封面复用原书封面（前端显示时叠加“笔记”角标）
+      // 封面复用原书封面（前端显示时叠加"笔记"角标）
       if (book.cover_url) formData.append('coverUrl', book.cover_url);
 
       const uploadRes = await api.post('/books/upload', formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
+        timeout: 600000, // 10分钟超时，适用于大文件上传
       });
 
       // 兜底：确保加入书架
@@ -391,12 +465,12 @@ export default function BookDetailModal({ bookId, isOpen, onClose, onBookUpdated
       }
       window.dispatchEvent(new CustomEvent('__books_changed'));
 
-      toast.success('已生成并添加到我的书架（私有 / 笔记）');
+      toast.success(t('bookDetail.generatedAndAdded'));
       // 刷新当前模态数据
       onBookUpdated?.();
     } catch (e: any) {
       console.error('生成私人笔记书失败:', e);
-      toast.error(e?.response?.data?.error || e?.message || '生成失败');
+      toast.error(e?.response?.data?.error || e?.message || t('bookDetail.generateFailed'));
     } finally {
       setCreatingNoteBook(false);
     }
@@ -405,11 +479,17 @@ export default function BookDetailModal({ bookId, isOpen, onClose, onBookUpdated
   const checkShelf = async () => {
     if (!isAuthenticated || !bookId) return;
     try {
-      const response = await api.get('/shelf/my');
+      const response = await api.get('/shelf/my', {
+        timeout: 5000, // 5秒超时
+      });
       const shelfBooks = response.data.books || [];
       setInShelf(shelfBooks.some((b: any) => b.id === bookId));
-    } catch (error) {
-      console.error('检查书架状态失败:', error);
+    } catch (error: any) {
+      // 静默失败，不影响使用
+      if (error.code !== 'ECONNABORTED' && error.code !== 'ERR_NETWORK' && error.code !== 'ERR_ADDRESS_INVALID') {
+        console.error('检查书架状态失败:', error);
+      }
+      setInShelf(false);
     }
   };
 
@@ -417,7 +497,7 @@ export default function BookDetailModal({ bookId, isOpen, onClose, onBookUpdated
     if (!isAuthenticated || !book) return;
     try {
       if (inShelf) {
-        await api.delete(`/shelf/remove/${bookId}`);
+        await api.post(`/shelf/remove/${bookId}`, { _method: 'DELETE' });
         setInShelf(false);
         toast.success('已从书架移除');
       } else {
@@ -456,15 +536,35 @@ export default function BookDetailModal({ bookId, isOpen, onClose, onBookUpdated
       
       if (!isCached) {
         // 显示下载提示
-        toast.loading('正在下载书籍到本地...', { id: 'downloading-book' });
+        toast.loading(t('bookDetail.downloading'), { id: 'downloading-book' });
         
         try {
           // 下载并缓存
           await offlineStorage.downloadBook(readingBook.id, ext, serverUrl);
-          toast.success('书籍已下载到本地，可以离线阅读', { id: 'downloading-book' });
+          toast.success(t('bookDetail.downloaded'), { id: 'downloading-book' });
+
+          // 记录书籍下载日志
+          try {
+            await api.post('/logs', {
+              action_type: 'book_download',
+              action_category: 'book',
+              description: `下载书籍《${book.title}》(${readingBook.file_name})`,
+              metadata: {
+                book_id: readingBook.id,
+                book_title: book.title,
+                book_author: book.author,
+                file_name: readingBook.file_name,
+                file_type: ext,
+                file_size: readingBook.file_size,
+              }
+            });
+          } catch (logError) {
+            console.warn('[书籍下载] 记录日志失败:', logError);
+            // 不影响下载功能
+          }
         } catch (error: any) {
           console.error('下载书籍失败:', error);
-          toast.error('下载失败，将使用在线模式', { id: 'downloading-book' });
+          toast.error(t('bookDetail.downloadFailed'), { id: 'downloading-book' });
         }
       }
     } catch (error) {
@@ -506,7 +606,7 @@ export default function BookDetailModal({ bookId, isOpen, onClose, onBookUpdated
       if (response.data.cover_url) {
         setBook({ ...currentBook, cover_url: response.data.cover_url });
         if (!loading) {
-          toast.success('封面提取成功');
+          toast.success(t('bookDetail.coverExtracted'));
         }
         await fetchBook();
         if (onBookUpdated) {
@@ -515,7 +615,7 @@ export default function BookDetailModal({ bookId, isOpen, onClose, onBookUpdated
       } else {
         console.warn('[提取封面] 未返回封面URL');
         if (!loading) {
-          toast.error('封面提取失败：未返回封面URL');
+          toast.error(t('bookDetail.noCoverUrl'));
         }
         setExtractCoverFailed(true);
       }
@@ -594,8 +694,10 @@ export default function BookDetailModal({ bookId, isOpen, onClose, onBookUpdated
       
       // 如果两次点击间隔小于300ms，认为是双击
       if (timeSinceLastTap < 300 && timeSinceLastTap > 0) {
-        e.preventDefault(); // 防止触发单击事件
-        handleCoverDoubleClick();
+        // 使用 setTimeout 延迟处理，避免与单击事件冲突
+        setTimeout(() => {
+          handleCoverDoubleClick();
+        }, 0);
         lastTapTimeRef.current = 0; // 重置
       } else {
         lastTapTimeRef.current = currentTime;
@@ -628,9 +730,9 @@ export default function BookDetailModal({ bookId, isOpen, onClose, onBookUpdated
       setDoubanResults(response.data.results || []);
       
       if (response.data.results.length === 0) {
-        toast.error('未找到相关书籍信息');
+        toast.error(t('bookDetail.noDoubanInfo'));
       } else {
-        toast.success(`找到 ${response.data.results.length} 条相关书籍信息`);
+        toast.success(t('bookDetail.foundDoubanInfo', { count: response.data.results.length }));
       }
     } catch (error: any) {
       console.error('获取豆瓣信息失败:', error);
@@ -711,12 +813,12 @@ export default function BookDetailModal({ bookId, isOpen, onClose, onBookUpdated
     if (file) {
       // 检查文件类型
       if (!file.type.startsWith('image/')) {
-        toast.error('请选择图片文件');
+        toast.error(t('bookDetail.selectImageFile') || '请选择图片文件');
         return;
       }
       // 检查文件大小（限制5MB）
       if (file.size > 5 * 1024 * 1024) {
-        toast.error('图片文件不能超过5MB');
+        toast.error(t('bookDetail.imageSizeLimit') || '图片文件不能超过5MB');
         return;
       }
       setCoverFile(file);
@@ -813,12 +915,12 @@ export default function BookDetailModal({ bookId, isOpen, onClose, onBookUpdated
     if (!bookId) return;
 
     if (coverUploadMode === 'file' && !coverFile) {
-      toast.error('请选择图片文件');
+      toast.error(t('bookDetail.selectImageFile') || '请选择图片文件');
       return;
     }
 
     if (coverUploadMode === 'url' && !coverUrl.trim()) {
-      toast.error('请输入图片URL');
+      toast.error(t('bookDetail.enterImageUrl') || '请输入图片URL');
       return;
     }
 
@@ -838,9 +940,10 @@ export default function BookDetailModal({ bookId, isOpen, onClose, onBookUpdated
           headers: {
             'Content-Type': 'multipart/form-data',
           },
+          timeout: 300000, // 5分钟超时，适用于封面上传
         });
         
-        toast.success('封面上传成功');
+        toast.success(t('bookDetail.coverUploadSuccess') || '封面上传成功');
         await fetchBook();
         if (onBookUpdated) {
           onBookUpdated();
@@ -851,7 +954,7 @@ export default function BookDetailModal({ bookId, isOpen, onClose, onBookUpdated
           imageUrl: coverUrl,
         });
         
-        toast.success('封面下载成功');
+        toast.success(t('bookDetail.coverDownloadSuccess') || '封面下载成功');
         await fetchBook();
         if (onBookUpdated) {
           onBookUpdated();
@@ -864,7 +967,7 @@ export default function BookDetailModal({ bookId, isOpen, onClose, onBookUpdated
       setCoverPreview(null);
     } catch (error: any) {
       console.error('上传封面失败:', error);
-      toast.error(error.response?.data?.error || '上传封面失败');
+      toast.error(error.response?.data?.error || t('bookDetail.coverExtractFailed') || '上传封面失败');
     } finally {
       setUploadingCover(false);
     }
@@ -928,7 +1031,7 @@ export default function BookDetailModal({ bookId, isOpen, onClose, onBookUpdated
   const handleDelete = async () => {
     setShowDeleteConfirm(false);
     try {
-      await api.delete(`/books/${bookId}`);
+      await api.post(`/books/${bookId}`, { _method: 'DELETE' });
       toast.success('删除成功');
       onClose();
       if (onBookUpdated) {
@@ -950,7 +1053,7 @@ export default function BookDetailModal({ bookId, isOpen, onClose, onBookUpdated
         ...editForm,
         cover_url: editForm.cover_url === '' ? null : editForm.cover_url,
       };
-      await api.put(`/books/${bookId}`, updateData);
+      await api.post(`/books/${bookId}`, { _method: 'PUT', ...updateData });
       toast.success('保存成功');
       setShowEditModal(false);
       await fetchBook();
@@ -972,6 +1075,83 @@ export default function BookDetailModal({ bookId, isOpen, onClose, onBookUpdated
   const canPush = () => {
     if (!isAuthenticated || !user) return false;
     return emailPushEnabled;
+  };
+
+  // 获取群组和用户列表（用于分享和可见性设置）
+  const fetchGroupsAndUsers = async () => {
+    try {
+      // 获取用户的群组列表
+      const groupsResponse = await api.get('/groups');
+      setAvailableGroups(groupsResponse.data.groups || []);
+
+      // 如果是管理员，获取所有用户列表
+      if (user?.role === 'admin') {
+        const usersResponse = await api.get('/users');
+        setAvailableUsers(usersResponse.data.users || []);
+      }
+    } catch (error: any) {
+      console.error('获取群组和用户列表失败:', error);
+    }
+  };
+
+  // 获取书籍的群组可见性信息
+  const fetchGroupVisibility = async () => {
+    if (!bookId) return;
+    try {
+      const response = await api.get(`/books/${bookId}/group-visibility`);
+      setGroupVisibility({
+        groupOnly: response.data.groupOnly || false,
+        groupIds: (response.data.groups || []).map((g: any) => g.group_id),
+      });
+    } catch (error: any) {
+      console.error('获取群组可见性失败:', error);
+      setGroupVisibility({ groupOnly: false, groupIds: [] });
+    }
+  };
+
+  // 分享书籍
+  const handleShare = async () => {
+    if (!bookId || (!shareForm.toUserId && !shareForm.toGroupId)) {
+      toast.error(t('book.shareTargetRequired') || '请选择要分享给的用户或群组');
+      return;
+    }
+
+    setSharing(true);
+    try {
+      await api.post('/book-shares', {
+        bookId,
+        ...shareForm,
+      });
+      toast.success(t('book.shareSuccess') || '书籍分享成功');
+      setShowShareModal(false);
+      setShareForm({ toUserId: '', toGroupId: '', permission: 'read' });
+    } catch (error: any) {
+      console.error('分享书籍失败:', error);
+      toast.error(error.response?.data?.error || t('book.shareFailed') || '分享书籍失败');
+    } finally {
+      setSharing(false);
+    }
+  };
+
+  // 保存群组可见性设置
+  const handleSaveGroupVisibility = async () => {
+    if (!bookId) return;
+
+    setSavingVisibility(true);
+    try {
+      await api.post(`/books/${bookId}/group-visibility`, {
+        groupOnly: groupVisibility.groupOnly,
+        groupIds: groupVisibility.groupIds,
+      });
+      toast.success(t('book.visibilitySaved') || '群组可见性设置成功');
+      setShowGroupVisibilityModal(false);
+      fetchBook(); // 刷新书籍信息
+    } catch (error: any) {
+      console.error('保存群组可见性失败:', error);
+      toast.error(error.response?.data?.error || t('book.visibilitySaveFailed') || '保存群组可见性失败');
+    } finally {
+      setSavingVisibility(false);
+    }
   };
 
   if (!isOpen) return null;
@@ -1052,15 +1232,17 @@ export default function BookDetailModal({ bookId, isOpen, onClose, onBookUpdated
             top: 0,
             // 安全区域适配：左右 padding 考虑安全区域
             // PWA 模式下，顶部也需要额外的安全区域 padding，确保标题栏不被遮挡
+            // 使用 clamp 限制安全区域的最大值，避免容器高度过高
             paddingLeft: 'max(env(safe-area-inset-left, 0px), 24px)',
             paddingRight: 'max(env(safe-area-inset-right, 0px), 24px)',
             paddingTop: isPWA 
-              ? 'max(env(safe-area-inset-top, 0px), 16px)'
-              : '16px',
-            paddingBottom: '16px',
+              ? 'max(clamp(10px, env(safe-area-inset-top, 10px), 30px), 10px)'
+              : '10px',
+            paddingBottom: '10px',
+            minHeight: 'auto', // 确保高度由内容决定
           }}
         >
-          <h2 className="text-xl font-bold text-gray-900 dark:text-gray-100">书籍详情</h2>
+          <h2 className="text-xl font-bold text-gray-900 dark:text-gray-100">{t('bookDetail.title')}</h2>
           <button
             onClick={onClose}
             className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
@@ -1100,6 +1282,7 @@ export default function BookDetailModal({ bookId, isOpen, onClose, onBookUpdated
                           src={coverUrl}
                           alt={book.title}
                           className="w-full h-full object-contain rounded-lg"
+                          onContextMenu={(e) => e.preventDefault()}
                           style={{
                             maxWidth: '100%',
                             maxHeight: '100%',
@@ -1150,7 +1333,7 @@ export default function BookDetailModal({ bookId, isOpen, onClose, onBookUpdated
                         onTouchMove={handleTouchMove}
                         onTouchEnd={handleTouchEnd}
                         onTouchCancel={handleTouchCancel}
-                        title={isAuthenticated && (user?.role === 'admin' || book.uploader_id === user?.id) ? '双击或长按上传封面' : ''}
+                        title={isAuthenticated && (user?.role === 'admin' || book.uploader_id === user?.id) ? t('book.doubleClickUploadCover') : ''}
                       >
                         <div className="w-full h-full bg-gradient-to-br from-gray-50 via-white to-gray-50 dark:from-gray-800 dark:via-gray-700 dark:to-gray-800 rounded-lg overflow-hidden shadow-md ring-1 ring-white dark:ring-gray-800 flex items-center justify-center p-1">
                           {(() => {
@@ -1204,12 +1387,12 @@ export default function BookDetailModal({ bookId, isOpen, onClose, onBookUpdated
                               {book.is_public === 1 ? (
                                 <>
                                   <Globe className="w-3 h-3 text-green-600 dark:text-green-400" />
-                                  <span className="font-semibold text-green-700 dark:text-green-300 text-xs">公开</span>
+                                  <span className="font-semibold text-green-700 dark:text-green-300 text-xs">{t('book.public')}</span>
                                 </>
                               ) : (
                                 <>
                                   <Lock className="w-3 h-3 text-orange-600 dark:text-orange-400" />
-                                  <span className="font-semibold text-orange-700 dark:text-orange-300 text-xs">私有</span>
+                                  <span className="font-semibold text-orange-700 dark:text-orange-300 text-xs">{t('book.private')}</span>
                                 </>
                               )}
                             </div>
@@ -1224,7 +1407,7 @@ export default function BookDetailModal({ bookId, isOpen, onClose, onBookUpdated
                     </h1>
                     <div className="hidden md:flex items-center gap-2 md:gap-3 flex-wrap mb-2 md:mb-3">
                       <p className="text-sm md:text-lg lg:text-xl text-gray-600 dark:text-gray-400 font-medium">
-                        {book.author || '未知作者'}
+                        {book.author || t('book.unknownAuthor')}
                       </p>
                       {book.rating && (
                         <div className="flex items-center gap-1 md:gap-1.5 px-2 md:px-3 py-0.5 md:py-1 bg-gradient-to-r from-yellow-50 to-yellow-100 dark:from-yellow-900/30 dark:to-yellow-800/30 rounded-lg border border-yellow-200 dark:border-yellow-800/50 shadow-sm">
@@ -1248,12 +1431,12 @@ export default function BookDetailModal({ bookId, isOpen, onClose, onBookUpdated
                           {book.is_public === 1 ? (
                             <>
                               <Globe className="w-3 h-3 md:w-4 md:h-4 text-green-600 dark:text-green-400" />
-                              <span className="font-semibold text-green-700 dark:text-green-300 text-xs md:text-sm">公开</span>
+                              <span className="font-semibold text-green-700 dark:text-green-300 text-xs md:text-sm">{t('book.public')}</span>
                             </>
                           ) : (
                             <>
                               <Lock className="w-3 h-3 md:w-4 md:h-4 text-orange-600 dark:text-orange-400" />
-                              <span className="font-semibold text-orange-700 dark:text-orange-300 text-xs md:text-sm">私有</span>
+                              <span className="font-semibold text-orange-700 dark:text-orange-300 text-xs md:text-sm">{t('book.private')}</span>
                             </>
                           )}
                         </div>
@@ -1273,29 +1456,18 @@ export default function BookDetailModal({ bookId, isOpen, onClose, onBookUpdated
                       <div className="text-xs text-gray-400 dark:text-gray-500 mb-1.5 md:mb-3">
                         {(book.uploader_nickname || book.uploader_username) && (
                           <span className="text-gray-500 dark:text-gray-400">
-                            {book.uploader_nickname || book.uploader_username}
+                            {t('book.uploadUser')}: {book.uploader_nickname || book.uploader_username}
                           </span>
                         )}
                         {(book.uploader_nickname || book.uploader_username) && (book.created_at || book.file_size) && <span> · </span>}
                         {book.created_at && (
-                          <span>上传时间: {new Date(book.created_at).toLocaleString('zh-CN', {
+                          <span>{t('book.uploadTime')}: {new Date(book.created_at).toLocaleDateString(i18n.language === 'zh' ? 'zh-CN' : 'en-US', {
                             year: 'numeric',
                             month: 'short',
-                            day: 'numeric',
-                            hour: '2-digit',
-                            minute: '2-digit'
+                            day: 'numeric'
                           })}</span>
                         )}
-                        {book.created_at && book.file_size && <span> · </span>}
-                        {book.file_size && (
-                          <span>文件大小: {(() => {
-                            const size = book.file_size;
-                            if (size < 1024) return `${size} B`;
-                            if (size < 1024 * 1024) return `${(size / 1024).toFixed(2)} KB`;
-                            if (size < 1024 * 1024 * 1024) return `${(size / (1024 * 1024)).toFixed(2)} MB`;
-                            return `${(size / (1024 * 1024 * 1024)).toFixed(2)} GB`;
-                          })()}</span>
-                        )}
+
                       </div>
                     )}
                   </div>
@@ -1307,7 +1479,7 @@ export default function BookDetailModal({ bookId, isOpen, onClose, onBookUpdated
                     {isAuthenticated && formats.filter((f: BookDetail) => f.file_type.toLowerCase() !== 'mobi').length > 1 && (
                       <div className="bg-gradient-to-r from-blue-50 via-purple-50 to-pink-50 dark:from-blue-900/20 dark:via-purple-900/20 dark:to-pink-900/20 rounded-lg p-3 border border-blue-200 dark:border-blue-800">
                         <label className="block text-xs font-medium mb-1.5 text-gray-700 dark:text-gray-300">
-                          选择阅读格式：
+                          {t('book.selectReadingFormatLabel')}
                         </label>
                         <div className="flex flex-wrap gap-1.5">
                           {formats.filter((f: BookDetail) => f.file_type.toLowerCase() !== 'mobi').map((format) => (
@@ -1327,114 +1499,141 @@ export default function BookDetailModal({ bookId, isOpen, onClose, onBookUpdated
                       </div>
                     )}
                     
-                    {/* 主要操作按钮 - 开始阅读按钮醒目 */}
-                    <button
-                      onClick={handleStartReading}
-                      className="w-full bg-gradient-to-r from-blue-600 via-blue-500 to-purple-600 hover:from-blue-700 hover:via-blue-600 hover:to-purple-700 text-white font-semibold text-sm md:text-base py-3 md:py-4 rounded-lg shadow-md hover:shadow-lg transition-all duration-300 transform hover:scale-[1.01] active:scale-[0.99] flex items-center justify-center gap-2"
-                    >
-                      <BookOpen className="w-4 h-4 md:w-5 md:h-5" />
-                      <span>开始阅读{formats.length > 1 && selectedFormatId ? ` (${formats.find(f => f.id === selectedFormatId)?.file_type.toUpperCase()})` : ''}</span>
-                    </button>
+
                     
                     {/* 其他操作按钮 - 非扁平化设计 */}
                     {isAuthenticated && (
-                      <div className={`grid gap-1.5 md:gap-2 ${canDelete() ? 'grid-cols-6' : 'grid-cols-5'}`}>
+                      <div className="grid gap-1.5 md:gap-2 grid-cols-5 md:grid-cols-10">
                         {inShelf ? (
                           <button
                             onClick={handleToggleShelf}
                             className="group bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 hover:border-red-300 dark:hover:border-red-700 text-gray-700 dark:text-gray-300 hover:text-red-600 dark:hover:text-red-400 rounded-lg py-2 md:py-2.5 flex flex-col items-center justify-center gap-1 transition-all duration-200 hover:shadow-sm"
-                            title="取消收藏"
+                            title={t('book.unfavorite')}
                           >
                             <Heart className="w-3.5 h-3.5 md:w-4 md:h-4 fill-red-500 text-red-500 transition-transform group-hover:scale-110" />
-                            <span className="text-[9px] md:text-[10px] font-medium">已收藏</span>
+                            <span className="text-[9px] md:text-[10px] font-medium">{t('book.favorited')}</span>
                           </button>
                         ) : (
                           <button
                             onClick={handleToggleShelf}
                             className="group bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 hover:border-blue-300 dark:hover:border-blue-700 text-gray-700 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400 rounded-lg py-2 md:py-2.5 flex flex-col items-center justify-center gap-1 transition-all duration-200 hover:shadow-sm"
-                            title="收藏"
+                            title={t('book.favorite')}
                           >
                             <Heart className="w-3.5 h-3.5 md:w-4 md:h-4 transition-transform group-hover:scale-110" />
-                            <span className="text-[9px] md:text-[10px] font-medium">收藏</span>
+                            <span className="text-[9px] md:text-[10px] font-medium">{t('book.favorite')}</span>
                           </button>
                         )}
                         <button
                           onClick={handleDownload}
-                          className="group bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 hover:border-green-300 dark:hover:border-green-700 text-gray-700 dark:text-gray-300 hover:text-green-600 dark:hover:text-green-400 rounded-lg py-2 md:py-2.5 flex flex-col items-center justify-center gap-1 transition-all duration-200 hover:shadow-sm"
-                          title="下载书籍"
+                          disabled={isAuthenticated && user?.can_download === false}
+                          className="group bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 hover:border-green-300 dark:hover:border-green-700 text-gray-700 dark:text-gray-300 hover:text-green-600 dark:hover:text-green-400 rounded-lg py-2 md:py-2.5 flex flex-col items-center justify-center gap-1 transition-all duration-200 hover:shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                          title={isAuthenticated && user?.can_download === false ? (t('book.downloadPermissionDisabled') || '您没有权限下载书籍，请联系管理员开启此权限') : t('book.downloadBook')}
                         >
                           <Download className="w-3.5 h-3.5 md:w-4 md:h-4 transition-transform group-hover:scale-110" />
-                          <span className="text-[9px] md:text-[10px] font-medium">下载</span>
+                          <span className="text-[9px] md:text-[10px] font-medium">{t('book.download')}</span>
                         </button>
                         <button
                           onClick={() => setShowNotesModal(true)}
                           disabled={exportingNotes || creatingNoteBook}
                           className="group bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 hover:border-cyan-300 dark:hover:border-cyan-700 text-gray-700 dark:text-gray-300 hover:text-cyan-600 dark:hover:text-cyan-400 rounded-lg py-2 md:py-2.5 flex flex-col items-center justify-center gap-1 transition-all duration-200 hover:shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                          title="笔记（导出 / 导入为私人书籍）"
+                          title={t('book.notesExport')}
                         >
                           <FileText className={`w-3.5 h-3.5 md:w-4 md:h-4 transition-transform ${(exportingNotes || creatingNoteBook) ? 'animate-pulse' : 'group-hover:scale-110'}`} />
-                          <span className="text-[9px] md:text-[10px] font-medium">笔记</span>
+                          <span className="text-[9px] md:text-[10px] font-medium">{t('book.note')}</span>
                         </button>
                         <button
                           onClick={handleFetchDoubanInfo}
                           disabled={loadingDouban}
                           className="group bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 hover:border-purple-300 dark:hover:border-purple-700 text-gray-700 dark:text-gray-300 hover:text-purple-600 dark:hover:text-purple-400 rounded-lg py-2 md:py-2.5 flex flex-col items-center justify-center gap-1 transition-all duration-200 hover:shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                          title="获取书籍信息"
+                          title={t('book.getBookInfo')}
                         >
                           <Search className={`w-3.5 h-3.5 md:w-4 md:h-4 transition-transform ${loadingDouban ? 'animate-spin' : 'group-hover:scale-110'}`} />
-                          <span className="text-[9px] md:text-[10px] font-medium">信息</span>
+                          <span className="text-[9px] md:text-[10px] font-medium">{t('book.info')}</span>
                         </button>
                         <button
                           onClick={() => {
                             if (!isAuthenticated) {
-                              toast.error('请先登录');
+                              toast.error(t('bookDetail.pleaseLogin'));
+                              return;
+                            }
+                            if (user?.can_push === false) {
+                              toast.error(t('book.pushPermissionDisabled') || '您没有权限推送书籍，请联系管理员开启此权限');
                               return;
                             }
                             if (!emailPushEnabled) {
-                              toast.error('邮件推送功能未启用，请联系管理员在系统设置中启用');
+                              toast.error(t('bookDetail.emailPushNotEnabled'));
                               return;
                             }
                             setShowPushModal(true);
                           }}
-                          disabled={!isAuthenticated || !emailPushEnabled}
+                          disabled={!isAuthenticated || !emailPushEnabled || (isAuthenticated && user?.can_push === false)}
                           className="group bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 hover:border-orange-300 dark:hover:border-orange-700 text-gray-700 dark:text-gray-300 hover:text-orange-600 dark:hover:text-orange-400 rounded-lg py-2 md:py-2.5 flex flex-col items-center justify-center gap-1 transition-all duration-200 hover:shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                          title={!isAuthenticated ? '请先登录' : !emailPushEnabled ? '邮件推送功能未启用' : '推送到Kindle'}
+                          title={!isAuthenticated ? t('bookDetail.pleaseLogin') : (isAuthenticated && user?.can_push === false) ? (t('book.pushPermissionDisabled') || '您没有权限推送书籍') : !emailPushEnabled ? t('bookDetail.emailPushNotEnabled') : t('book.pushToKindle')}
                         >
                           <Send className="w-3.5 h-3.5 md:w-4 md:h-4 transition-transform group-hover:scale-110" />
-                          <span className="text-[9px] md:text-[10px] font-medium">推送</span>
+                          <span className="text-[9px] md:text-[10px] font-medium">{t('book.push')}</span>
                         </button>
+                        {/* 分享按钮 */}
+                        {(user?.role === 'admin' || book?.uploader_id === user?.id) && (
+                          <button
+                            onClick={() => {
+                              fetchGroupsAndUsers();
+                              setShowShareModal(true);
+                            }}
+                            className="group bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 hover:border-blue-300 dark:hover:border-blue-700 text-gray-700 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400 rounded-lg py-2 md:py-2.5 flex flex-col items-center justify-center gap-1 transition-all duration-200 hover:shadow-sm"
+                            title={t('book.share') || '分享书籍'}
+                          >
+                            <Share2 className="w-3.5 h-3.5 md:w-4 md:h-4 transition-transform group-hover:scale-110" />
+                            <span className="text-[9px] md:text-[10px] font-medium">{t('book.share') || '分享'}</span>
+                          </button>
+                        )}
+                        {/* 群组可见性设置按钮 */}
+                        {(user?.role === 'admin' || book?.uploader_id === user?.id) && (
+                          <button
+                            onClick={() => {
+                              fetchGroupsAndUsers();
+                              fetchGroupVisibility();
+                              setShowGroupVisibilityModal(true);
+                            }}
+                            className="group bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 hover:border-purple-300 dark:hover:border-purple-700 text-gray-700 dark:text-gray-300 hover:text-purple-600 dark:hover:text-purple-400 rounded-lg py-2 md:py-2.5 flex flex-col items-center justify-center gap-1 transition-all duration-200 hover:shadow-sm"
+                            title={t('book.groupVisibility') || '群组可见性'}
+                          >
+                            <Eye className="w-3.5 h-3.5 md:w-4 md:h-4 transition-transform group-hover:scale-110" />
+                            <span className="text-[9px] md:text-[10px] font-medium">{t('book.visibility') || '可见性'}</span>
+                          </button>
+                        )}
                         {canDelete() && (
                           <button
                             onClick={() => setShowDeleteConfirm(true)}
                             className="group bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 hover:border-red-300 dark:hover:border-red-700 text-gray-700 dark:text-gray-300 hover:text-red-600 dark:hover:text-red-400 rounded-lg py-2 md:py-2.5 flex flex-col items-center justify-center gap-1 transition-all duration-200 hover:shadow-sm"
-                            title="删除书籍"
+                            title={t('book.deleteBook')}
                           >
                             <Trash2 className="w-3.5 h-3.5 md:w-4 md:h-4 transition-transform group-hover:scale-110" />
-                            <span className="text-[9px] md:text-[10px] font-medium">删除</span>
+                            <span className="text-[9px] md:text-[10px] font-medium">{t('book.delete')}</span>
                           </button>
                         )}
-                      </div>
-                    )}
-                    
-                    {/* 管理按钮（编辑、上传封面等） */}
-                    {(isAuthenticated && (user?.role === 'admin' || book.uploader_id === user?.id)) && (
-                      <div className="grid grid-cols-2 gap-1.5 md:gap-2">
-                        <button
-                          onClick={() => setShowEditModal(true)}
-                          className="group bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 hover:border-yellow-300 dark:hover:border-yellow-700 text-gray-700 dark:text-gray-300 hover:text-yellow-600 dark:hover:text-yellow-400 rounded-lg py-2 flex items-center justify-center gap-1.5 transition-all duration-200 hover:shadow-sm"
-                          title="编辑书籍信息"
-                        >
-                          <Edit className="w-3.5 h-3.5 transition-transform group-hover:scale-110" />
-                          <span className="text-xs font-medium">编辑</span>
-                        </button>
-                        <button
-                          onClick={() => setShowCoverUploadModal(true)}
-                          className="group bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 hover:border-cyan-300 dark:hover:border-cyan-700 text-gray-700 dark:text-gray-300 hover:text-cyan-600 dark:hover:text-cyan-400 rounded-lg py-2 flex items-center justify-center gap-1.5 transition-all duration-200 hover:shadow-sm"
-                          title="上传封面"
-                        >
-                          <Upload className="w-3.5 h-3.5 transition-transform group-hover:scale-110" />
-                          <span className="text-xs font-medium">封面</span>
-                        </button>
+                        {/* 编辑按钮 */}
+                        {(isAuthenticated && (user?.role === 'admin' || book.uploader_id === user?.id) && (user?.can_edit_books !== false)) && (
+                          <button
+                            onClick={() => setShowEditModal(true)}
+                            className="group bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 hover:border-yellow-300 dark:hover:border-yellow-700 text-gray-700 dark:text-gray-300 hover:text-yellow-600 dark:hover:text-yellow-400 rounded-lg py-2 md:py-2.5 flex flex-col items-center justify-center gap-1 transition-all duration-200 hover:shadow-sm"
+                            title={t('book.editBookInfo')}
+                          >
+                            <Edit className="w-3.5 h-3.5 md:w-4 md:h-4 transition-transform group-hover:scale-110" />
+                            <span className="text-[9px] md:text-[10px] font-medium">{t('book.edit')}</span>
+                          </button>
+                        )}
+                        {/* 封面按钮 */}
+                        {(isAuthenticated && (user?.role === 'admin' || book.uploader_id === user?.id) && (user?.can_edit_books !== false)) && (
+                          <button
+                            onClick={() => setShowCoverUploadModal(true)}
+                            className="group bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 hover:border-cyan-300 dark:hover:border-cyan-700 text-gray-700 dark:text-gray-300 hover:text-cyan-600 dark:hover:text-cyan-400 rounded-lg py-2 md:py-2.5 flex flex-col items-center justify-center gap-1 transition-all duration-200 hover:shadow-sm"
+                            title={t('book.uploadCover')}
+                          >
+                            <Upload className="w-3.5 h-3.5 md:w-4 md:h-4 transition-transform group-hover:scale-110" />
+                            <span className="text-[9px] md:text-[10px] font-medium">{t('book.cover')}</span>
+                          </button>
+                        )}
                       </div>
                     )}
                     
@@ -1447,13 +1646,22 @@ export default function BookDetailModal({ bookId, isOpen, onClose, onBookUpdated
                           onClick={handleExtractCover}
                           disabled={extractingCover}
                           className="group bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 hover:border-cyan-300 dark:hover:border-cyan-700 text-gray-700 dark:text-gray-300 hover:text-cyan-600 dark:hover:text-cyan-400 rounded-lg py-2 flex items-center justify-center gap-1.5 transition-all duration-200 hover:shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                          title="提取封面"
+                          title={t('book.extractCoverButton')}
                         >
                           <RefreshCw className={`w-3.5 h-3.5 transition-transform ${extractingCover ? 'animate-spin' : 'group-hover:scale-110'}`} />
-                          <span className="text-xs font-medium">提取封面</span>
+                          <span className="text-xs font-medium">{t('book.extractCoverButton')}</span>
                         </button>
                       </div>
                     )}
+
+                    {/* 主要操作按钮 - 开始阅读按钮醒目 */}
+                    <button
+                      onClick={handleStartReading}
+                      className="w-full bg-gradient-to-r from-blue-600 via-blue-500 to-purple-600 hover:from-blue-700 hover:via-blue-600 hover:to-purple-700 text-white font-semibold text-sm md:text-base py-3 md:py-4 rounded-lg shadow-md hover:shadow-lg transition-all duration-300 transform hover:scale-[1.01] active:scale-[0.99] flex items-center justify-center gap-2"
+                    >
+                      <BookOpen className="w-4 h-4 md:w-5 md:h-5" />
+                      <span>{t('book.startReading')}{formats.length > 1 && selectedFormatId ? ` (${formats.find(f => f.id === selectedFormatId)?.file_type.toUpperCase()})` : ''}</span>
+                    </button>
                 </div>
               </div>
             </div>
@@ -1472,7 +1680,7 @@ export default function BookDetailModal({ bookId, isOpen, onClose, onBookUpdated
                         <Tag className="w-2.5 h-2.5 md:w-4 md:h-4 text-white" />
                       </div>
                       <div className="flex-1 min-w-0">
-                        <div className="text-[9px] md:text-xs font-medium text-gray-500 dark:text-gray-400 mb-0">分类</div>
+                        <div className="text-[9px] md:text-xs font-medium text-gray-500 dark:text-gray-400 mb-0">{t('book.category')}</div>
                         <div className="text-[8px] md:text-sm font-semibold text-gray-900 dark:text-gray-100 truncate leading-tight">
                           {book.category}
                         </div>
@@ -1485,16 +1693,16 @@ export default function BookDetailModal({ bookId, isOpen, onClose, onBookUpdated
                         <Globe className="w-2.5 h-2.5 md:w-4 md:h-4 text-white" />
                       </div>
                       <div className="flex-1 min-w-0">
-                        <div className="text-[9px] md:text-xs font-medium text-gray-500 dark:text-gray-400 mb-0">语言</div>
+                        <div className="text-[9px] md:text-xs font-medium text-gray-500 dark:text-gray-400 mb-0">{t('book.language')}</div>
                         <div className="text-[8px] md:text-sm font-semibold text-gray-900 dark:text-gray-100 leading-tight">
-                          {book.language === 'zh' ? '中文' : 
-                           book.language === 'en' ? 'English' :
-                           book.language === 'ja' ? '日本語' :
-                           book.language === 'ko' ? '한국어' :
-                           book.language === 'fr' ? 'Français' :
-                           book.language === 'de' ? 'Deutsch' :
-                           book.language === 'es' ? 'Español' :
-                           book.language === 'ru' ? 'Русский' : book.language}
+                          {book.language === 'zh' ? t('book.chinese') : 
+                           book.language === 'en' ? t('book.english') :
+                           book.language === 'ja' ? t('book.japanese') :
+                           book.language === 'ko' ? t('book.korean') :
+                           book.language === 'fr' ? t('book.french') :
+                           book.language === 'de' ? t('book.german') :
+                           book.language === 'es' ? t('book.spanish') :
+                           book.language === 'ru' ? t('book.russian') : book.language}
                         </div>
                       </div>
                     </div>
@@ -1505,7 +1713,7 @@ export default function BookDetailModal({ bookId, isOpen, onClose, onBookUpdated
                         <Book className="w-2.5 h-2.5 md:w-4 md:h-4 text-white" />
                       </div>
                       <div className="flex-1 min-w-0">
-                        <div className="text-[9px] md:text-xs font-medium text-gray-500 dark:text-gray-400 mb-0">出版社</div>
+                        <div className="text-[9px] md:text-xs font-medium text-gray-500 dark:text-gray-400 mb-0">{t('book.publisher')}</div>
                         <div className="text-[8px] md:text-sm font-semibold text-gray-500 dark:text-gray-100 line-clamp-2 leading-tight">
                           {book.publisher}
                         </div>
@@ -1518,30 +1726,30 @@ export default function BookDetailModal({ bookId, isOpen, onClose, onBookUpdated
                         <Clock className="w-2.5 h-2.5 md:w-4 md:h-4 text-white" />
                       </div>
                       <div className="flex-1 min-w-0">
-                        <div className="text-[9px] md:text-xs font-medium text-gray-500 dark:text-gray-400 mb-0">出版日期</div>
+                        <div className="text-[9px] md:text-xs font-medium text-gray-500 dark:text-gray-400 mb-0">{t('book.publishDate')}</div>
                         <div className="text-[8px] md:text-sm font-semibold text-gray-900 dark:text-gray-100 leading-tight">
                           {book.publish_date}
                         </div>
                       </div>
                     </div>
                   )}
-                  <div className="group flex items-center gap-1 md:gap-2 p-1.5 md:p-3 bg-gradient-to-br from-indigo-50 via-white to-indigo-50 dark:from-indigo-900/20 dark:via-gray-800 dark:to-indigo-900/20 rounded-lg border border-indigo-100 dark:border-indigo-800/50">
+                  {/* <div className="group flex items-center gap-1 md:gap-2 p-1.5 md:p-3 bg-gradient-to-br from-indigo-50 via-white to-indigo-50 dark:from-indigo-900/20 dark:via-gray-800 dark:to-indigo-900/20 rounded-lg border border-indigo-100 dark:border-indigo-800/50">
                     <div className="flex-shrink-0 w-5 h-5 md:w-8 md:h-8 rounded-lg bg-gradient-to-br from-indigo-500 to-indigo-600 dark:from-indigo-600 dark:to-indigo-700 flex items-center justify-center">
                       <FileText className="w-2.5 h-2.5 md:w-4 md:h-4 text-white" />
                     </div>
                     <div className="flex-1 min-w-0">
-                      <div className="text-[9px] md:text-xs font-medium text-gray-500 dark:text-gray-400 mb-0">ISBN</div>
+                      <div className="text-[9px] md:text-xs font-medium text-gray-500 dark:text-gray-400 mb-0">{t('book.isbn')}</div>
                       <div className="text-[8px] md:text-sm font-semibold text-gray-900 dark:text-gray-100 font-mono leading-tight">
-                        {book.isbn || <span className="text-gray-400 dark:text-gray-500 italic">未设置</span>}
+                        {book.isbn || <span className="text-gray-400 dark:text-gray-500 italic">{t('book.notSet')}</span>}
                       </div>
                     </div>
-                  </div>
+                  </div> */}
                   <div className="group flex items-center gap-1 md:gap-2 p-1.5 md:p-3 bg-gradient-to-br from-gray-50 via-white to-gray-50 dark:from-gray-800 dark:via-gray-800/50 rounded-lg border border-gray-200 dark:border-gray-700">
                     <div className="flex-shrink-0 w-5 h-5 md:w-8 md:h-8 rounded-lg bg-gradient-to-br from-gray-400 to-gray-500 dark:from-gray-600 dark:to-gray-700 flex items-center justify-center">
                       <FileText className="w-2.5 h-2.5 md:w-4 md:h-4 text-white" />
                     </div>
                     <div className="flex-1 min-w-0">
-                      <div className="text-[9px] md:text-xs font-medium text-gray-500 dark:text-gray-400 mb-0">文件格式</div>
+                      <div className="text-[9px] md:text-xs font-medium text-gray-500 dark:text-gray-400 mb-0">{t('book.fileFormat')}</div>
                       <div className="text-[8px] md:text-sm font-semibold text-gray-900 dark:text-gray-100">
                         {formats.length > 1 ? (
                           <div className="flex flex-wrap gap-0.5">
@@ -1568,7 +1776,7 @@ export default function BookDetailModal({ bookId, isOpen, onClose, onBookUpdated
                         <Download className="w-2.5 h-2.5 md:w-4 md:h-4 text-white" />
                       </div>
                       <div className="flex-1 min-w-0">
-                        <div className="text-[9px] md:text-xs font-medium text-gray-500 dark:text-gray-400 mb-0">文件大小</div>
+                        <div className="text-[9px] md:text-xs font-medium text-gray-500 dark:text-gray-400 mb-0">{t('book.fileSize')}</div>
                         <div className="text-[8px] md:text-sm font-semibold text-gray-900 dark:text-gray-100 leading-tight">
                           {(() => {
                             const size = book.file_size;
@@ -1614,16 +1822,36 @@ export default function BookDetailModal({ bookId, isOpen, onClose, onBookUpdated
           className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 backdrop-blur-sm"
           style={{
             // PWA移动端安全区域适配
-            paddingTop: 'max(env(safe-area-inset-top, 0px), 8px)',
-            paddingBottom: 'max(env(safe-area-inset-bottom, 0px), 8px)',
+            paddingTop: typeof window !== 'undefined' && window.innerWidth < 1024
+              ? `max(clamp(20px, env(safe-area-inset-top, 20px), 44px), 8px)`
+              : 'max(env(safe-area-inset-top, 0px), 8px)',
+            paddingBottom: typeof window !== 'undefined' && window.innerWidth < 1024
+              ? `max(clamp(10px, env(safe-area-inset-bottom, 10px), 34px), 8px)`
+              : 'max(env(safe-area-inset-bottom, 0px), 8px)',
             paddingLeft: 'max(env(safe-area-inset-left, 0px), 8px)',
             paddingRight: 'max(env(safe-area-inset-right, 0px), 8px)',
           }}
         >
-          <div className="bg-white dark:bg-gray-800 rounded-lg p-6 max-w-md w-full mx-4">
-            <h3 className="text-lg font-bold mb-4 text-gray-900 dark:text-gray-100">确认删除</h3>
-            <p className="text-gray-600 dark:text-gray-400 mb-6">确定要删除这本书吗？此操作无法撤销。</p>
-            <div className="flex gap-3 justify-end">
+          <div 
+            className="bg-white dark:bg-gray-800 rounded-lg p-6 max-w-md w-full mx-4 flex flex-col"
+            style={{
+              maxHeight: typeof window !== 'undefined' && window.innerWidth < 1024
+                ? `calc(100vh - max(clamp(20px, env(safe-area-inset-top, 20px), 44px), 8px) - max(clamp(10px, env(safe-area-inset-bottom, 10px), 34px), 8px) - ${typeof window !== 'undefined' && window.innerWidth >= 768 ? '64px' : '56px'} - 2rem)`
+                : 'calc(90vh - 2rem)',
+            }}
+          >
+            <div className="flex-1">
+              <h3 className="text-lg font-bold mb-4 text-gray-900 dark:text-gray-100">{t('book.confirmDelete')}</h3>
+              <p className="text-gray-600 dark:text-gray-400 mb-6">{t('book.confirmDeleteMessage')}</p>
+            </div>
+            <div 
+              className="flex gap-3 justify-end flex-shrink-0"
+              style={{
+                paddingTop: typeof window !== 'undefined' && window.innerWidth < 1024
+                  ? `calc(1rem + ${typeof window !== 'undefined' && window.innerWidth >= 768 ? '64px' : '56px'} + clamp(10px, env(safe-area-inset-bottom, 10px), 34px))`
+                  : '1rem'
+              }}
+            >
               <button
                 onClick={() => setShowDeleteConfirm(false)}
                 className="px-4 py-2 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600"
@@ -1634,7 +1862,7 @@ export default function BookDetailModal({ bookId, isOpen, onClose, onBookUpdated
                 onClick={handleDelete}
                 className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700"
               >
-                删除
+                {t('book.delete')}
               </button>
             </div>
           </div>
@@ -1647,21 +1875,28 @@ export default function BookDetailModal({ bookId, isOpen, onClose, onBookUpdated
           className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 backdrop-blur-sm overflow-y-auto"
           style={{
             // PWA移动端安全区域适配
-            paddingTop: 'max(env(safe-area-inset-top, 0px), 16px)',
-            paddingBottom: 'max(env(safe-area-inset-bottom, 0px), 16px)',
+            paddingTop: typeof window !== 'undefined' && window.innerWidth < 1024
+              ? `max(clamp(20px, env(safe-area-inset-top, 20px), 44px), 16px)`
+              : 'max(env(safe-area-inset-top, 0px), 16px)',
+            paddingBottom: typeof window !== 'undefined' && window.innerWidth < 1024
+              ? `max(clamp(10px, env(safe-area-inset-bottom, 10px), 34px), 16px)`
+              : 'max(env(safe-area-inset-bottom, 0px), 16px)',
             paddingLeft: 'max(env(safe-area-inset-left, 0px), 16px)',
             paddingRight: 'max(env(safe-area-inset-right, 0px), 16px)',
           }}
         >
           <div 
-            className="bg-white dark:bg-gray-800 rounded-lg p-6 max-w-2xl w-full overflow-y-auto shadow-2xl"
+            className="bg-white dark:bg-gray-800 rounded-lg p-6 max-w-2xl w-full flex flex-col shadow-2xl"
             style={{
-              // 调整最大高度以考虑安全区域
-              maxHeight: 'calc(100vh - max(env(safe-area-inset-top, 0px), 16px) - max(env(safe-area-inset-bottom, 0px), 16px))',
+              // 调整最大高度以考虑安全区域和底部导航栏
+              maxHeight: typeof window !== 'undefined' && window.innerWidth < 1024
+                ? `calc(100vh - max(clamp(20px, env(safe-area-inset-top, 20px), 44px), 16px) - max(clamp(10px, env(safe-area-inset-bottom, 10px), 34px), 16px) - ${typeof window !== 'undefined' && window.innerWidth >= 768 ? '64px' : '56px'} - 2rem)`
+                : 'calc(100vh - max(env(safe-area-inset-top, 0px), 16px) - max(env(safe-area-inset-bottom, 0px), 16px) - 2rem)',
             }}
           >
+            <div className="flex-1 overflow-y-auto">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-bold text-gray-900 dark:text-gray-100">编辑书籍信息</h3>
+              <h3 className="text-lg font-bold text-gray-900 dark:text-gray-100">{t('book.editBookInfo')}</h3>
               <button
                 onClick={() => setShowEditModal(false)}
                 className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700"
@@ -1674,7 +1909,7 @@ export default function BookDetailModal({ bookId, isOpen, onClose, onBookUpdated
               {/* 基本信息 */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium mb-2 text-gray-900 dark:text-gray-100">标题 *</label>
+                  <label className="block text-sm font-medium mb-2 text-gray-900 dark:text-gray-100">{t('book.titleRequired')}</label>
                   <input
                     type="text"
                     value={editForm.title || ''}
@@ -1684,7 +1919,7 @@ export default function BookDetailModal({ bookId, isOpen, onClose, onBookUpdated
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium mb-2 text-gray-900 dark:text-gray-100">作者</label>
+                  <label className="block text-sm font-medium mb-2 text-gray-900 dark:text-gray-100">{t('book.author')}</label>
                   <input
                     type="text"
                     value={editForm.author || ''}
@@ -1697,7 +1932,7 @@ export default function BookDetailModal({ bookId, isOpen, onClose, onBookUpdated
               {/* 出版信息 */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div>
-                  <label className="block text-sm font-medium mb-2 text-gray-900 dark:text-gray-100">ISBN</label>
+                  <label className="block text-sm font-medium mb-2 text-gray-900 dark:text-gray-100">{t('book.isbn')}</label>
                   <input
                     type="text"
                     value={editForm.isbn || ''}
@@ -1706,7 +1941,7 @@ export default function BookDetailModal({ bookId, isOpen, onClose, onBookUpdated
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium mb-2 text-gray-900 dark:text-gray-100">出版社</label>
+                  <label className="block text-sm font-medium mb-2 text-gray-900 dark:text-gray-100">{t('book.publisher')}</label>
                   <input
                     type="text"
                     value={editForm.publisher || ''}
@@ -1715,7 +1950,7 @@ export default function BookDetailModal({ bookId, isOpen, onClose, onBookUpdated
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium mb-2 text-gray-900 dark:text-gray-100">出版日期</label>
+                  <label className="block text-sm font-medium mb-2 text-gray-900 dark:text-gray-100">{t('book.publishDate')}</label>
                   <input
                     type="text"
                     value={editForm.publish_date || ''}
@@ -1729,16 +1964,16 @@ export default function BookDetailModal({ bookId, isOpen, onClose, onBookUpdated
               {/* 分类信息 */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div>
-                  <label className="block text-sm font-medium mb-2 text-gray-900 dark:text-gray-100">分类</label>
+                  <label className="block text-sm font-medium mb-2 text-gray-900 dark:text-gray-100">{t('book.category')}</label>
                   <CategoryCombobox
-                    value={editForm.category || '未分类'}
+                    value={editForm.category || t('book.uncategorized')}
                     onChange={(value) => setEditForm({ ...editForm, category: value })}
                     categories={bookCategories}
-                    placeholder="选择或输入书籍分类"
+                    placeholder={t('book.selectOrEnterCategory')}
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium mb-2 text-gray-900 dark:text-gray-100">语言</label>
+                  <label className="block text-sm font-medium mb-2 text-gray-900 dark:text-gray-100">{t('book.language')}</label>
                   <input
                     type="text"
                     value={editForm.language || ''}
@@ -1747,7 +1982,7 @@ export default function BookDetailModal({ bookId, isOpen, onClose, onBookUpdated
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium mb-2 text-gray-900 dark:text-gray-100">评分</label>
+                  <label className="block text-sm font-medium mb-2 text-gray-900 dark:text-gray-100">{t('book.rating')}</label>
                   <input
                     type="number"
                     step="0.1"
@@ -1762,59 +1997,67 @@ export default function BookDetailModal({ bookId, isOpen, onClose, onBookUpdated
 
               {/* 封面图片地址 */}
               <div>
-                <label className="block text-sm font-medium mb-2 text-gray-900 dark:text-gray-100">封面图片地址</label>
+                <label className="block text-sm font-medium mb-2 text-gray-900 dark:text-gray-100">{t('book.coverImageUrl')}</label>
                 <input
                   type="text"
                   value={editForm.cover_url || ''}
                   onChange={(e) => setEditForm({ ...editForm, cover_url: e.target.value })}
-                  placeholder="例如：/books/xxx/cover.jpg 或 https://example.com/cover.jpg"
+                  placeholder={t('book.coverImageUrlPlaceholder')}
                   className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
                 />
                 <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                  可以是本地路径（/books/...）或在线图片URL（http://...）
+                  {t('book.coverImageUrlHint')}
                 </p>
               </div>
 
               {/* 标签 */}
               <div>
-                <label className="block text-sm font-medium mb-2 text-gray-900 dark:text-gray-100">标签</label>
+                <label className="block text-sm font-medium mb-2 text-gray-900 dark:text-gray-100">{t('book.tags')}</label>
                 <input
                   type="text"
                   value={editForm.tags || ''}
                   onChange={(e) => setEditForm({ ...editForm, tags: e.target.value })}
-                  placeholder="多个标签用逗号分隔"
+                  placeholder={t('book.tagsPlaceholder')}
                   className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
                 />
-                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">例如：科幻, 小说, 刘慈欣</p>
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">{t('book.tagsExample')}</p>
               </div>
 
               {/* 描述 */}
               <div>
-                <label className="block text-sm font-medium mb-2 text-gray-900 dark:text-gray-100">简介/描述</label>
+                <label className="block text-sm font-medium mb-2 text-gray-900 dark:text-gray-100">{t('book.description')}</label>
                 <textarea
                   value={editForm.description || ''}
                   onChange={(e) => setEditForm({ ...editForm, description: e.target.value })}
-                  rows={8}
-                  placeholder="请输入书籍的详细简介或描述..."
+                  rows={3}
+                  placeholder={t('book.descriptionPlaceholder')}
                   className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
                 />
-                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">支持多行文本，建议详细描述书籍内容</p>
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">{t('book.descriptionHint')}</p>
               </div>
             </div>
+            </div>
 
-            <div className="flex gap-3 justify-end mt-6">
+            <div 
+              className="flex gap-3 justify-end mt-6 flex-shrink-0"
+              style={{
+                paddingTop: typeof window !== 'undefined' && window.innerWidth < 1024
+                  ? `calc(1rem + ${typeof window !== 'undefined' && window.innerWidth >= 768 ? '64px' : '56px'} + clamp(10px, env(safe-area-inset-bottom, 10px), 34px))`
+                  : '1rem'
+              }}
+            >
               <button
                 onClick={() => setShowEditModal(false)}
                 className="px-4 py-2 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600"
               >
-                取消
+                {t('common.cancel')}
               </button>
               <button
                 onClick={handleSaveEdit}
                 disabled={savingEdit}
                 className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
               >
-                {savingEdit ? '保存中...' : '保存'}
+                {savingEdit ? t('book.saving') : t('common.save')}
               </button>
             </div>
           </div>
@@ -1837,9 +2080,9 @@ export default function BookDetailModal({ bookId, isOpen, onClose, onBookUpdated
           >
             <div className="flex items-start justify-between gap-3">
               <div>
-                <div className="text-base font-semibold text-gray-900 dark:text-gray-100">读书笔记</div>
+                <div className="text-base font-semibold text-gray-900 dark:text-gray-100">{t('book.readingNotes')}</div>
                 <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                  请选择：导出仅下载，或导入为新的私人书籍（笔记）。
+                  {t('book.readingNotesDesc')}
                 </div>
               </div>
               <button
@@ -1861,7 +2104,7 @@ export default function BookDetailModal({ bookId, isOpen, onClose, onBookUpdated
                 className="w-full flex items-center justify-center gap-2 rounded-xl bg-cyan-600 hover:bg-cyan-700 text-white py-3 text-sm font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <FileText className="w-4 h-4" />
-                导出（仅下载）
+                {t('book.exportOnly')}
               </button>
               <button
                 disabled={exportingNotes || creatingNoteBook}
@@ -1880,6 +2123,191 @@ export default function BookDetailModal({ bookId, isOpen, onClose, onBookUpdated
               >
                 取消
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 分享书籍模态框 */}
+      {showShareModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-md w-full p-6">
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-xl font-bold text-gray-900 dark:text-gray-100 flex items-center gap-2">
+                <Share2 className="w-5 h-5" />
+                {t('book.shareBook') || '分享书籍'}
+              </h2>
+              <button
+                onClick={() => setShowShareModal(false)}
+                className="text-gray-500 hover:text-gray-700 dark:hover:text-gray-300"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium mb-2 text-gray-900 dark:text-gray-100">
+                  {t('book.shareTo') || '分享给'}
+                </label>
+                <div className="space-y-2">
+                  <div>
+                    <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">
+                      {t('book.shareToUser') || '分享给用户'}
+                    </label>
+                    {user?.role === 'admin' ? (
+                      <select
+                        value={shareForm.toUserId}
+                        onChange={(e) => setShareForm({ ...shareForm, toUserId: e.target.value, toGroupId: '' })}
+                        className="input w-full"
+                      >
+                        <option value="">{t('book.selectUser') || '选择用户'}</option>
+                        {availableUsers.map((u) => (
+                          <option key={u.id} value={u.id}>
+                            {u.nickname || u.username} ({u.email})
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <input
+                        type="text"
+                        placeholder={t('book.enterUserId') || '输入用户ID或邮箱'}
+                        value={shareForm.toUserId}
+                        onChange={(e) => setShareForm({ ...shareForm, toUserId: e.target.value, toGroupId: '' })}
+                        className="input w-full"
+                      />
+                    )}
+                  </div>
+                  <div className="text-center text-gray-400 dark:text-gray-500">或</div>
+                  <div>
+                    <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">
+                      {t('book.shareToGroup') || '分享给群组'}
+                    </label>
+                    <select
+                      value={shareForm.toGroupId}
+                      onChange={(e) => setShareForm({ ...shareForm, toGroupId: e.target.value, toUserId: '' })}
+                      className="input w-full"
+                    >
+                      <option value="">{t('book.selectGroup') || '选择群组'}</option>
+                      {availableGroups.map((g) => (
+                        <option key={g.id} value={g.id}>
+                          {g.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-2 text-gray-900 dark:text-gray-100">
+                  {t('book.permission') || '权限'}
+                </label>
+                <select
+                  value={shareForm.permission}
+                  onChange={(e) => setShareForm({ ...shareForm, permission: e.target.value })}
+                  className="input w-full"
+                >
+                  <option value="read">{t('book.readOnly') || '只读'}</option>
+                </select>
+              </div>
+              <div className="flex gap-2 justify-end">
+                <button
+                  onClick={() => setShowShareModal(false)}
+                  className="btn btn-secondary"
+                >
+                  {t('common.cancel')}
+                </button>
+                <button
+                  onClick={handleShare}
+                  disabled={sharing || (!shareForm.toUserId && !shareForm.toGroupId)}
+                  className="btn btn-primary"
+                >
+                  {sharing ? t('common.loading') : (t('book.share') || '分享')}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 群组可见性设置模态框 */}
+      {showGroupVisibilityModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-md w-full p-6 max-h-[80vh] overflow-y-auto">
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-xl font-bold text-gray-900 dark:text-gray-100 flex items-center gap-2">
+                <Eye className="w-5 h-5" />
+                {t('book.groupVisibility') || '群组可见性设置'}
+              </h2>
+              <button
+                onClick={() => setShowGroupVisibilityModal(false)}
+                className="text-gray-500 hover:text-gray-700 dark:hover:text-gray-300"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="space-y-4">
+              <div className="flex items-center">
+                <input
+                  type="checkbox"
+                  id="groupOnlyModal"
+                  checked={groupVisibility.groupOnly}
+                  onChange={(e) => setGroupVisibility({ ...groupVisibility, groupOnly: e.target.checked })}
+                  className="h-4 w-4 text-blue-600"
+                />
+                <label htmlFor="groupOnlyModal" className="ml-2 text-sm text-gray-700 dark:text-gray-300">
+                  {t('book.groupOnly') || '仅群组可见（不公开）'}
+                </label>
+              </div>
+              {groupVisibility.groupOnly && (
+                <div>
+                  <label className="block text-sm font-medium mb-2 text-gray-900 dark:text-gray-100">
+                    {t('book.selectGroups') || '选择可见的群组'}
+                  </label>
+                  <div className="space-y-2 max-h-60 overflow-y-auto">
+                    {availableGroups.map((g) => (
+                      <label key={g.id} className="flex items-center p-2 hover:bg-gray-50 dark:hover:bg-gray-700 rounded cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={groupVisibility.groupIds.includes(g.id)}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              setGroupVisibility({
+                                ...groupVisibility,
+                                groupIds: [...groupVisibility.groupIds, g.id],
+                              });
+                            } else {
+                              setGroupVisibility({
+                                ...groupVisibility,
+                                groupIds: groupVisibility.groupIds.filter((id) => id !== g.id),
+                              });
+                            }
+                          }}
+                          className="h-4 w-4 text-blue-600"
+                        />
+                        <span className="ml-2 text-sm text-gray-700 dark:text-gray-300">{g.name}</span>
+                        <span className="ml-auto text-xs text-gray-500 dark:text-gray-400">
+                          {g.member_count} {t('groups.members') || '成员'}
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              )}
+              <div className="flex gap-2 justify-end">
+                <button
+                  onClick={() => setShowGroupVisibilityModal(false)}
+                  className="btn btn-secondary"
+                >
+                  {t('common.cancel')}
+                </button>
+                <button
+                  onClick={handleSaveGroupVisibility}
+                  disabled={savingVisibility || (groupVisibility.groupOnly && groupVisibility.groupIds.length === 0)}
+                  className="btn btn-primary"
+                >
+                  {savingVisibility ? t('common.loading') : t('common.save')}
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -1905,7 +2333,7 @@ export default function BookDetailModal({ bookId, isOpen, onClose, onBookUpdated
                   <div className="w-10 h-10 rounded-full bg-orange-100 dark:bg-orange-900/30 flex items-center justify-center">
                     <Send className="w-5 h-5 text-orange-600 dark:text-orange-400" />
                   </div>
-                  <h2 className="text-xl font-bold text-gray-900 dark:text-gray-100">推送到Kindle</h2>
+                  <h2 className="text-xl font-bold text-gray-900 dark:text-gray-100">{t('book.pushToKindle')}</h2>
                 </div>
                 <button
                   onClick={() => {
@@ -1922,7 +2350,7 @@ export default function BookDetailModal({ bookId, isOpen, onClose, onBookUpdated
               <div className="space-y-4">
                 {/* 书籍名称 */}
                 <div>
-                  <label className="block text-sm font-medium mb-2 text-gray-900 dark:text-gray-100">书籍名称</label>
+                  <label className="block text-sm font-medium mb-2 text-gray-900 dark:text-gray-100">{t('book.bookName')}</label>
                   <div className="px-4 py-2.5 bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg text-gray-900 dark:text-gray-100">
                     {book?.title || '未知'}
                   </div>
@@ -1932,7 +2360,7 @@ export default function BookDetailModal({ bookId, isOpen, onClose, onBookUpdated
                 {formats.length > 1 && (
                   <div>
                     <label className="block text-sm font-medium mb-2 text-gray-900 dark:text-gray-100">
-                      选择推送格式 <span className="text-red-500">*</span>
+                      {t('book.selectPushFormat')} <span className="text-red-500">*</span>
                     </label>
                     <div className="flex flex-wrap gap-2">
                       {formats.map((format) => (
@@ -1960,7 +2388,7 @@ export default function BookDetailModal({ bookId, isOpen, onClose, onBookUpdated
                 {/* 接收方邮箱地址 */}
                 <div>
                   <label className="block text-sm font-medium mb-2 text-gray-900 dark:text-gray-100">
-                    接收方邮箱地址 <span className="text-red-500">*</span>
+                    {t('book.receiverEmail')} <span className="text-red-500">*</span>
                   </label>
                   
                   {/* 已保存的推送邮箱列表 */}
@@ -2001,10 +2429,10 @@ export default function BookDetailModal({ bookId, isOpen, onClose, onBookUpdated
                     disabled={pushing}
                   />
                   <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                    支持Kindle邮箱（@kindle.com）和普通邮箱
+                    {t('book.supportKindleEmail')}
                     {savedPushEmails.length === 0 && (
                       <span className="block mt-1">
-                        提示：在"个人信息"页面可以管理推送邮箱，方便下次快速选择
+                        {t('book.pushEmailHint')}
                       </span>
                     )}
                   </p>
@@ -2013,7 +2441,7 @@ export default function BookDetailModal({ bookId, isOpen, onClose, onBookUpdated
                 {/* 发送方邮箱地址 */}
                 {smtpUserEmail && (
                   <div>
-                    <label className="block text-sm font-medium mb-2 text-gray-900 dark:text-gray-100">发送方邮箱地址</label>
+                    <label className="block text-sm font-medium mb-2 text-gray-900 dark:text-gray-100">{t('book.senderEmail')}</label>
                     <div className="px-4 py-2.5 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg text-blue-900 dark:text-blue-100 font-mono text-sm">
                       {smtpUserEmail}
                     </div>
@@ -2028,10 +2456,10 @@ export default function BookDetailModal({ bookId, isOpen, onClose, onBookUpdated
                     </div>
                     <div className="flex-1">
                       <p className="text-sm font-medium text-amber-900 dark:text-amber-100 mb-1">
-                        Kindle设置提醒
+                        {t('book.kindleSettingsReminder')}
                       </p>
                       <p className="text-xs text-amber-800 dark:text-amber-200">
-                        请确保在您的Kindle设备或Kindle应用中，已将该发送方邮箱地址添加到"已认可的发件人电子邮箱列表"中，否则Kindle将无法接收推送的书籍。
+                        {t('book.kindleEmailHint')}
                       </p>
                     </div>
                   </div>
@@ -2058,12 +2486,12 @@ export default function BookDetailModal({ bookId, isOpen, onClose, onBookUpdated
                     {pushing ? (
                       <>
                         <RefreshCw className="w-4 h-4 animate-spin" />
-                        推送中...
+                        {t('book.pushing')}
                       </>
                     ) : (
                       <>
                         <Send className="w-4 h-4" />
-                        推送
+                        {t('book.push')}
                       </>
                     )}
                   </button>
@@ -2088,7 +2516,7 @@ export default function BookDetailModal({ bookId, isOpen, onClose, onBookUpdated
         >
           <div className="bg-white dark:bg-gray-800 rounded-lg p-6 max-w-4xl w-full max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between mb-4">
-              <h2 className="text-xl font-bold text-gray-900 dark:text-gray-100">从豆瓣获取书籍信息</h2>
+              <h2 className="text-xl font-bold text-gray-900 dark:text-gray-100">{t('bookDetail.fetchDoubanInfo')}</h2>
               <button
                 onClick={() => {
                   setShowDoubanModal(false);
@@ -2103,20 +2531,20 @@ export default function BookDetailModal({ bookId, isOpen, onClose, onBookUpdated
             {loadingDouban ? (
               <div className="text-center py-12">
                 <RefreshCw className="w-8 h-8 animate-spin mx-auto text-blue-600 mb-4" />
-                <p className="text-gray-600 dark:text-gray-400">正在搜索书籍信息...</p>
+                <p className="text-gray-600 dark:text-gray-400">{t('book.searchingBookInfo')}</p>
               </div>
             ) : doubanResults.length === 0 ? (
               <div className="text-center py-12">
                 <Search className="w-12 h-12 mx-auto text-gray-400 mb-4" />
                 <p className="text-gray-600 dark:text-gray-400">未找到相关书籍信息</p>
                 <p className="text-sm text-gray-500 dark:text-gray-400 mt-2">
-                  请检查书籍标题是否正确，或稍后重试
+                  {t('book.checkBookTitleOrRetry')}
                 </p>
               </div>
             ) : (
               <div className="space-y-4">
                 <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
-                  找到 {doubanResults.length} 个相关结果，请选择要应用的书籍信息：
+                  {t('book.foundDoubanInfo', { count: doubanResults.length })}，{t('bookDetail.selectBookInfoToApply')}
                 </p>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   {doubanResults.map((result, index) => (
@@ -2130,6 +2558,7 @@ export default function BookDetailModal({ bookId, isOpen, onClose, onBookUpdated
                             src={result.image}
                             alt={result.title}
                             className="w-20 h-28 object-cover rounded flex-shrink-0"
+                            onContextMenu={(e) => e.preventDefault()}
                             onError={(e) => {
                               const target = e.target as HTMLImageElement;
                               target.style.display = 'none';
@@ -2138,30 +2567,30 @@ export default function BookDetailModal({ bookId, isOpen, onClose, onBookUpdated
                         )}
                         <div className="flex-1 min-w-0">
                           <h3 className="font-semibold text-lg mb-2 line-clamp-2 text-gray-900 dark:text-gray-100">
-                            {result.title || '未知标题'}
+                            {result.title || t('book.unknownTitle')}
                           </h3>
                           <div className="space-y-1 text-sm text-gray-600 dark:text-gray-400">
                             {result.author && (
                               <p>
-                                <span className="font-medium text-gray-900 dark:text-gray-100">作者：</span>
+                                <span className="font-medium text-gray-900 dark:text-gray-100">{t('book.author')}：</span>
                                 {result.author}
                               </p>
                             )}
                             {result.publisher && (
                               <p>
-                                <span className="font-medium text-gray-900 dark:text-gray-100">出版社：</span>
+                                <span className="font-medium text-gray-900 dark:text-gray-100">{t('book.publisher')}：</span>
                                 {result.publisher}
                               </p>
                             )}
                             {result.pubdate && (
                               <p>
-                                <span className="font-medium text-gray-900 dark:text-gray-100">出版日期：</span>
+                                <span className="font-medium text-gray-900 dark:text-gray-100">{t('book.publishDate')}：</span>
                                 {result.pubdate}
                               </p>
                             )}
                             {result.isbn && (
                               <p>
-                                <span className="font-medium text-gray-900 dark:text-gray-100">ISBN：</span>
+                                <span className="font-medium text-gray-900 dark:text-gray-100">{t('book.isbn')}：</span>
                                 {result.isbn}
                               </p>
                             )}
@@ -2187,12 +2616,12 @@ export default function BookDetailModal({ bookId, isOpen, onClose, onBookUpdated
                         {applyingDouban ? (
                           <>
                             <RefreshCw className="w-4 h-4 animate-spin" />
-                            应用中...
+                            {t('common.loading')}
                           </>
                         ) : (
                           <>
                             <Check className="w-4 h-4" />
-                            应用此信息
+                            {t('bookDetail.applyThisInfo') || '应用此信息'}
                           </>
                         )}
                       </button>
@@ -2210,7 +2639,7 @@ export default function BookDetailModal({ bookId, isOpen, onClose, onBookUpdated
                 }}
                 className="px-4 py-2 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600"
               >
-                关闭
+                {t('common.close')}
               </button>
             </div>
           </div>
@@ -2235,16 +2664,17 @@ export default function BookDetailModal({ bookId, isOpen, onClose, onBookUpdated
                 <RefreshCw className="w-6 h-6 text-blue-600 dark:text-blue-400" />
               </div>
               <div className="flex-1">
-                <h3 className="text-lg font-bold text-gray-900 dark:text-gray-100">替换封面</h3>
-                <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">检测到豆瓣信息中包含封面图片</p>
+                <h3 className="text-lg font-bold text-gray-900 dark:text-gray-100">{t('book.replaceCover')}</h3>
+                <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">{t('book.detectedCoverInDouban')}</p>
               </div>
             </div>
             {pendingDoubanInfo.image && (
               <div className="mb-4 flex justify-center">
                 <img
                   src={pendingDoubanInfo.image}
-                  alt="新封面"
+                  alt={t('book.newCover')}
                   className="w-32 h-48 object-cover rounded-lg border-2 border-gray-200 dark:border-gray-700"
+                  onContextMenu={(e) => e.preventDefault()}
                   onError={(e) => {
                     const target = e.target as HTMLImageElement;
                     target.style.display = 'none';
@@ -2254,10 +2684,10 @@ export default function BookDetailModal({ bookId, isOpen, onClose, onBookUpdated
             )}
             <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4 mb-6">
               <p className="text-sm font-medium text-gray-900 dark:text-gray-100 mb-2">
-                检测到豆瓣返回了封面图片
+                {t('book.doubanReturnedCover')}
               </p>
               <p className="text-sm text-gray-700 dark:text-gray-300 mb-3">
-                是否下载封面图片到本地并替换当前封面？
+                {t('book.downloadCoverAndReplace')}
               </p>
             </div>
             <div className="flex gap-3">
@@ -2268,7 +2698,7 @@ export default function BookDetailModal({ bookId, isOpen, onClose, onBookUpdated
                 }}
                 className="flex-1 px-4 py-2 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600"
               >
-                仅更新信息
+                {t('book.onlyUpdateInfo')}
               </button>
               <button
                 onClick={() => {
@@ -2278,7 +2708,7 @@ export default function BookDetailModal({ bookId, isOpen, onClose, onBookUpdated
                 className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center justify-center gap-2"
               >
                 <RefreshCw className="w-4 h-4" />
-                替换封面
+                {t('book.replaceCover')}
               </button>
             </div>
           </div>
@@ -2299,7 +2729,7 @@ export default function BookDetailModal({ bookId, isOpen, onClose, onBookUpdated
         >
           <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl w-full max-w-md">
             <div className="px-6 py-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
-              <h2 className="text-xl font-bold text-gray-900 dark:text-gray-100">上传封面</h2>
+              <h2 className="text-xl font-bold text-gray-900 dark:text-gray-100">{t('book.uploadCover')}</h2>
               <button
                 onClick={() => setShowCoverUploadModal(false)}
                 className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
@@ -2352,7 +2782,7 @@ export default function BookDetailModal({ bookId, isOpen, onClose, onBookUpdated
                   } disabled:opacity-50 disabled:cursor-not-allowed`}
                 >
                   <RefreshCw className="w-4 h-4 inline mr-1" />
-                  封面提取
+                  {t('book.coverExtract')}
                 </button>
               </div>
 
@@ -2366,6 +2796,7 @@ export default function BookDetailModal({ bookId, isOpen, onClose, onBookUpdated
                           src={coverPreview}
                           alt="预览"
                           className="max-h-full max-w-full object-contain"
+                          onContextMenu={(e) => e.preventDefault()}
                         />
                       ) : (
                         <div className="text-center">
@@ -2386,11 +2817,11 @@ export default function BookDetailModal({ bookId, isOpen, onClose, onBookUpdated
                         const file = e.target.files?.[0];
                         if (file) {
                           if (!file.type.startsWith('image/')) {
-                            toast.error('请选择图片文件');
+                            toast.error(t('bookDetail.selectImageFile') || '请选择图片文件');
                             return;
                           }
                           if (file.size > 5 * 1024 * 1024) {
-                            toast.error('图片文件不能超过5MB');
+                            toast.error(t('bookDetail.imageSizeLimit') || '图片文件不能超过5MB');
                             return;
                           }
                           setCoverFile(file);
@@ -2416,17 +2847,17 @@ export default function BookDetailModal({ bookId, isOpen, onClose, onBookUpdated
               {coverUploadMode === 'url' && (
                 <div>
                   <label className="block text-sm font-medium mb-2 text-gray-900 dark:text-gray-100">
-                    图片URL地址
+                    {t('book.coverImageUrl')}
                   </label>
                   <input
                     type="url"
                     value={coverUrl}
                     onChange={(e) => setCoverUrl(e.target.value)}
-                    placeholder="https://example.com/cover.jpg"
+                    placeholder={t('book.coverImageUrlPlaceholder') || 'https://example.com/cover.jpg'}
                     className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   />
                   <p className="text-xs text-gray-500 dark:text-gray-500 mt-2">
-                    支持 HTTP/HTTPS 图片链接，系统会自动下载并保存到服务器
+                    {t('book.coverImageUrlHint2')}
                   </p>
                 </div>
               )}
@@ -2438,14 +2869,14 @@ export default function BookDetailModal({ bookId, isOpen, onClose, onBookUpdated
                     <div className="text-center">
                       <RefreshCw className="w-12 h-12 mx-auto mb-2 text-gray-400" />
                       <p className="text-sm text-gray-600 dark:text-gray-400">
-                        从 {book?.file_type?.toUpperCase()} 文件中提取封面
+                        {t('book.extractCoverFromBook', { format: book?.file_type?.toUpperCase() })}
                       </p>
                       <p className="text-xs text-gray-500 dark:text-gray-500 mt-1">
-                        系统将从原书文件中提取封面图片
+                        {t('book.extractCoverFromBookDesc')}
                       </p>
                       {book?.file_type !== 'epub' && book?.file_type !== 'pdf' && (
                         <p className="text-xs text-red-500 dark:text-red-400 mt-2">
-                          当前书籍格式不支持封面提取（仅支持 EPUB 和 PDF）
+                          {t('book.formatNotSupported')}
                         </p>
                       )}
                     </div>
@@ -2460,7 +2891,7 @@ export default function BookDetailModal({ bookId, isOpen, onClose, onBookUpdated
                 disabled={uploadingCover}
                 className="flex-1 px-4 py-2 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors disabled:opacity-50"
               >
-                取消
+                {t('common.cancel')}
               </button>
               <button
                 onClick={handleUploadCover}
@@ -2475,12 +2906,12 @@ export default function BookDetailModal({ bookId, isOpen, onClose, onBookUpdated
                 {uploadingCover ? (
                   <>
                     <RefreshCw className="w-4 h-4 animate-spin" />
-                    {coverUploadMode === 'file' ? '上传中...' : coverUploadMode === 'url' ? '下载中...' : '提取中...'}
+                    {coverUploadMode === 'file' ? t('book.uploading') : coverUploadMode === 'url' ? t('book.downloading') : t('book.extracting')}
                   </>
                 ) : (
                   <>
                     <Check className="w-4 h-4" />
-                    {coverUploadMode === 'file' ? '确认上传' : coverUploadMode === 'url' ? '确认下载' : '提取封面'}
+                    {coverUploadMode === 'file' ? t('book.confirmUpload') : coverUploadMode === 'url' ? t('book.confirmDownload') : t('book.extractCoverButton')}
                   </>
                 )}
               </button>
@@ -2507,15 +2938,16 @@ export default function BookDetailModal({ bookId, isOpen, onClose, onBookUpdated
                 <RefreshCw className="w-6 h-6 text-blue-600 dark:text-blue-400" />
               </div>
               <div className="flex-1">
-                <h3 className="text-lg font-bold text-gray-900 dark:text-gray-100">提取封面成功</h3>
-                <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">已从原书文件中提取到封面图片</p>
+                <h3 className="text-lg font-bold text-gray-900 dark:text-gray-100">{t('book.coverExtractSuccess')}</h3>
+                <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">{t('book.extractCoverFromBookDesc')}</p>
               </div>
             </div>
             <div className="mb-4 flex justify-center">
               <img
                 src={getCoverUrl(extractedCoverUrl)}
-                alt="提取的封面"
+                alt={t('book.extractCoverButton')}
                 className="w-32 h-48 object-cover rounded-lg border-2 border-gray-200 dark:border-gray-700"
+                onContextMenu={(e) => e.preventDefault()}
                 onError={(e) => {
                   const target = e.target as HTMLImageElement;
                   target.style.display = 'none';
@@ -2524,10 +2956,10 @@ export default function BookDetailModal({ bookId, isOpen, onClose, onBookUpdated
             </div>
             <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4 mb-6">
               <p className="text-sm font-medium text-gray-900 dark:text-gray-100 mb-2">
-                是否覆盖当前封面？
+                {t('bookDetail.replaceCurrentCover') || '是否覆盖当前封面？'}
               </p>
               <p className="text-sm text-gray-700 dark:text-gray-300">
-                当前书籍已有封面图片，是否要用提取的封面替换现有封面？
+                {t('bookDetail.replaceCurrentCoverDesc') || '当前书籍已有封面图片，是否要用提取的封面替换现有封面？'}
               </p>
             </div>
             <div className="flex gap-3">
@@ -2554,7 +2986,7 @@ export default function BookDetailModal({ bookId, isOpen, onClose, onBookUpdated
                 ) : (
                   <>
                     <Check className="w-4 h-4" />
-                    覆盖封面
+                    {t('book.replaceCoverButton')}
                   </>
                 )}
               </button>

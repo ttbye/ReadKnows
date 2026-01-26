@@ -22,17 +22,60 @@ WORKDIR /app
 # 取消下面注释以启用淘宝镜像
 RUN npm config set registry https://registry.npmmirror.com
 
-# 复制package文件（先复制依赖文件，利用 Docker 缓存）
-COPY package*.json ./
-COPY tsconfig.json ./
+# ✅ 修复：使用环境变量配置 node-gyp 使用镜像源，解决 better-sqlite3 编译问题
+# 注意：这些配置需要通过环境变量设置，而不是 npm config
+ENV NODEJS_ORG_MIRROR=https://npmmirror.com/mirrors/node/
+ENV NPM_CONFIG_DISTURL=https://npmmirror.com/dist
+ENV NPM_CONFIG_NODE_GYP=https://npmmirror.com/mirrors/node-gyp
+ENV SASS_BINARY_SITE=https://npmmirror.com/mirrors/node-sass
+ENV ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/
+ENV PUPPETEER_DOWNLOAD_HOST=https://npmmirror.com/mirrors
+ENV PYTHON_MIRROR=https://npmmirror.com/mirrors/python
 
-# 安装依赖
+# ✅ 修复：增加网络超时和重试配置
+RUN npm config set fetch-retries 5 \
+    && npm config set fetch-retry-mintimeout 20000 \
+    && npm config set fetch-retry-maxtimeout 120000 \
+    && npm config set fetch-timeout 300000
+
+# 复制根目录 package.json（用于版本读取）
+# 注意：构建上下文应该在 docker-compose.yml 中设置为项目根目录
+COPY package.json /tmp/root-package.json
+RUN mkdir -p /app/.. && cp /tmp/root-package.json /app/../package.json && \
+    echo "✓ 已复制根目录 package.json 用于版本读取"
+
+# 复制package文件（先复制依赖文件，利用 Docker 缓存）
+# 注意：版本号应该在构建前通过 scripts/version.js sync 同步到 backend/package.json
+COPY backend/package*.json ./
+COPY backend/tsconfig.json ./
+
+# ✅ 修复：安装依赖，增加重试机制和超时设置
 # 如果有 package-lock.json 使用 npm ci，否则使用 npm install
-RUN if [ -f package-lock.json ]; then npm ci --production=false; else npm install; fi
+# 优先使用预编译的二进制文件，如果失败再尝试从源码编译
+RUN echo "开始安装依赖..." && \
+    if [ -f package-lock.json ]; then \
+        echo "使用 npm ci 安装依赖..." && \
+        npm ci --production=false --prefer-offline=false --no-audit || \
+        (echo "npm ci 失败，尝试清理缓存后重试..." && \
+         npm cache clean --force && \
+         npm ci --production=false --prefer-offline=false --no-audit) || \
+        (echo "npm ci 重试失败，尝试使用 npm install..." && \
+         npm install --prefer-offline=false --no-audit); \
+    else \
+        echo "使用 npm install 安装依赖..." && \
+        npm install --prefer-offline=false --no-audit || \
+        (echo "npm install 失败，尝试清理缓存后重试..." && \
+         npm cache clean --force && \
+         npm install --prefer-offline=false --no-audit); \
+    fi && \
+    echo "依赖安装完成" && \
+    echo "验证 better-sqlite3 安装..." && \
+    (node -e "require('better-sqlite3')" && echo "✅ better-sqlite3 安装成功") || \
+    (echo "⚠️  better-sqlite3 验证失败，但继续构建..." && true)
 
 # 复制源代码
-COPY src ./src
-COPY scripts ./scripts
+COPY backend/src ./src
+COPY backend/scripts ./scripts
 
 # 构建TypeScript
 RUN npm run build
@@ -143,33 +186,49 @@ COPY --from=builder /app/package*.json ./
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/scripts ./scripts
+# 确保根目录 package.json 在运行时也可用
+COPY --from=builder /app/../package.json /app/../package.json
+RUN if [ -f /app/../package.json ]; then \
+      echo "✓ 运行时根目录 package.json 已就绪"; \
+    else \
+      echo "⚠️  警告: 运行时根目录 package.json 不存在，版本号可能显示为 0.0.0-UNKNOWN"; \
+    fi
 
-# 创建必要的目录
-RUN mkdir -p /app/data /app/books/public /app/books/user /app/covers /app/fonts /app/import
+# 创建必要的目录（统一放在 data 目录下）
+RUN mkdir -p /app/data/books/public /app/data/books/user /app/data/covers /app/data/fonts /app/data/import /app/data/cache/ocr /app/data/cache/tts
 
 # 创建启动脚本来确保挂载的目录结构正确
 RUN echo '#!/bin/sh' > /app/entrypoint.sh && \
     echo 'echo "正在检查并创建必要的目录..."' >> /app/entrypoint.sh && \
     echo 'mkdir -p /app/data' >> /app/entrypoint.sh && \
-    echo 'mkdir -p /app/books/public' >> /app/entrypoint.sh && \
-    echo 'mkdir -p /app/books/user' >> /app/entrypoint.sh && \
-    echo 'mkdir -p /app/books/.temp' >> /app/entrypoint.sh && \
-    echo 'mkdir -p /app/covers' >> /app/entrypoint.sh && \
-    echo 'mkdir -p /app/fonts' >> /app/entrypoint.sh && \
-    echo 'mkdir -p /app/import' >> /app/entrypoint.sh && \
+    echo 'mkdir -p /app/data/books/public' >> /app/entrypoint.sh && \
+    echo 'mkdir -p /app/data/books/user' >> /app/entrypoint.sh && \
+    echo 'mkdir -p /app/data/books/.temp' >> /app/entrypoint.sh && \
+    echo 'mkdir -p /app/data/covers' >> /app/entrypoint.sh && \
+    echo 'mkdir -p /app/data/fonts' >> /app/entrypoint.sh && \
+    echo 'mkdir -p /app/data/import' >> /app/entrypoint.sh && \
+    echo 'mkdir -p /app/data/cache/ocr' >> /app/entrypoint.sh && \
+    echo 'mkdir -p /app/data/cache/tts' >> /app/entrypoint.sh && \
     echo 'echo "目录结构已就绪"' >> /app/entrypoint.sh && \
     echo 'echo "启动应用..."' >> /app/entrypoint.sh && \
     echo 'exec node dist/index.js' >> /app/entrypoint.sh && \
     chmod +x /app/entrypoint.sh
 
 # 设置目录权限（确保有写入权限）
-RUN chmod -R 755 /app/data /app/books /app/covers /app/fonts /app/import
+RUN chmod -R 755 /app/data
 
-# 设置环境变量
+# 设置环境变量（统一使用 data 目录）
 ENV NODE_ENV=production
 ENV PORT=1281
+ENV DATA_ROOT=./data
 ENV DB_PATH=./data/database.db
-ENV BOOKS_DIR=./books
+ENV BOOKS_DIR=./data/books
+ENV COVERS_DIR=./data/covers
+ENV FONTS_DIR=./data/fonts
+ENV IMPORT_DIR=./data/import
+ENV MESSAGES_DIR=./data/messages
+ENV OCR_CACHE_DIR=./data/cache/ocr
+ENV TTS_CACHE_DIR=./data/cache/tts
 
 # 暴露端口
 EXPOSE 1281

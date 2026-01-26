@@ -73,10 +73,134 @@ class OfflineStorage {
     }
 
     try {
-      // 下载文件
-      const response = await fetch(url);
+      // 如果 URL 是相对路径，需要转换为完整的 URL
+      let fullUrl = url;
+      if (url.startsWith('/')) {
+        // 导入 API 工具函数获取正确的 URL
+        const { getFullBookUrl, getCustomApiUrl, getCurrentApiUrl, isAPKEnvironment } = await import('./api');
+        // 使用统一的URL构建函数（支持自定义API URL）
+        fullUrl = getFullBookUrl(url);
+        
+        // 检查是否为相对路径
+        // 在Web环境下（非APK），相对路径可以通过Vite代理正常工作
+        // 只有在APK环境中才需要完整URL
+        const isAPK = isAPKEnvironment();
+        
+        // 如果仍然是相对路径，需要进一步处理
+        if (fullUrl.startsWith('/') && !fullUrl.startsWith('http')) {
+          // 首先尝试在Web环境中构建完整URL（即使isAPK为true，也可能误判）
+          if (typeof window !== 'undefined' && window.location) {
+            const origin = window.location.origin;
+            // 如果origin有效（是http://或https://开头），使用它构建完整URL
+            if (origin && (origin.startsWith('http://') || origin.startsWith('https://'))) {
+              fullUrl = `${origin}${fullUrl}`;
+              // 安全修复：仅在开发环境输出URL信息
+              // console.log('[OfflineStorage] 使用window.location.origin构建完整URL:', fullUrl);
+            } else if (isAPK) {
+              // 只有在确认是APK环境且无法获取有效origin时，才要求配置服务器地址
+              const customUrl = getCustomApiUrl();
+              const currentApiUrl = getCurrentApiUrl();
+              // 安全修复：仅在开发环境输出详细错误信息，避免泄露URL配置
+              if (import.meta.env.DEV) {
+                console.error('[OfflineStorage] 错误: 无法构建完整的下载URL', {
+                  originalUrl: url,
+                  fullUrl: fullUrl,
+                  customApiUrl: customUrl,
+                  currentApiUrl: currentApiUrl,
+                  isAPK: isAPK,
+                  origin: origin,
+                  location: window.location ? {
+                    protocol: window.location.protocol,
+                    host: window.location.host,
+                    hostname: window.location.hostname,
+                    port: window.location.port,
+                  } : null,
+                });
+              }
+              
+              throw new Error(
+                '无法下载书籍：未配置服务器地址。请在应用设置中配置服务器地址（如: https://your-server.com 或 http://192.168.1.100:1281）'
+              );
+            } else {
+              // Web环境但无法获取origin，尝试使用相对路径
+              // 安全修复：仅在开发环境输出警告
+              if (import.meta.env.DEV) {
+                console.warn('[OfflineStorage] 无法获取有效的window.location.origin，使用相对路径', {
+                  origin: origin,
+                  location: window.location ? {
+                    protocol: window.location.protocol,
+                    host: window.location.host,
+                  } : null,
+                });
+              }
+            }
+          } else if (isAPK) {
+            // 没有window对象且是APK环境，需要配置服务器地址
+            const customUrl = getCustomApiUrl();
+            const currentApiUrl = getCurrentApiUrl();
+            // 安全修复：仅在开发环境输出详细错误信息
+            if (import.meta.env.DEV) {
+              console.error('[OfflineStorage] 错误: 无法构建完整的下载URL（无window对象）', {
+                originalUrl: url,
+                fullUrl: fullUrl,
+                customApiUrl: customUrl,
+                currentApiUrl: currentApiUrl,
+                isAPK: isAPK,
+              });
+            }
+            
+            throw new Error(
+              '无法下载书籍：未配置服务器地址。请在应用设置中配置服务器地址（如: https://your-server.com 或 http://192.168.1.100:1281）'
+            );
+          }
+        }
+        
+        // 安全修复：仅在开发环境输出URL转换信息
+        // console.log('[OfflineStorage] 下载书籍 URL 转换:', { 
+        //   original: url, 
+        //   full: fullUrl,
+        //   isAPK: isAPK,
+        //   hasAuth: true
+        // });
+      }
+      
+      // 准备请求头（包含认证信息）
+      const { getAuthHeaders } = await import('./api');
+      const headers = getAuthHeaders();
+      
+      // 安全修复：仅在开发环境输出下载信息，避免泄露URL和认证头
+      // console.log('[OfflineStorage] 开始下载书籍:', {
+      //   url: fullUrl,
+      //   bookId: bookId,
+      //   hasHeaders: Object.keys(headers).length > 0,
+      //   headerKeys: Object.keys(headers)
+      // });
+      
+      // 下载文件（带认证头）
+      const response = await fetch(fullUrl, {
+        headers: headers,
+      });
+      
+      // 安全修复：仅在开发环境输出响应信息
+      // console.log('[OfflineStorage] 下载响应:', {
+      //   status: response.status,
+      //   statusText: response.statusText,
+      //   ok: response.ok,
+      //   headers: Object.fromEntries(response.headers.entries())
+      // });
+      
       if (!response.ok) {
-        throw new Error(`下载失败: ${response.status} ${response.statusText}`);
+        const errorText = await response.text().catch(() => '无法读取错误信息');
+        // 安全修复：仅在开发环境输出详细错误信息，避免泄露URL
+        if (import.meta.env.DEV) {
+          console.error('[OfflineStorage] 下载失败详情:', {
+            status: response.status,
+            statusText: response.statusText,
+            errorText: errorText,
+            url: fullUrl
+          });
+        }
+        throw new Error(`下载失败: ${response.status} ${response.statusText}${errorText ? ` - ${errorText.substring(0, 100)}` : ''}`);
       }
 
       const blob = await response.blob();

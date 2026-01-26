@@ -5,17 +5,22 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import api from '../utils/api';
 import toast from 'react-hot-toast';
 import { useAuthStore } from '../store/authStore';
+import { useAudiobookStore } from '../store/audiobookStore';
 import ReaderContainer from '../components/readers/ReaderContainer';
 import { ReadingSettings, defaultSettings, BookData, ReadingPosition, ReaderConfig } from '../types/reader';
+import { useTranslation } from 'react-i18next';
 
 export default function ReaderNew() {
+  const { t } = useTranslation();
   const { bookId } = useParams<{ bookId: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
   const { isAuthenticated } = useAuthStore();
+  const { setCenterButtonMode } = useAudiobookStore();
   const [book, setBook] = useState<BookData | null>(null);
   const [loading, setLoading] = useState(true);
   const [settings, setSettings] = useState<ReadingSettings>(defaultSettings);
@@ -28,6 +33,13 @@ export default function ReaderNew() {
   const lastRemoteProgressRef = useRef<number>(0);
   const lastConflictPromptAtRef = useRef<number>(0);
   const remotePromptStorageKey = bookId ? `rk-remote-progress-${bookId}` : null;
+
+  // 进入阅读页面时，设置中间按钮模式为 'reading'
+  useEffect(() => {
+    if (bookId) {
+      setCenterButtonMode('reading');
+    }
+  }, [bookId, setCenterButtonMode]);
 
   // 阅读字号推荐：只在“未自定义/从旧版本升级”时使用，避免覆盖用户设置
   const getRecommendedFontSize = () => {
@@ -92,14 +104,14 @@ export default function ReaderNew() {
             localStorage.setItem('reading-settings-version', '2');
           }
 
-          console.log('[ReaderNew] 从 localStorage 恢复设置:', {
-            fontSize: restoredSettings.fontSize,
-            fontFamily: restoredSettings.fontFamily,
-            lineHeight: restoredSettings.lineHeight,
-            theme: restoredSettings.theme,
-            margin: restoredSettings.margin,
-            textIndent: restoredSettings.textIndent,
-          });
+          // console.log('[ReaderNew] 从 localStorage 恢复设置:', {
+          //   fontSize: restoredSettings.fontSize,
+          //   fontFamily: restoredSettings.fontFamily,
+          //   lineHeight: restoredSettings.lineHeight,
+          //   theme: restoredSettings.theme,
+          //   margin: restoredSettings.margin,
+          //   textIndent: restoredSettings.textIndent,
+          // });
           setSettings(restoredSettings);
         } catch (e) {
           console.error('ReaderNew: 解析本地设置失败', e);
@@ -111,11 +123,11 @@ export default function ReaderNew() {
           ...defaultSettings,
           fontSize: Math.max(defaultSettings.fontSize, getRecommendedFontSize()),
         };
-        console.log('[ReaderNew] 首次使用，创建默认设置:', {
-          fontSize: firstSettings.fontSize,
-          fontFamily: firstSettings.fontFamily,
-          lineHeight: firstSettings.lineHeight,
-        });
+        // console.log('[ReaderNew] 首次使用，创建默认设置:', {
+        //   fontSize: firstSettings.fontSize,
+        //   fontFamily: firstSettings.fontFamily,
+        //   lineHeight: firstSettings.lineHeight,
+        // });
         setSettings(firstSettings);
         try {
           localStorage.setItem('reading-settings', JSON.stringify(firstSettings));
@@ -176,17 +188,17 @@ export default function ReaderNew() {
         }
       }
       
-      console.log('[ReaderNew] 设置已保存到 localStorage:', {
-        fontSize: completeSettings.fontSize,
-        fontFamily: completeSettings.fontFamily,
-        lineHeight: completeSettings.lineHeight,
-        theme: completeSettings.theme,
-        margin: completeSettings.margin,
-        textIndent: completeSettings.textIndent,
-        ttsSpeed: settingsAny.tts_default_speed?.value,
-        ttsModel: settingsAny.tts_default_model?.value,
-        ttsVoice: settingsAny.tts_default_voice?.value,
-      });
+      // console.log('[ReaderNew] 设置已保存到 localStorage:', {
+      //   fontSize: completeSettings.fontSize,
+      //   fontFamily: completeSettings.fontFamily,
+      //   lineHeight: completeSettings.lineHeight,
+      //   theme: completeSettings.theme,
+      //   margin: completeSettings.margin,
+      //   textIndent: completeSettings.textIndent,
+      //   ttsSpeed: settingsAny.tts_default_speed?.value,
+      //   ttsModel: settingsAny.tts_default_model?.value,
+      //   ttsVoice: settingsAny.tts_default_voice?.value,
+      // });
     } catch (error) {
       console.error('ReaderNew: 保存阅读设置失败', error);
     }
@@ -209,7 +221,7 @@ export default function ReaderNew() {
         const formats = response.data.formats || [];
 
         if (!bookData) {
-          toast.error('书籍不存在');
+          toast.error(t('reader.bookNotFound'));
           setTimeout(() => navigate(-1), 1000);
           return;
         }
@@ -240,6 +252,25 @@ export default function ReaderNew() {
             console.error('ReaderNew: 创建阅读会话失败', error);
             // 不影响阅读，继续执行
           }
+        }
+
+        // 若从书摘「打开并定位」进入，优先使用传入的进度，跳过服务端/本地进度
+        const fromExcerpt = (location.state as { initialPosition?: Partial<ReadingPosition> })?.initialPosition;
+        if (fromExcerpt && typeof fromExcerpt.progress === 'number') {
+          const pos: ReadingPosition = {
+            progress: fromExcerpt.progress,
+            currentPage: fromExcerpt.currentPage ?? 1,
+            totalPages: fromExcerpt.totalPages ?? 1,
+            chapterIndex: fromExcerpt.chapterIndex ?? 0,
+            chapterTitle: fromExcerpt.chapterTitle,
+            currentLocation: fromExcerpt.currentLocation,
+            scrollTop: fromExcerpt.scrollTop,
+            paragraphIndex: fromExcerpt.paragraphIndex,
+          };
+          setInitialPosition(pos);
+          lastLocalProgressRef.current = fromExcerpt.progress;
+          setLoading(false);
+          return;
         }
 
         // 获取阅读进度
@@ -343,14 +374,13 @@ export default function ReaderNew() {
 
         setLoading(false);
       } catch (error: any) {
-        console.error('获取书籍失败:', error);
-        toast.error(`加载失败: ${error.message || '未知错误'}`);
+        toast.error(t('reader.loadFailed', { error: error.message || t('reader.unknownError') }));
         setLoading(false);
       }
     };
 
     fetchBook();
-  }, [bookId, isAuthenticated, navigate]);
+  }, [bookId, isAuthenticated, navigate, location]);
 
   // 跨端进度提示：回到前台/聚焦时主动拉取一次服务端进度并对比（不依赖 409）
   useEffect(() => {
@@ -464,10 +494,10 @@ export default function ReaderNew() {
               // 使用默认值
             }
             
-            await api.put(`/reading/history/session/${sessionId}`, {
+            await api.post(`/reading/history/session/${sessionId}`, { _method: 'PUT', 
               endTime: new Date().toISOString(),
               progressAfter: currentProgress,
-            });
+             });
           } catch (error) {
             console.error('ReaderNew: 结束阅读会话失败', error);
           }
@@ -596,12 +626,26 @@ export default function ReaderNew() {
     return () => window.removeEventListener('__reading_progress_conflict_resolved' as any, handler);
   }, [bookId]);
 
+  // 监听Android返回按钮触发的阅读器关闭事件
+  // 必须在所有条件返回之前调用，遵守React Hooks规则
+  useEffect(() => {
+    const handleReaderClose = () => {
+      navigate(-1);
+    };
+    
+    window.addEventListener('readerClose', handleReaderClose);
+    
+    return () => {
+      window.removeEventListener('readerClose', handleReaderClose);
+    };
+  }, [navigate]);
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-screen">
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-          <p>加载中...</p>
+          <p>{t('common.loading')}</p>
         </div>
       </div>
     );
@@ -611,12 +655,12 @@ export default function ReaderNew() {
     return (
       <div className="flex items-center justify-center h-screen">
         <div className="text-center">
-          <p className="text-red-500 mb-4">书籍不存在</p>
+          <p className="text-red-500 mb-4">{t('reader.bookNotFound')}</p>
           <button
             onClick={() => navigate(-1)}
             className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
           >
-            返回
+            {t('common.back')}
           </button>
         </div>
       </div>

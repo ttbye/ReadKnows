@@ -14,8 +14,8 @@ import mammoth from 'mammoth';
 import * as XLSX from 'xlsx';
 import { db } from '../db';
 import { v4 as uuidv4 } from 'uuid';
-
-const booksDir = process.env.BOOKS_DIR || './books';
+import { booksDir } from '../config/paths';
+import { ensureBookFileExists } from './pathCompatibility';
 const tempDir = path.join(booksDir, '.temp');
 
 // 提取EPUB文本内容
@@ -358,56 +358,67 @@ export async function extractBookText(bookId: string, maxLength: number = 50000)
   let filePath: string | null = null;
   let isTempFile = false;
 
-  // 首先尝试从本地文件系统读取
-  // 构建所有可能的路径
-  const possiblePaths: string[] = [];
-  
-  // 1. 直接使用 file_path（如果是绝对路径）
+  // 首先尝试使用路径兼容性处理（支持旧路径自动转换）
   if (book.file_path) {
-    if (path.isAbsolute(book.file_path)) {
-      possiblePaths.push(book.file_path);
-    } else {
-      // 相对路径：尝试多种基础路径
-      possiblePaths.push(path.join(booksDir, book.file_path));
-      // 如果 booksDir 是相对路径，尝试基于当前工作目录
-      if (!path.isAbsolute(booksDir)) {
-        possiblePaths.push(path.resolve(process.cwd(), booksDir, book.file_path));
+    const resolvedPath = ensureBookFileExists(book.file_path);
+    if (resolvedPath) {
+      filePath = resolvedPath;
+      console.log('[BookTextExtractor] ✅ 使用兼容性路径找到文件:', filePath);
+    }
+  }
+  
+  // 如果兼容性处理没有找到，尝试其他路径
+  if (!filePath) {
+    // 构建所有可能的路径
+    const possiblePaths: string[] = [];
+    
+    // 1. 直接使用 file_path（如果是绝对路径）
+    if (book.file_path) {
+      if (path.isAbsolute(book.file_path)) {
+        possiblePaths.push(book.file_path);
+      } else {
+        // 相对路径：尝试多种基础路径
+        possiblePaths.push(path.join(booksDir, book.file_path));
+        // 如果 booksDir 是相对路径，尝试基于当前工作目录
+        if (!path.isAbsolute(booksDir)) {
+          possiblePaths.push(path.resolve(process.cwd(), booksDir, book.file_path));
+        }
       }
     }
-  }
-  
-  // 2. 使用 file_name（相对于 booksDir）
-  if (book.file_name) {
-    possiblePaths.push(path.join(booksDir, book.file_name));
-    // 如果 booksDir 是相对路径，尝试基于当前工作目录
-    if (!path.isAbsolute(booksDir)) {
-      possiblePaths.push(path.resolve(process.cwd(), booksDir, book.file_name));
+    
+    // 2. 使用 file_name（相对于 booksDir）
+    if (book.file_name) {
+      possiblePaths.push(path.join(booksDir, book.file_name));
+      // 如果 booksDir 是相对路径，尝试基于当前工作目录
+      if (!path.isAbsolute(booksDir)) {
+        possiblePaths.push(path.resolve(process.cwd(), booksDir, book.file_name));
+      }
     }
-  }
-  
-  // 3. 使用 book.id + 扩展名（相对于 booksDir）
-  possiblePaths.push(path.join(booksDir, `${book.id}${fileExt}`));
-  if (!path.isAbsolute(booksDir)) {
-    possiblePaths.push(path.resolve(process.cwd(), booksDir, `${book.id}${fileExt}`));
-  }
-  
-  // 去重
-  const uniquePaths = Array.from(new Set(possiblePaths));
+    
+    // 3. 使用 book.id + 扩展名（相对于 booksDir）
+    possiblePaths.push(path.join(booksDir, `${book.id}${fileExt}`));
+    if (!path.isAbsolute(booksDir)) {
+      possiblePaths.push(path.resolve(process.cwd(), booksDir, `${book.id}${fileExt}`));
+    }
+    
+    // 去重
+    const uniquePaths = Array.from(new Set(possiblePaths));
 
-  console.log('[BookTextExtractor] 尝试查找文件路径:');
-  console.log('[BookTextExtractor] booksDir (环境变量):', booksDir);
-  console.log('[BookTextExtractor] booksDir (绝对路径):', path.isAbsolute(booksDir) ? booksDir : path.resolve(process.cwd(), booksDir));
-  console.log('[BookTextExtractor] 当前工作目录:', process.cwd());
-  uniquePaths.forEach((p, i) => {
-    const exists = fs.existsSync(p);
-    console.log(`  ${i + 1}. ${p} ${exists ? '✅' : '❌'}`);
-  });
+    console.log('[BookTextExtractor] 尝试查找文件路径:');
+    console.log('[BookTextExtractor] booksDir (环境变量):', booksDir);
+    console.log('[BookTextExtractor] booksDir (绝对路径):', path.isAbsolute(booksDir) ? booksDir : path.resolve(process.cwd(), booksDir));
+    console.log('[BookTextExtractor] 当前工作目录:', process.cwd());
+    uniquePaths.forEach((p, i) => {
+      const exists = fs.existsSync(p);
+      console.log(`  ${i + 1}. ${p} ${exists ? '✅' : '❌'}`);
+    });
 
-  for (const possiblePath of uniquePaths) {
-    if (fs.existsSync(possiblePath)) {
-      filePath = possiblePath;
-      console.log('[BookTextExtractor] ✅ 找到本地文件:', filePath);
-      break;
+    for (const possiblePath of uniquePaths) {
+      if (fs.existsSync(possiblePath)) {
+        filePath = possiblePath;
+        console.log('[BookTextExtractor] ✅ 找到本地文件:', filePath);
+        break;
+      }
     }
   }
 

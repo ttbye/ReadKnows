@@ -6,6 +6,7 @@
 
 import { useEffect, useState, useRef } from 'react';
 import { useSearchParams, Link, useNavigate } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import api from '../utils/api';
 import { Book, Search, Grid3x3, List, ArrowUpDown, ArrowUp, ArrowDown, X } from 'lucide-react';
 import toast from 'react-hot-toast';
@@ -27,6 +28,7 @@ type SortOption = 'created_at' | 'title' | 'author' | 'rating';
 type SortOrder = 'desc' | 'asc';
 
 export default function SearchResults() {
+  const { t } = useTranslation();
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
   const query = searchParams.get('q') || '';
@@ -111,7 +113,7 @@ export default function SearchResults() {
       if (error.statusText !== 'OK (Offline Cache)' && error.statusText !== 'OK (Offline, No Cache)') {
         // 只有在在线且确实失败时才显示错误
         if (navigator.onLine) {
-          toast.error(error.response?.data?.error || '搜索失败');
+          toast.error(error.response?.data?.error || t('search.searchFailed') || '搜索失败');
         }
       }
     } finally {
@@ -127,7 +129,7 @@ export default function SearchResults() {
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
     if (!searchInput.trim()) {
-      toast.error('请输入搜索关键词');
+      toast.error(t('book.enterSearchKeyword'));
       return;
     }
     setSearchParams({ q: searchInput.trim(), scope });
@@ -154,6 +156,7 @@ export default function SearchResults() {
                 src={coverUrl}
                 alt={book.title}
                 className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                onContextMenu={(e) => e.preventDefault()}
                 onError={(e) => {
                   const target = e.target as HTMLImageElement;
                   target.style.display = 'none';
@@ -182,7 +185,7 @@ export default function SearchResults() {
             {book.title}
           </h3>
           <p className="text-xs text-gray-600 dark:text-gray-400 line-clamp-1 mb-2">
-            {book.author || '未知作者'}
+            {book.author || t('book.unknownAuthor')}
           </p>
           {book.rating !== undefined && book.rating > 0 && (
             <div className="flex items-center gap-1 mt-auto">
@@ -209,6 +212,7 @@ export default function SearchResults() {
                 src={coverUrl}
                 alt={book.title}
                 className="w-full h-full object-cover"
+                onContextMenu={(e) => e.preventDefault()}
                 onError={(e) => {
                   const target = e.target as HTMLImageElement;
                   target.style.display = 'none';
@@ -227,7 +231,7 @@ export default function SearchResults() {
             {book.title}
           </h3>
           <p className="text-sm text-gray-600 dark:text-gray-400 mb-2">
-            {book.author || '未知作者'}
+            {book.author || t('book.unknownAuthor')}
           </p>
           {book.description && (
             <p className="text-sm text-gray-500 dark:text-gray-500 line-clamp-2 mb-2">
@@ -261,7 +265,7 @@ export default function SearchResults() {
               <input
                 type="text"
                 placeholder={scope === 'shelf' ? '搜索我的书架...' : '搜索书籍、作者...'}
-                className="w-full pl-10 pr-10 py-2.5 bg-gray-50 dark:bg-gray-900 border border-gray-300 dark:border-gray-600 rounded-lg text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 focus:border-transparent transition-all"
+                className="w-full pl-12 pr-10 py-2.5 bg-gray-50 dark:bg-gray-900 border border-gray-300 dark:border-gray-600 rounded-lg text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 focus:border-transparent transition-all"
                 value={searchInput}
                 onChange={(e) => setSearchInput(e.target.value)}
                 autoFocus
@@ -280,7 +284,7 @@ export default function SearchResults() {
               type="submit"
               className="px-6 py-2.5 bg-blue-600 hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 text-white rounded-lg transition-colors font-medium"
             >
-              搜索
+              {t('common.search')}
             </button>
           </div>
         </form>
@@ -291,10 +295,10 @@ export default function SearchResults() {
         <div className="bg-gray-50 dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700 px-4 py-2">
           <div className="max-w-4xl mx-auto flex items-center justify-between">
             <div className="text-sm text-gray-600 dark:text-gray-400">
-              找到 <span className="font-semibold text-gray-900 dark:text-gray-100">{books.length}</span> 本相关书籍
+              {t('search.foundBooks', { count: books.length })}
               {query && (
                 <span className="ml-2">
-                  关键词: <span className="font-medium text-blue-600 dark:text-blue-400">"{query}"</span>
+                  {t('search.keyword')}: <span className="font-medium text-blue-600 dark:text-blue-400">"{query}"</span>
                 </span>
               )}
             </div>

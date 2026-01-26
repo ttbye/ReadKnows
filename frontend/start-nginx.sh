@@ -1,9 +1,19 @@
 #!/bin/sh
 # 启动脚本：生成nginx配置
-# 注意：Ollama 地址现在只在系统后台管理中配置，不再使用环境变量
+# 注意：Ollama API 由后端直接调用，前端不需要代理
 
-# 直接复制模板到配置目录（不再需要替换 OLLAMA_HOST 和 OLLAMA_PORT）
+# 直接复制模板到配置目录
 cp /etc/nginx/templates/default.conf.template /etc/nginx/conf.d/default.conf
+
+# 检查SSL证书文件是否存在
+if [ ! -f /etc/nginx/ssl/cert.pem ] && [ ! -f /etc/nginx/ssl/fullchain.pem ]; then
+    echo "⚠️  警告: SSL证书文件不存在 (/etc/nginx/ssl/cert.pem 或 /etc/nginx/ssl/fullchain.pem)"
+    echo "⚠️  HTTPS服务可能无法启动，请确保证书文件已挂载到容器中"
+    echo "⚠️  证书文件应放在宿主机 /volume5/docker/ReadKnows/data/ssl/ 目录下"
+    echo "⚠️  文件应命名为 cert.pem 和 key.pem (或 fullchain.pem 和 privkey.pem)"
+else
+    echo "✓ SSL证书文件检查通过"
+fi
 
 echo "✓ nginx配置生成成功"
 

@@ -1,0 +1,35 @@
+{
+  "server1": {
+    "applicationId": "com.readknows.server1",
+    "appName": "ReadKnows Server1",
+    "appIconPath": "./readknows-sw.png",
+    "apiUrl": "https://server1.example.com",
+    "apiKey": "your-api-key-1",
+    "keystoreFile": "server1-key.jks",
+    "keystorePassword": "your-keystore-password-1",
+    "keyAlias": "server1",
+    "keyPassword": "your-key-password-1"
+  },
+  "server2": {
+    "applicationId": "com.readknows.server2",
+    "appName": "ReadKnows Server2",
+    "appIconPath": "./readknows-sw.png",
+    "apiUrl": "https://server2.example.com",
+    "apiKey": "your-api-key-2",
+    "keystoreFile": "server2-key.jks",
+    "keystorePassword": "your-keystore-password-2",
+    "keyAlias": "server2",
+    "keyPassword": "your-key-password-2"
+  },
+  "default": {
+    "applicationId": "com.readknows.app",
+    "appName": "ReadKnows",
+    "appIconPath": "./readknows-sw.png",
+    "apiUrl": "",
+    "apiKey": "",
+    "keystoreFile": "readknows-release-key.jks",
+    "keystorePassword": "",
+    "keyAlias": "readknows",
+    "keyPassword": ""
+  }
+}

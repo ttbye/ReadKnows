@@ -29,8 +29,8 @@ services:
       - TRANSFORMERS_CACHE=/app/models/.cache/huggingface
       - HF_DATASETS_CACHE=/app/models/.cache/huggingface
     volumes:
-      - D:\Docker\ReadKnows\tts-models:/app/models
-      - D:\Docker\ReadKnows\tts-temp:/app/temp
+      - E:\docker\ReadKnows\tts-models:/app/models
+      - E:\docker\ReadKnows\tts-temp:/app/temp
       # 如果 other_models 在独立目录，取消下面的注释
       # - D:\Docker\ReadKnows\tts-other-models:/app/models/../other_models
     restart: unless-stopped
