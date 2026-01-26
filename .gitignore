@@ -85,3 +85,8 @@ frontend/apk-profiles.json
 *.pid
 *.seed
 *.pid.lock
+
+# 大文件（超过 GitHub 限制）
+*.zip
+ocr-models.zip
+**/ocr-models.zip
