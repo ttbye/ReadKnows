@@ -34,7 +34,7 @@ export default function CategoryManagement() {
   // 检查管理员权限
   useEffect(() => {
     if (!user || user.role !== 'admin') {
-      toast.error('需要管理员权限');
+      toast.error(t('categoryManagement.noPermission'));
       navigate('/');
     }
   }, [user, navigate]);
@@ -53,7 +53,7 @@ export default function CategoryManagement() {
       setCategories(response.data.categories || []);
     } catch (error) {
       console.error('获取书籍类型列表失败:', error);
-      toast.error('获取书籍类型列表失败');
+      toast.error(t('categoryManagement.fetchCategoriesFailed'));
     } finally {
       setLoading(false);
     }
@@ -73,7 +73,7 @@ export default function CategoryManagement() {
 
   const handleSave = async () => {
     if (!formData.name.trim()) {
-      toast.error('请输入书籍类型名称');
+      toast.error(t('categoryManagement.pleaseEnterCategoryName'));
       return;
     }
 
@@ -236,7 +236,7 @@ export default function CategoryManagement() {
             <div className="space-y-4">
               <div>
                 <label className="block text-sm font-medium mb-2 text-gray-900 dark:text-gray-100">
-                  类型名称 <span className="text-red-500">*</span>
+                  {t('settings.categoryName')} <span className="text-red-500">*</span>
                 </label>
                 <input
                   type="text"
@@ -256,7 +256,7 @@ export default function CategoryManagement() {
                   type="number"
                   value={formData.display_order}
                   onChange={(e) => setFormData({ ...formData, display_order: parseInt(e.target.value) || 0 })}
-                  placeholder="数字越小越靠前"
+                  placeholder={t('settings.displayOrderPlaceholder') || '数字越小越靠前'}
                   className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-purple-500 dark:bg-gray-700 dark:text-white"
                 />
               </div>
@@ -270,7 +270,7 @@ export default function CategoryManagement() {
                   }}
                   className="flex-1 px-4 py-2 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
                 >
-                  取消
+                  {t('common.cancel')}
                 </button>
                 <button
                   onClick={handleSave}

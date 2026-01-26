@@ -2432,6 +2432,10 @@ export default function Settings() {
             </div>
             
             <div className="space-y-6">
+              {/* 私有访问密钥设置 */}
+              <div className="bg-blue-50 dark:bg-blue-900/20 p-4 rounded-lg border border-blue-200 dark:border-blue-800">
+                <h3 className="text-sm font-semibold text-blue-900 dark:text-blue-100 mb-3">{t('settings.privateAccessKey')}</h3>
+                <div className="space-y-3">
               <div>
                 <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">
                   时区偏移（小时）

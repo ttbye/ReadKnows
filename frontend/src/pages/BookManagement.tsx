@@ -49,7 +49,7 @@ export default function BookManagement() {
   // 检查管理员权限
   useEffect(() => {
     if (!user || user.role !== 'admin') {
-      toast.error('需要管理员权限');
+      toast.error(t('bookManagement.needAdminPermission'));
       navigate('/');
       return;
     }
@@ -245,7 +245,7 @@ export default function BookManagement() {
       <div className="min-h-screen flex items-center justify-center">
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
-          <p className="mt-4 text-gray-600">加载中...</p>
+          <p className="mt-4 text-gray-600">{t('bookManagement.loading')}</p>
         </div>
       </div>
     );
@@ -323,9 +323,9 @@ export default function BookManagement() {
                 onChange={(e) => setFilterType(e.target.value as any)}
                 className="w-full pl-9 pr-4 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
               >
-                <option value="all">全部书籍</option>
-                <option value="public">公开书籍</option>
-                <option value="private">私有书籍</option>
+                <option value="all">{t('bookManagement.allBooks')}</option>
+                <option value="public">{t('bookManagement.publicBooks')}</option>
+                <option value="private">{t('bookManagement.privateBooks')}</option>
               </select>
             </div>
           </div>
@@ -342,7 +342,7 @@ export default function BookManagement() {
                   className="text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200 flex items-center gap-1"
                 >
                   <X className="w-4 h-4" />
-                  取消选择
+                  {t('bookManagement.deselectAll')}
                 </button>
               </div>
               <div className="flex flex-wrap gap-2">

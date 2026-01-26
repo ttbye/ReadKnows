@@ -1566,6 +1566,17 @@ export default function ReaderEPUBPro({
                 }
               } catch (e) {}
 
+              // 优先检查并隐藏 UI 元素（功能条、导航栏等）
+              // 如果隐藏了 UI，则不翻页
+              const checkAndHideUI = (window as any).__readerCheckAndHideUI;
+              if (checkAndHideUI && typeof checkAndHideUI === 'function') {
+                const hasHiddenUI = checkAndHideUI();
+                if (hasHiddenUI) {
+                  // 如果隐藏了 UI，不执行翻页
+                  return;
+                }
+              }
+
               const now = Date.now();
               const debounceTime = 300;
               if (now - pageTurnStateRef.current.lastPageTurnTime < debounceTime) return;

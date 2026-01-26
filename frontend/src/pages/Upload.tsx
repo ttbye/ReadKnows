@@ -73,7 +73,7 @@ export default function Upload() {
     ? user.can_upload_private 
     : (user?.role === 'admin'); // 默认：管理员允许，普通用户不允许
   const [isPublic, setIsPublic] = useState(true); // 默认改为公开
-  const [category, setCategory] = useState('未分类');
+  const [category, setCategory] = useState('');
   const [deleteSource, setDeleteSource] = useState(false); // 是否删除源文件
   const [bookCategories, setBookCategories] = useState<string[]>([]);
   
@@ -816,7 +816,7 @@ export default function Upload() {
                   ) : (
                     <>
                       <Scan className="w-4 h-4" />
-                      扫描
+                      {t('upload.scan')}
                     </>
                   )}
                 </button>
@@ -847,7 +847,7 @@ export default function Upload() {
                 onClick={handleSelectAllLocalFiles}
                 className="text-sm text-purple-600 hover:text-purple-700 dark:text-purple-400 px-2 py-1 rounded hover:bg-purple-50 dark:hover:bg-purple-900/20"
               >
-                {localFiles.every((f) => f.selected) ? '取消全选' : '全选'}
+                {localFiles.every((f) => f.selected) ? t('upload.deselectAll') : t('upload.selectAll')}
               </button>
               <span className="text-sm text-gray-600 dark:text-gray-400">
                 已选 {selectedLocalCount} 个
@@ -996,7 +996,7 @@ export default function Upload() {
                 onClick={handleSelectAll}
                 className="text-sm text-blue-600 hover:text-blue-700 dark:text-blue-400 px-2 py-1 rounded hover:bg-blue-50 dark:hover:bg-blue-900/20"
               >
-                {scannedFiles.every((f) => f.selected) ? '取消全选' : '全选'}
+                {scannedFiles.every((f) => f.selected) ? t('upload.deselectAll') : t('upload.selectAll')}
               </button>
               <span className="text-sm text-gray-600 dark:text-gray-400">
                 已选 {selectedCount} 个
@@ -1123,7 +1123,7 @@ export default function Upload() {
                 className="px-3 py-1.5 text-sm bg-red-600 hover:bg-red-700 text-white rounded transition-colors flex items-center gap-1"
               >
                 <Trash2 className="w-4 h-4" />
-                清空历史
+                {t('upload.clearHistory')}
               </button>
             )}
           </div>
@@ -1131,7 +1131,7 @@ export default function Upload() {
           {loadingHistory ? (
             <div className="text-center py-6">
               <Loader className="w-6 h-6 animate-spin mx-auto text-blue-600" />
-              <p className="text-sm text-gray-500 dark:text-gray-400 mt-2">加载中...</p>
+              <p className="text-sm text-gray-500 dark:text-gray-400 mt-2">{t('common.loading')}</p>
             </div>
           ) : importHistory.length === 0 ? (
             <div className="text-center py-6">
