@@ -78,6 +78,7 @@ coverage/
 
 # APK 个人配置（不应提交）
 apk.sh
+apk-hydro.sh
 frontend/apk-config.json
 frontend/apk-profiles.json
 
