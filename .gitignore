@@ -76,11 +76,13 @@ cache/calibre/
 coverage/
 .nyc_output/
 
-# APK 个人配置（不应提交）
+# APK 与敏感域名配置（含个人域名/API 等，切勿提交到 GitHub）
 apk.sh
 apk-hydro.sh
 frontend/apk-config.json
 frontend/apk-profiles.json
+frontend/capacitor.config.ts
+# 敏感域名示例（勿在仓库中出现）：vlistttbye.i234.me / hydroreader.qhsw.org.cn
 
 # 其他
 *.pid
