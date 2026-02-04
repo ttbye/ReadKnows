@@ -818,6 +818,15 @@ export const getActualApiUrl = (): string => {
   return getBaseURL();
 };
 
+/** 用于 @font-face 等需要拼接 api 路径的 base：相对时为 ''，绝对时为 origin（不含 /api） */
+export const getFontsBaseUrl = (): string => {
+  const u = getBaseURL();
+  if (!u || u === '/api' || u.startsWith('/')) return '';
+  const clean = u.replace(/\/+$/, '');
+  if (clean.endsWith('/api')) return clean.slice(0, -4);
+  return clean;
+};
+
 // 获取完整的 API URL（用于直接使用 fetch 的场景）
 export const getFullApiUrl = (path: string): string => {
   const baseURL = getBaseURL();
@@ -1087,16 +1096,16 @@ export const debugApiConfig = (): void => {
   
   // 安全修复：仅在开发环境输出配置信息，避免生产环境泄露敏感信息
   if (import.meta.env.DEV) {
-    console.log('[API配置] 当前配置信息:', {
-      baseURL,
-      customUrl,
-      hasApiKey: !!apiKey,
-      envUrl,
-      hasEnvApiKey: !!envApiKey,
-      isAPK,
-      axiosDefaultBaseURL: api.defaults.baseURL,
-      origin: typeof window !== 'undefined' ? window.location.origin : 'N/A'
-    });
+    // console.log('[API配置] 当前配置信息:', {
+    //   baseURL,
+    //   customUrl,
+    //   hasApiKey: !!apiKey,
+    //   envUrl,
+    //   hasEnvApiKey: !!envApiKey,
+    //   isAPK,
+    //   axiosDefaultBaseURL: api.defaults.baseURL,
+    //   origin: typeof window !== 'undefined' ? window.location.origin : 'N/A'
+    // });
   }
 };
 

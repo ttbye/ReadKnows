@@ -62,17 +62,26 @@ async function generateIcons() {
     // 尝试使用 sharp（推荐）
     let sharp;
     try {
-      sharp = (await import('sharp')).default;
-    } catch (e) {
-      console.error('❌ 未找到 sharp 库');
-      console.log('');
-      console.log('💡 请安装 sharp 库:');
-      console.log('   npm install --save-dev sharp');
-      console.log('');
-      console.log('   或者使用 ImageMagick:');
-      console.log('   brew install imagemagick  # macOS');
-      console.log('   apt-get install imagemagick  # Linux');
-      process.exit(1);
+      // 先尝试同步导入
+      const sharpModule = require('sharp');
+      sharp = sharpModule.default || sharpModule;
+      console.log('✅ 使用同步导入的 sharp 库');
+    } catch (syncError) {
+      try {
+        // 如果同步导入失败，尝试动态导入
+        sharp = (await import('sharp')).default;
+        console.log('✅ 使用动态导入的 sharp 库');
+      } catch (dynamicError) {
+        console.error('❌ 未找到 sharp 库');
+        console.log('');
+        console.log('💡 请安装 sharp 库:');
+        console.log('   npm install --save-dev sharp');
+        console.log('');
+        console.log('   或者使用 ImageMagick:');
+        console.log('   brew install imagemagick  # macOS');
+        console.log('   apt-get install imagemagick  # Linux');
+        process.exit(1);
+      }
     }
 
     // 读取源图标

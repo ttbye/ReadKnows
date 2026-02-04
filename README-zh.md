@@ -6,7 +6,7 @@
 
 <div align="center">
 
-![Version](https://img.shields.io/badge/version-2.3.261.beta-blue.svg)
+![Version](https://img.shields.io/badge/version-2.4.262-blue.svg)
 ![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)
 ![Docker](https://img.shields.io/badge/docker-ready-blue.svg)
 ![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux%20%7C%20NAS-lightgrey.svg)
@@ -48,6 +48,7 @@ ReadKnows（读士私人书库）是一个功能强大的私人电子书管理�
 - 📄 **Office 文档**: 支持 Office 文档（Word、Excel、PowerPoint）的上传和浏览
 - 🎧 **有声小说**: 支持有声书/有声小说的导入、管理与播放
 - 💬 **书友交流**: 内置书友系统与消息中心，支持好友、书友会群聊、文件与书籍分享
+- 🔤 **OCR 识别**: 支持图片文字识别，适用于 PDF 和图片中的文字提取（支持多语言）
 
 ---
 
@@ -63,6 +64,7 @@ ReadKnows（读士私人书库）是一个功能强大的私人电子书管理�
 - 笔记和高亮（离线可用，联网自动同步）
 - 全文搜索（支持正则表达式）
 - 阅读进度同步（多设备同步）
+- OCR 文字识别（支持 PDF 图片中的文字识别，支持多语言）
 
 ### 📚 管理功能
 - 上传、删除、编辑书籍信息

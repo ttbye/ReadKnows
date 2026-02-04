@@ -1,8 +1,8 @@
 import type { CapacitorConfig } from '@capacitor/cli';
 
 const config: CapacitorConfig = {
-  appId: 'me.i234.vlistttbye',
-  appName: 'ReadKnows',
+  appId: 'com.qhsw.HydroReader',
+  appName: 'HydroReader',
   webDir: 'dist',
   server: {
     // 开发时可以使用本地服务器，生产环境注释掉

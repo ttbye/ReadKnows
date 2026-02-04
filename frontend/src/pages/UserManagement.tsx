@@ -26,6 +26,7 @@ interface UserItem {
   can_download?: boolean;
   can_push?: boolean;
   can_upload_audiobook?: boolean;
+  can_use_friends?: boolean;
   created_at: string;
   updated_at: string;
   last_login_time?: string;
@@ -57,6 +58,7 @@ interface EditUserForm {
   can_download?: boolean;
   can_push?: boolean;
   can_upload_audiobook?: boolean;
+  can_use_friends?: boolean;
 }
 
 export default function UserManagement() {
@@ -91,6 +93,7 @@ export default function UserManagement() {
     can_edit_books: true,
     can_download: true,
     can_push: true,
+    can_use_friends: true,
   });
   const [editing, setEditing] = useState(false);
   
@@ -167,7 +170,7 @@ export default function UserManagement() {
       toast.success(t('userManagement.userUpdated'), { id: updateToast });
       setShowEditModal(false);
       setEditingUser(null);
-      setEditForm({ email: '', nickname: '', can_upload_private: true, max_private_books: 30, can_upload_books: true, can_edit_books: true, can_download: true, can_push: true, can_upload_audiobook: false });
+      setEditForm({ email: '', nickname: '', can_upload_private: true, max_private_books: 30, can_upload_books: true, can_edit_books: true, can_download: true, can_push: true, can_upload_audiobook: false, can_use_friends: true });
       fetchUsers();
     } catch (error: any) {
       let errorMessage = t('userManagement.updateUserFailed');
@@ -218,9 +221,12 @@ export default function UserManagement() {
       can_push: userItem.can_push !== undefined 
         ? userItem.can_push 
         : true, // 默认为true（向后兼容）
-      can_upload_audiobook: userItem.can_upload_audiobook !== undefined 
-        ? userItem.can_upload_audiobook 
+      can_upload_audiobook: userItem.can_upload_audiobook !== undefined
+        ? userItem.can_upload_audiobook
         : (userItem.role === 'admin'), // 默认：管理员允许，普通用户禁用
+      can_use_friends: userItem.can_use_friends !== undefined
+        ? userItem.can_use_friends
+        : true, // 默认允许（向后兼容）
     });
     setShowEditModal(true);
   };
@@ -804,7 +810,7 @@ export default function UserManagement() {
                 onClick={() => {
                   setShowEditModal(false);
                   setEditingUser(null);
-                  setEditForm({ email: '', nickname: '', can_upload_private: true, max_private_books: 30, can_upload_books: true, can_edit_books: true, can_download: true, can_push: true, can_upload_audiobook: false });
+                  setEditForm({ email: '', nickname: '', can_upload_private: true, max_private_books: 30, can_upload_books: true, can_edit_books: true, can_download: true, can_push: true, can_upload_audiobook: false, can_use_friends: true });
                 }}
                 className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
               >
@@ -909,6 +915,18 @@ export default function UserManagement() {
                         />
                       </label>
                     </div>
+
+                    <div className="col-span-2 p-2 bg-gray-50 dark:bg-gray-800 rounded border border-gray-200 dark:border-gray-700">
+                      <label className="flex items-center justify-between cursor-pointer">
+                        <span className="text-xs font-medium text-gray-700 dark:text-gray-300">书友功能</span>
+                        <input
+                          type="checkbox"
+                          checked={editForm.can_use_friends !== undefined ? editForm.can_use_friends : true}
+                          onChange={(e) => setEditForm({ ...editForm, can_use_friends: e.target.checked })}
+                          className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 dark:focus:ring-blue-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600"
+                        />
+                      </label>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -920,7 +938,7 @@ export default function UserManagement() {
                 onClick={() => {
                   setShowEditModal(false);
                   setEditingUser(null);
-                  setEditForm({ email: '', nickname: '', can_upload_private: true, max_private_books: 30, can_upload_books: true, can_edit_books: true, can_download: true, can_push: true, can_upload_audiobook: false });
+                  setEditForm({ email: '', nickname: '', can_upload_private: true, max_private_books: 30, can_upload_books: true, can_edit_books: true, can_download: true, can_push: true, can_upload_audiobook: false, can_use_friends: true });
                 }}
                 disabled={editing}
                 className="flex-1 px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50 transition-colors"

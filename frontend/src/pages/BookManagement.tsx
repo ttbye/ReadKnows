@@ -194,7 +194,7 @@ export default function BookManagement() {
     }
 
     try {
-      toast.info('正在更新豆瓣信息，请稍候...');
+      toast('正在更新豆瓣信息，请稍候...');
       const response = await api.post('/books/batch/update-douban', {
         bookIds: Array.from(selectedBooks),
       });

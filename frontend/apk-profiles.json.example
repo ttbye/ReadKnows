@@ -22,7 +22,7 @@
     "keyPassword": "your-key-password-2"
   },
   "default": {
-    "applicationId": "com.readknows.app",
+    "applicationId": "top.readknows.app",
     "appName": "ReadKnows",
     "appIconPath": "./readknows-sw.png",
     "apiUrl": "",

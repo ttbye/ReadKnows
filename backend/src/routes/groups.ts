@@ -8,12 +8,14 @@
 import express from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import { db } from '../db';
-import { authenticateToken, AuthRequest } from '../middleware/auth';
+import { authenticateToken, AuthRequest, requireCanUseFriends } from '../middleware/auth';
 
 const router = express.Router();
 
 // 所有路由都需要认证
 router.use(authenticateToken);
+// 所有路由都需要书友权限
+router.use(requireCanUseFriends);
 
 // 获取用户的所有群组
 router.get('/', async (req: AuthRequest, res) => {

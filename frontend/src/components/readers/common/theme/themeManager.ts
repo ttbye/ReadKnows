@@ -18,6 +18,50 @@ export interface ThemeConfig {
   innerPadding: string;
 }
 
+/** 自定义字体 ID 前缀，阅读设置中 value 为 "custom:uuid" 时使用 */
+export const CUSTOM_FONT_FAMILY_PREFIX = 'ReadKnowsCustomFont-';
+
+/** 根据文件扩展名返回 @font-face 的 format 值 */
+function getFontFormat(fileName: string): string {
+  const ext = (fileName.split('.').pop() || '').toLowerCase();
+  if (ext === 'woff2') return ' format("woff2")';
+  if (ext === 'woff') return ' format("woff")';
+  if (ext === 'otf') return ' format("opentype")';
+  return ' format("truetype")';
+}
+
+/** 根据自定义字体列表生成 @font-face 样式内容，用于注入到 document 或 iframe */
+export function buildCustomFontsStyleContent(
+  fonts: Array<{ id: string; file_name: string }>,
+  fontsBaseUrl: string
+): string {
+  if (!fonts.length) {
+    return '';
+  }
+  const base = fontsBaseUrl ? fontsBaseUrl.replace(/\/+$/, '') + '/' : '';
+  const apiPath = base ? base + 'api/fonts/file-by-id/' : '/api/fonts/file-by-id/';
+
+  const css = fonts
+    .map((f) => {
+      // 总是使用网络URL，确保@font-face在页面刷新后仍然有效
+      const timestamp = Date.now();
+      const url = `${apiPath}${encodeURIComponent(f.id)}?t=${timestamp}&v=${Math.random()}`;
+
+      const format = getFontFormat(f.file_name);
+      const rule = `@font-face{font-family:"${CUSTOM_FONT_FAMILY_PREFIX}${f.id}";src:url("${url}")${format};font-display:swap;}`;
+      return rule;
+    })
+    .join('\n');
+
+  return css;
+}
+
+function isCustomFontId(v: string): boolean {
+  if (!v || typeof v !== 'string') return false;
+  if (v.startsWith('custom:')) return true;
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v.trim());
+}
+
 /**
  * 获取主题样式
  */
@@ -32,16 +76,39 @@ export function getThemeStyles(theme: ReadingSettings['theme']): ThemeStyles {
 }
 
 /**
- * 获取字体族
+ * 获取字体族（支持自定义字体 custom:id、常用字体名、兼容旧值 serif/sans-serif）
  */
 export function getFontFamily(fontFamily: string): string {
-  switch (fontFamily) {
+  const v = fontFamily && fontFamily.trim();
+  if (!v) return '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif';
+  if (v.startsWith('custom:')) {
+    const id = v.slice(7).trim();
+    const result = id ? `"${CUSTOM_FONT_FAMILY_PREFIX}${id}", sans-serif` : '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+    return result;
+  }
+  if (isCustomFontId(v)) {
+    return `"${CUSTOM_FONT_FAMILY_PREFIX}${v}", sans-serif`;
+  }
+  switch (v) {
+    case 'songti':
+    case 'song':
+      return '"Songti SC", "SimSun", "宋体", "STSong", serif';
+    case 'kaiti':
+    case 'kai':
+      return '"Kaiti SC", "楷体", "KaiTi", serif';
+    case 'heiti':
+    case 'hei':
+      return '"Heiti SC", "黑体", "SimHei", sans-serif';
+    case 'yahei':
+      return '"Microsoft YaHei", "微软雅黑", sans-serif';
+    case 'fangsong':
+      return '"FangSong", "仿宋", "Fangsong", serif';
+    case 'monospace':
+      return '"SF Mono", Monaco, "Cascadia Code", "Roboto Mono", Consolas, "Courier New", monospace';
     case 'serif':
       return '"Songti SC", "SimSun", "宋体", "STSong", serif';
     case 'sans-serif':
       return '-apple-system, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "微软雅黑", "WenQuanYi Micro Hei", sans-serif';
-    case 'monospace':
-      return '"SF Mono", Monaco, "Cascadia Code", "Roboto Mono", Consolas, "Courier New", monospace';
     case 'default':
     default:
       return '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif';

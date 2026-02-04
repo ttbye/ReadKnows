@@ -30,6 +30,7 @@ export default function UserProfile() {
   const { userId } = useParams<{ userId: string }>();
   const navigate = useNavigate();
   const { user: currentUser } = useAuthStore();
+  const canUseFriends = currentUser?.can_use_friends !== undefined ? currentUser.can_use_friends : true;
   const [profile, setProfile] = useState<ProfileUser | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -166,8 +167,8 @@ export default function UserProfile() {
             )}
           </div>
 
-          {/* 发消息（非本人且为好友时） */}
-          {profile.isFriend && !profile.isSelf && (
+          {/* 发消息（非本人且为好友时，且需要书友权限） */}
+          {profile.isFriend && !profile.isSelf && canUseFriends && (
             <div className="mt-4 flex justify-center">
               <button
                 onClick={handleChat}

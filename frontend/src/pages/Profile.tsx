@@ -205,6 +205,9 @@ export default function Profile() {
     ? (user as any).can_import_audiobook === true || (user as any).can_import_audiobook === 1 || (user as any).can_import_audiobook === '1'
     : user?.role === 'admin'; // 默认：只有管理员可以导入（向后兼容）
 
+  // 检查书友功能权限
+  const canUseFriends = user?.can_use_friends !== undefined ? user.can_use_friends : true;
+
   // 功能菜单项
   const menuItems = [
     { path: '/upload', label: t('profile.uploadBooks'), icon: Upload, color: 'bg-blue-500', adminOnly: false, show: true },
@@ -213,7 +216,7 @@ export default function Profile() {
     { path: '/settings', label: t('profile.systemSettings'), icon: Settings, color: 'bg-green-500', adminOnly: false, show: true },
     { path: '/notes', label: t('navigation.notes'), icon: StickyNote, color: 'bg-cyan-500', adminOnly: false, show: true },
     { path: '/logs', label: '日志管理', icon: FileText, color: 'bg-indigo-500', adminOnly: true, show: user?.role === 'admin' },
-    { path: '/messages', label: t('friends.title'), icon: MessageCircle, color: 'bg-yellow-500', adminOnly: false, show: true },
+    { path: '/messages', label: t('friends.title'), icon: MessageCircle, color: 'bg-yellow-500', adminOnly: false, show: canUseFriends },
     ...(user?.role === 'admin'
       ? [
           { path: '/users', label: t('profile.userManagement'), icon: Users, color: 'bg-purple-500', adminOnly: true, show: true },

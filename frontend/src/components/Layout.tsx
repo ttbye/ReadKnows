@@ -33,9 +33,13 @@ export default function Layout({ children }: LayoutProps) {
   const { theme, effectiveTheme, setTheme } = useTheme();
   const domTheme = useDomTheme();
   const { t } = useTranslation();
+
+  // 权限计算 - 提前定义以避免初始化顺序问题
+  const canUseFriends = user?.can_use_friends !== undefined ? user.can_use_friends : true;
   const [systemTitle, setSystemTitle] = useState<string>('读士私人书库');
   const [unreadMessageCount, setUnreadMessageCount] = useState<number>(0);
   const previousUnreadCountRef = useRef<number>(0); // 用于检测未读数变化
+  const unreadCountForbiddenRef = useRef<boolean>(false); // 403 时不再轮询未读消息
   const [isPWA, setIsPWA] = useState(false);
   const [showStopConfirm, setShowStopConfirm] = useState(false);
   const [navMiniInfo, setNavMiniInfo] = useState<{ title: string; author?: string; cover?: string | null } | null>(null);
@@ -361,11 +365,18 @@ export default function Layout({ children }: LayoutProps) {
   };
 
   const fetchUnreadMessageCount = async (): Promise<boolean> => {
+    if (unreadCountForbiddenRef.current) return false;
     try {
       let response;
       try {
         response = await api.get('/messages/unread-count', { timeout: 3000 });
       } catch (error: any) {
+        // 403 表示无书友/消息权限，不再轮询
+        if (error.response?.status === 403) {
+          unreadCountForbiddenRef.current = true;
+          setUnreadMessageCount(0);
+          return false;
+        }
         // 如果是429错误，重试一次
         if (error.response?.status === 429) {
           console.warn('[fetchUnreadMessageCount] 429错误，等待1秒后重试');
@@ -389,6 +400,11 @@ export default function Layout({ children }: LayoutProps) {
       setUnreadMessageCount(newCount);
       return true; // 成功
     } catch (error: any) {
+      if (error.response?.status === 403) {
+        unreadCountForbiddenRef.current = true;
+        setUnreadMessageCount(0);
+        return false;
+      }
       // 如果是连接错误（后端未运行），静默失败，不频繁报错
       const isConnectionError = error.code === 'ECONNREFUSED' ||
                                 error.code === 'ERR_NETWORK' ||
@@ -406,6 +422,8 @@ export default function Layout({ children }: LayoutProps) {
   // 获取未读消息数
   useEffect(() => {
     if (!isAuthenticated) return;
+    if (!canUseFriends) return;
+    if (unreadCountForbiddenRef.current) return;
     
     let retryCount = 0;
     const maxRetries = 3; // 最多重试3次
@@ -472,7 +490,7 @@ export default function Layout({ children }: LayoutProps) {
       }
       window.removeEventListener('messages:unreadCountChanged', handleUnreadCountChanged);
     };
-  }, [isAuthenticated, location.pathname]); // 当路由变化时也刷新
+  }, [isAuthenticated, canUseFriends, location.pathname]); // 当路由变化时也刷新
 
   const handleReadingClick = () => {
     if (latestBook && latestBook.book_id) {
@@ -597,7 +615,7 @@ export default function Layout({ children }: LayoutProps) {
         { path: '/profile', label: t('profile.my'), icon: User },
         { path: '/settings', label: t('navigation.systemSettings'), icon: Settings },
         ...(canUploadBooks ? [{ path: '/upload', label: t('navigation.uploadBook'), icon: Upload }] : []),
-        { path: '/messages', label: t('friends.title'), icon: Bell },
+        ...(canUseFriends ? [{ path: '/messages', label: t('friends.title'), icon: Bell }] : []),
         ...(user?.role === 'admin'
           ? [
               { path: '/books-management', label: t('navigation.bookManagement'), icon: FolderOpen },
@@ -1355,25 +1373,27 @@ export default function Layout({ children }: LayoutProps) {
                     </div>
                   )}
                   {/* 消息按钮 - 移动端显示 */}
-                  <Link
-                    to="/messages"
-                    className={`p-2 rounded-lg transition-colors lg:hidden ${
-                      location.pathname === '/messages' || location.pathname.startsWith('/messages')
-                        ? 'text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20'
-                        : 'text-gray-600 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-gray-100 dark:hover:bg-gray-800'
-                    }`}
-                    title={t('navigation.messages') || '消息'}
-                    onClick={() => {
-                      // 点击消息后立即刷新未读消息数
-                      fetchUnreadMessageCount();
-                    }}
-                  >
-                    <Bell className={`w-5 h-5 transition-colors ${
-                      unreadMessageCount > 0 
-                        ? 'text-red-500 dark:text-red-400' 
-                        : 'text-gray-600 dark:text-gray-400'
-                    }`} />
-                  </Link>
+                  {canUseFriends && (
+                    <Link
+                      to="/messages"
+                      className={`p-2 rounded-lg transition-colors lg:hidden ${
+                        location.pathname === '/messages' || location.pathname.startsWith('/messages')
+                          ? 'text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20'
+                          : 'text-gray-600 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-gray-100 dark:hover:bg-gray-800'
+                      }`}
+                      title={t('navigation.messages') || '消息'}
+                      onClick={() => {
+                        // 点击消息后立即刷新未读消息数
+                        fetchUnreadMessageCount();
+                      }}
+                    >
+                      <Bell className={`w-5 h-5 transition-colors ${
+                        unreadMessageCount > 0
+                          ? 'text-red-500 dark:text-red-400'
+                          : 'text-gray-600 dark:text-gray-400'
+                      }`} />
+                    </Link>
+                  )}
                   {/* AI阅读按钮 */}
                   <Link
                     to="/ai-reading"

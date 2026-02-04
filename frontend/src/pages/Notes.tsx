@@ -728,7 +728,7 @@ export default function Notes() {
                   {t('common.cancel')}
                 </button>
                 <button
-                  onClick={handleUpdateNote}
+                  onClick={handleEditNote}
                   className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors flex items-center gap-2"
                 >
                   <Save className="w-4 h-4" />

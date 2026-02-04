@@ -232,6 +232,21 @@ export function initDatabase() {
       }
     }
 
+    // 检查并添加 can_use_friends 字段（书友功能权限）
+    const hasCanUseFriends = usersTableInfo.some((col) => col.name === 'can_use_friends');
+    if (!hasCanUseFriends) {
+      // 默认值：所有用户为 1（允许，向后兼容）
+      db.exec('ALTER TABLE users ADD COLUMN can_use_friends INTEGER DEFAULT 1');
+      console.log('已添加 can_use_friends 字段（默认值：1，允许使用书友功能）');
+      // 将现有所有用户的 can_use_friends 设置为 1（默认允许）
+      try {
+        db.exec("UPDATE users SET can_use_friends = 1");
+        console.log('已更新现有所有用户的 can_use_friends 为 1');
+      } catch (e) {
+        console.warn('更新现有用户书友权限失败:', e);
+      }
+    }
+
     // 端到端加密：用户公钥（供对方加密消息，仅 1:1 文字消息使用）
     const hasE2eePublicKey = usersTableInfo.some((col) => col.name === 'e2ee_public_key');
     if (!hasE2eePublicKey) {

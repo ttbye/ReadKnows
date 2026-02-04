@@ -139,7 +139,7 @@ export const GroupsManagementModal: React.FC<GroupsManagementModalProps> = ({
                             {group.name}
                           </h3>
                           {group.is_owner && (
-                            <Crown className="w-4 h-4 text-yellow-500" title="群主" />
+                            <Crown className="w-4 h-4 text-yellow-500" />
                           )}
                         </div>
                         <div className="text-sm text-gray-500 dark:text-gray-400">

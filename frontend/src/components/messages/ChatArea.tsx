@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import toast from 'react-hot-toast';
@@ -6,6 +6,7 @@ import { MessageCircle, Mic, Plus, Smile, File, X, Image as ImageIcon, BookOpen,
 import { StickerPicker, StickerItem } from './StickerPicker';
 import { getMessageFileApiPath, getAuthenticatedFileUrl, getAvatarUrl } from '../../utils/api';
 import api from '../../utils/api';
+import ImageViewer from '../readers/ImageViewer';
 import { formatTimeOnly, formatDateForSeparator, getDateKeyInSystemTZ, syncTimezoneFromBackendGlobal } from '../../utils/timezone';
 
 interface Message {
@@ -122,6 +123,9 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
 
   // 时区同步状态
   const [tzSynced, setTzSynced] = React.useState(0);
+
+  // 图片预览状态
+  const [previewImageUrl, setPreviewImageUrl] = useState<string | null>(null);
 
   // 从设置同步时区
   React.  useEffect(() => {
@@ -353,7 +357,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
               ) : message.message_type === 'image' ? (
                 <div className="max-w-xs">
                   {getMessageFileApiPath(message.file_path) ? (
-                    <img src={getAuthenticatedFileUrl(getMessageFileApiPath(message.file_path)!)} alt={t('messages.imageAlt')} className="rounded-lg max-w-full h-auto cursor-pointer hover:opacity-90 transition-opacity" onClick={() => window.open(getAuthenticatedFileUrl(getMessageFileApiPath(message.file_path)!), '_blank')} />
+                    <img src={getAuthenticatedFileUrl(getMessageFileApiPath(message.file_path)!)} alt={t('messages.imageAlt')} className="rounded-lg max-w-full h-auto cursor-pointer hover:opacity-90 transition-opacity" onClick={() => setPreviewImageUrl(getAuthenticatedFileUrl(getMessageFileApiPath(message.file_path)!))} />
                   ) : (
                     <div className="py-8 px-4 rounded-lg bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 text-sm text-center">[图片]</div>
                   )}
@@ -876,6 +880,16 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
           </div>
         </div>
       </div>
+
+      {/* 图片预览 */}
+      {previewImageUrl && (
+        <ImageViewer
+          imageUrl={previewImageUrl}
+          isVisible={true}
+          onClose={() => setPreviewImageUrl(null)}
+          doubleClickToClose={true}
+        />
+      )}
     </div>
   );
 };

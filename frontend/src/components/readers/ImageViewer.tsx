@@ -13,9 +13,10 @@ interface ImageViewerProps {
   isVisible: boolean;
   onClose: () => void;
   alt?: string;
+  doubleClickToClose?: boolean;
 }
 
-export default function ImageViewer({ imageUrl, isVisible, onClose, alt = '' }: ImageViewerProps) {
+export default function ImageViewer({ imageUrl, isVisible, onClose, alt = '', doubleClickToClose = false }: ImageViewerProps) {
   const { t } = useTranslation();
   const containerRef = useRef<HTMLDivElement>(null);
   const imageRef = useRef<HTMLImageElement>(null);
@@ -205,13 +206,17 @@ export default function ImageViewer({ imageUrl, isVisible, onClose, alt = '' }: 
 
   // 双击重置或放大
   const handleDoubleClick = useCallback(() => {
-    if (scale === 1) {
-      setScale(2);
-      setPosition({ x: 0, y: 0 });
+    if (doubleClickToClose) {
+      onClose();
     } else {
-      resetTransform();
+      if (scale === 1) {
+        setScale(2);
+        setPosition({ x: 0, y: 0 });
+      } else {
+        resetTransform();
+      }
     }
-  }, [scale, resetTransform]);
+  }, [scale, resetTransform, doubleClickToClose, onClose]);
 
   // 事件监听
   useEffect(() => {
@@ -370,7 +375,7 @@ export default function ImageViewer({ imageUrl, isVisible, onClose, alt = '' }: 
           bottom: isMobile || isPWA ? `calc(1rem + env(safe-area-inset-bottom, 0px))` : '1rem',
         }}
       >
-        {t('reader.imageViewerHint')}
+        {doubleClickToClose ? t('reader.imageViewerHintClose') : t('reader.imageViewerHint')}
       </div>
     </div>
   );

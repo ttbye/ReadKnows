@@ -54,6 +54,7 @@ export default function AudiobookDetail() {
   const navigate = useNavigate();
   const { t } = useTranslation();
   const { isAuthenticated, user } = useAuthStore();
+  const canUseFriends = user?.can_use_friends !== undefined ? user.can_use_friends : true;
   const location = useLocation();
   const searchParams = new URLSearchParams(location.search);
   const autoPlay = searchParams.get('autoPlay') === 'true';
@@ -675,8 +676,8 @@ export default function AudiobookDetail() {
                         </button>
                       )}
                       
-                      {/* 分享按钮 - 只有上传者或管理员可以分享 */}
-                      {(user?.role === 'admin' || audiobook?.uploader_id === user?.id) && (
+                      {/* 分享按钮 - 只有上传者或管理员可以分享，且需要书友权限 */}
+                      {(user?.role === 'admin' || audiobook?.uploader_id === user?.id) && canUseFriends && (
                         <button
                           onClick={() => {
                             fetchGroupsAndUsers();

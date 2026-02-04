@@ -34,6 +34,12 @@ export default function Settings() {
   const [pathValidation, setPathValidation] = useState<Record<string, any>>({});
   const [fonts, setFonts] = useState<any[]>([]);
   const [uploadingFont, setUploadingFont] = useState(false);
+  const [showFontUploadModal, setShowFontUploadModal] = useState(false);
+  const [selectedFontFile, setSelectedFontFile] = useState<File | null>(null);
+  const [fontName, setFontName] = useState('');
+  const [showFontRenameModal, setShowFontRenameModal] = useState(false);
+  const [editingFont, setEditingFont] = useState<any | null>(null);
+  const [renameFontName, setRenameFontName] = useState('');
   const [readerPreferences, setReaderPreferences] = useState<Record<string, any>>({});
   const [loadingPreferences, setLoadingPreferences] = useState(false);
   const [clearingCache, setClearingCache] = useState(false);
@@ -624,32 +630,109 @@ export default function Settings() {
     }
   };
 
-  const handleFontUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFontFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+
+    // 验证文件类型
+    const allowedTypes = ['.ttf', '.otf', '.woff', '.woff2'];
+    const fileName = file.name.toLowerCase();
+    const isValidType = allowedTypes.some(ext => fileName.endsWith(ext));
+    
+    if (!isValidType) {
+      toast.error('不支持的字体格式，仅支持 .ttf, .otf, .woff, .woff2');
+      e.target.value = '';
+      return;
+    }
+
+    // 设置选中的文件和默认名称（去除扩展名）
+    setSelectedFontFile(file);
+    const defaultName = file.name.replace(/\.[^/.]+$/, '');
+    setFontName(defaultName);
+    setShowFontUploadModal(true);
+    e.target.value = '';
+  };
+
+  const handleFontUpload = async () => {
+    if (!selectedFontFile) return;
+    if (!fontName.trim()) {
+      toast.error('请输入字体名称');
+      return;
+    }
 
     setUploadingFont(true);
     try {
       const formData = new FormData();
-      formData.append('file', file);
-      await api.post('/fonts/upload', formData, {
-        headers: { 'Content-Type': 'multipart/form-data' },
+      formData.append('file', selectedFontFile);
+      formData.append('name', fontName.trim());
+      // 不要手动设置 Content-Type，浏览器会自动设置正确的 boundary
+      const response = await api.post('/fonts/upload', formData, {
         timeout: 300000, // 5分钟超时，适用于字体文件上传
       });
-      toast.success(t('settings.fontUploadSuccess'));
+      
+      console.log('字体上传成功:', response.data);
+      toast.success(t('settings.fontUploadSuccess') || '字体上传成功');
       await fetchFonts();
+      setShowFontUploadModal(false);
+      setSelectedFontFile(null);
+      setFontName('');
     } catch (error: any) {
-      toast.error(error.response?.data?.error || t('settings.uploadFailed'));
+      console.error('字体上传失败:', error);
+      console.error('错误详情:', {
+        status: error.response?.status,
+        statusText: error.response?.statusText,
+        data: error.response?.data,
+        message: error.message,
+      });
+      
+      let errorMessage = t('settings.uploadFailed') || '上传失败';
+      if (error.response?.data?.error) {
+        errorMessage = error.response.data.error;
+      } else if (error.response?.status === 500) {
+        errorMessage = '服务器错误，请检查服务器日志或联系管理员';
+      } else if (error.response?.status === 413) {
+        errorMessage = '文件太大，请选择较小的字体文件';
+      } else if (error.response?.status === 401) {
+        errorMessage = '未授权，请重新登录';
+      } else if (error.message) {
+        errorMessage = error.message;
+      }
+      
+      toast.error(errorMessage);
     } finally {
       setUploadingFont(false);
-      e.target.value = '';
+    }
+  };
+
+  const handleEditFont = (font: any) => {
+    setEditingFont(font);
+    setRenameFontName(font.name);
+    setShowFontRenameModal(true);
+  };
+
+  const handleRenameFont = async () => {
+    if (!editingFont) return;
+    if (!renameFontName.trim()) {
+      toast.error(t('settings.fontName') + ' ' + (t('common.required') || '不能为空') || '请输入字体名称');
+      return;
+    }
+
+    try {
+      await api.put(`/fonts/${editingFont.id}`, { name: renameFontName.trim() });
+      toast.success(t('settings.fontRenamed') || '字体重命名成功');
+      await fetchFonts();
+      setShowFontRenameModal(false);
+      setEditingFont(null);
+      setRenameFontName('');
+    } catch (error: any) {
+      toast.error(error.response?.data?.error || t('settings.renameFontFailed') || '字体重命名失败');
     }
   };
 
   const handleDeleteFont = async (fontId: string) => {
     if (!confirm(t('settings.confirmDeleteFont'))) return;
     try {
-      await api.post(`/fonts/${fontId}`, { _method: 'DELETE' });
+      await api.delete(`/fonts/${fontId}`);
       toast.success(t('settings.fontDeletedSuccess'));
       await fetchFonts();
     } catch (error: any) {
@@ -1245,7 +1328,7 @@ export default function Settings() {
                   <input
                     type="file"
                     accept=".ttf,.otf,.woff,.woff2"
-                    onChange={handleFontUpload}
+                    onChange={handleFontFileSelect}
                     disabled={uploadingFont}
                     className="hidden"
                   />
@@ -1264,13 +1347,22 @@ export default function Settings() {
                       className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-800 rounded-lg"
                     >
                       <span className="text-sm text-gray-700 dark:text-gray-300">{font.name}</span>
-                      <button
-                        onClick={() => handleDeleteFont(font.id)}
-                        className="text-red-600 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300"
-                        title={t('settings.deleteFont') || '删除字体'}
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => handleEditFont(font)}
+                          className="text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
+                          title={t('settings.editFont') || '编辑字体'}
+                        >
+                          <Edit className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={() => handleDeleteFont(font.id)}
+                          className="text-red-600 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300"
+                          title={t('settings.deleteFont') || '删除字体'}
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -1955,7 +2047,7 @@ export default function Settings() {
                     if (data.status === 'ok' && data.ocr_engine_ready) {
                       toast.success(t('settings.ocrConnectionSuccess') || 'OCR 服务连接成功！', { id: 'ocr-test' });
                     } else if (data.status === 'ok') {
-                      toast.warning(t('settings.ocrServiceNotReady') || 'OCR 服务运行中，但引擎未就绪', { id: 'ocr-test' });
+                      toast(t('settings.ocrServiceNotReady') || 'OCR 服务运行中，但引擎未就绪', { id: 'ocr-test' });
                     } else {
                       toast.error(t('settings.ocrConnectionFailed') || `OCR 服务连接失败: ${data.message || '未知错误'}`, { id: 'ocr-test' });
                     }
@@ -2407,7 +2499,7 @@ export default function Settings() {
                     onChange={(e) => {
                       setSettings((prev) => ({
                         ...prev,
-                        admin_can_see_all_books: { ...(prev.admin_can_see_all_books || { id: '', value: 'false', description: '' }), value: e.target.checked ? 'true' : 'false' },
+                        admin_can_see_all_books: { ...(prev.admin_can_see_all_books || { id: '', key: 'admin_can_see_all_books', value: 'false', description: '' }), value: e.target.checked ? 'true' : 'false' },
                       }));
                       updateSetting('admin_can_see_all_books', e.target.checked ? 'true' : 'false');
                     }}
@@ -2468,6 +2560,8 @@ export default function Settings() {
                 <p className="text-xs text-blue-600 dark:text-blue-400 mt-1">
                   💡 修改后，所有时间显示将根据新的时区偏移进行调整
                 </p>
+              </div>
+                </div>
               </div>
             </div>
           </div>
@@ -2589,52 +2683,123 @@ export default function Settings() {
           </div>
         )}
 
-            {/* 缓存清理 */}
-            <div className="pt-4 border-t border-gray-200 dark:border-gray-700">
-              <div className="flex items-center justify-between mb-3">
-                <div>
-                  <p className="text-sm font-medium">{t('settings.cache')}</p>
-                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                    {t('settings.currentCacheSize')}: <span className="font-semibold">{formatCacheSize(cacheSize)}</span>
-                  </p>
-                </div>
-                <button
-                  onClick={handleClearCache}
-                  disabled={clearingCache || cacheSize === 0}
-                  className="btn btn-danger text-sm"
-                >
-                  {clearingCache ? (
-                    <>
-                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
-                      {t('settings.clearing')}
-                    </>
-                  ) : (
-                    <>
-                      <Trash className="w-4 h-4" />
-                      {t('settings.clearCache')}
-                    </>
-                  )}
-                </button>
-              </div>
+        {/* 缓存清理 */}
+        <div className="pt-4 border-t border-gray-200 dark:border-gray-700">
+          <div className="flex items-center justify-between mb-3">
+            <div>
+              <p className="text-sm font-medium">{t('settings.cache')}</p>
+              <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                {t('settings.currentCacheSize')}: <span className="font-semibold">{formatCacheSize(cacheSize)}</span>
+              </p>
             </div>
+            <button
+              onClick={handleClearCache}
+              disabled={clearingCache || cacheSize === 0}
+              className="btn btn-danger text-sm"
+            >
+              {clearingCache ? (
+                <>
+                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                  {t('settings.clearing')}
+                </>
+              ) : (
+                <>
+                  <Trash className="w-4 h-4" />
+                  {t('settings.clearCache')}
+                </>
+              )}
+            </button>
           </div>
         </div>
+          </div>
         </div>
       </div>
+    </div>
 
-      {/* 书籍类型编辑模态框 */}
-      {showCategoryEditModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black p-4">
-          <div className="card-gradient rounded-lg shadow-xl max-w-md w-full p-6">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-xl font-bold text-gray-900 dark:text-gray-100">
+    {/* 书籍类型编辑模态框 */}
+    {showCategoryEditModal && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black p-4">
+        <div className="card-gradient rounded-lg shadow-xl max-w-md w-full p-6">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-xl font-bold text-gray-900 dark:text-gray-100">
               {editingCategory ? t('settings.editCategory') : t('settings.addCategory')}
-              </h2>
+            </h2>
+            <button
+              onClick={() => {
+                setShowCategoryEditModal(false);
+                setEditingCategory(null);
+                setCategoryForm({ name: '', display_order: 0 });
+              }}
+              className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
+            >
+              <X className="w-6 h-6" />
+            </button>
+          </div>
+
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium mb-2 text-gray-900 dark:text-gray-100">
+                {t('settings.categoryName')} <span className="text-red-500">*</span>
+              </label>
+              <input
+                type="text"
+                value={categoryForm.name}
+                onChange={(e) => setCategoryForm({ ...categoryForm, name: e.target.value })}
+                placeholder={t('settings.categoryNamePlaceholder')}
+                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-purple-500 dark:bg-gray-700 dark:text-white"
+                autoFocus
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium mb-2 text-gray-900 dark:text-gray-100">
+                {t('settings.displayOrder')}
+              </label>
+              <input
+                type="number"
+                value={categoryForm.display_order}
+                onChange={(e) => setCategoryForm({ ...categoryForm, display_order: parseInt(e.target.value) || 0 })}
+                placeholder={t('settings.displayOrderPlaceholder')}
+                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-purple-500 dark:bg-gray-700 dark:text-white"
+              />
+            </div>
+
+            <div className="flex gap-3 pt-4">
               <button
                 onClick={() => {
                   setShowCategoryEditModal(false);
                   setEditingCategory(null);
                   setCategoryForm({ name: '', display_order: 0 });
+                }}
+                className="flex-1 px-4 py-2 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+              >
+                {t('common.cancel')}
+              </button>
+              <button
+                onClick={editingCategory ? handleUpdateCategory : handleCreateCategory}
+                className="flex-1 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors"
+              >
+                {editingCategory ? t('common.save') : t('common.add')}
+              </button>
+            </div>
+          </div>
+        </div>
+        </div>
+      )}
+
+      {/* 字体上传模态框 */}
+      {showFontUploadModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4">
+          <div className="card-gradient rounded-lg shadow-xl max-w-md w-full p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-xl font-bold text-gray-900 dark:text-gray-100">
+                {t('settings.uploadFont') || '上传字体'}
+              </h2>
+              <button
+                onClick={() => {
+                  setShowFontUploadModal(false);
+                  setSelectedFontFile(null);
+                  setFontName('');
                 }}
                 className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
               >
@@ -2645,47 +2810,107 @@ export default function Settings() {
             <div className="space-y-4">
               <div>
                 <label className="block text-sm font-medium mb-2 text-gray-900 dark:text-gray-100">
-                {t('settings.categoryName')} <span className="text-red-500">*</span>
+                  {t('settings.fontName') || '字体名称'} <span className="text-red-500">*</span>
                 </label>
                 <input
                   type="text"
-                  value={categoryForm.name}
-                  onChange={(e) => setCategoryForm({ ...categoryForm, name: e.target.value })}
-                placeholder={t('settings.categoryNamePlaceholder')}
+                  value={fontName}
+                  onChange={(e) => setFontName(e.target.value)}
+                  placeholder={selectedFontFile?.name.replace(/\.[^/.]+$/, '') || t('settings.fontNamePlaceholder') || '请输入字体名称'}
                   className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-purple-500 dark:bg-gray-700 dark:text-white"
                   autoFocus
                 />
+                {selectedFontFile && (
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                    {t('settings.selectedFile') || '已选择文件'}: {selectedFontFile.name} ({(selectedFontFile.size / 1024 / 1024).toFixed(2)} MB)
+                  </p>
+                )}
               </div>
 
+              <div className="flex gap-3 pt-4">
+                <button
+                  onClick={() => {
+                    setShowFontUploadModal(false);
+                    setSelectedFontFile(null);
+                    setFontName('');
+                  }}
+                  className="flex-1 px-4 py-2 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+                  disabled={uploadingFont}
+                >
+                  {t('common.cancel') || '取消'}
+                </button>
+                <button
+                  onClick={handleFontUpload}
+                  disabled={uploadingFont || !fontName.trim()}
+                  className="flex-1 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {uploadingFont ? (
+                    <>
+                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white inline-block mr-2"></div>
+                      {t('settings.uploading') || '上传中...'}
+                    </>
+                  ) : (
+                    t('settings.uploadFont') || '上传'
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 字体重命名模态框 */}
+      {showFontRenameModal && editingFont && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4">
+          <div className="card-gradient rounded-lg shadow-xl max-w-md w-full p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-xl font-bold text-gray-900 dark:text-gray-100">
+                {t('settings.renameFont') || '重命名字体'}
+              </h2>
+              <button
+                onClick={() => {
+                  setShowFontRenameModal(false);
+                  setEditingFont(null);
+                  setRenameFontName('');
+                }}
+                className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
+              >
+                <X className="w-6 h-6" />
+              </button>
+            </div>
+
+            <div className="space-y-4">
               <div>
                 <label className="block text-sm font-medium mb-2 text-gray-900 dark:text-gray-100">
-                {t('settings.displayOrder')}
+                  {t('settings.fontName') || '字体名称'} <span className="text-red-500">*</span>
                 </label>
                 <input
-                  type="number"
-                  value={categoryForm.display_order}
-                  onChange={(e) => setCategoryForm({ ...categoryForm, display_order: parseInt(e.target.value) || 0 })}
-                placeholder={t('settings.displayOrderPlaceholder')}
+                  type="text"
+                  value={renameFontName}
+                  onChange={(e) => setRenameFontName(e.target.value)}
+                  placeholder={t('settings.fontNamePlaceholder') || '请输入字体名称'}
                   className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-purple-500 dark:bg-gray-700 dark:text-white"
+                  autoFocus
                 />
               </div>
 
               <div className="flex gap-3 pt-4">
                 <button
                   onClick={() => {
-                    setShowCategoryEditModal(false);
-                    setEditingCategory(null);
-                    setCategoryForm({ name: '', display_order: 0 });
+                    setShowFontRenameModal(false);
+                    setEditingFont(null);
+                    setRenameFontName('');
                   }}
                   className="flex-1 px-4 py-2 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
                 >
-                {t('common.cancel')}
+                  {t('common.cancel') || '取消'}
                 </button>
                 <button
-                  onClick={editingCategory ? handleUpdateCategory : handleCreateCategory}
-                  className="flex-1 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors"
+                  onClick={handleRenameFont}
+                  disabled={!renameFontName.trim()}
+                  className="flex-1 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                {editingCategory ? t('common.save') : t('common.add')}
+                  {t('common.save') || '保存'}
                 </button>
               </div>
             </div>

@@ -24,6 +24,7 @@ import type { AddToLibraryMessage, AddToLibraryOptions } from '../components/mes
 import { StickerPicker, StickerItem } from '../components/messages/StickerPicker';
 import { useAuthStore } from '../store/authStore';
 import { useMobileKeyboard } from '../hooks/useMobileKeyboard';
+import ImageViewer from '../components/readers/ImageViewer';
 import { formatTimeOnly, formatDateForSeparator, getDateKeyInSystemTZ, syncTimezoneFromBackendGlobal } from '../utils/timezone';
 import { notificationService } from '../utils/notificationService';
 
@@ -101,6 +102,9 @@ const ChatPage: React.FC = () => {
   const [forwardingMessage, setForwardingMessage] = useState<Message | null>(null);
   const [friendsForForward, setFriendsForForward] = useState<any[]>([]);
   const [groupsForForward, setGroupsForForward] = useState<any[]>([]);
+
+  // 图片预览状态
+  const [previewImageUrl, setPreviewImageUrl] = useState<string | null>(null);
   const [addToLibraryMessage, setAddToLibraryMessage] = useState<Message | null>(null);
   const [showConversationSettings, setShowConversationSettings] = useState(false);
   const [conversationSettings, setConversationSettings] = useState<{ is_muted: boolean; is_blocked: boolean }>({
@@ -902,7 +906,7 @@ const float32ArrayToWav = (buffer: Float32Array, sampleRate: number): Blob => {
           sinceDate.setSeconds(sinceDate.getSeconds() - 1);
           params.since = sinceDate.toISOString();
           if (import.meta.env.DEV) {
-            console.log('[fetchMessages] 轮询检查新消息，since:', params.since, '原始:', lastMessageTimeRef.current);
+            // console.log('[fetchMessages] 轮询检查新消息，since:', params.since, '原始:', lastMessageTimeRef.current);
           }
         } catch (e) {
           // 如果时间解析失败，使用原始值
@@ -929,11 +933,11 @@ const float32ArrayToWav = (buffer: Float32Array, sampleRate: number): Blob => {
       const newMessages = response.data.messages || [];
       
       if (import.meta.env.DEV && checkNewOnly) {
-        console.log('[fetchMessages] 轮询返回:', {
-          newMessagesCount: newMessages.length,
-          since: params.since,
-          lastMessageTime: lastMessageTimeRef.current
-        });
+        // console.log('[fetchMessages] 轮询返回:', {
+        //   newMessagesCount: newMessages.length,
+        //   since: params.since,
+        //   lastMessageTime: lastMessageTimeRef.current
+        // });
       }
 
       // 异步处理E2EE解密，不阻塞消息显示
@@ -2055,7 +2059,7 @@ const float32ArrayToWav = (buffer: Float32Array, sampleRate: number): Blob => {
                     src={getAuthenticatedFileUrl(getMessageFileApiPath(message.file_path)!)}
                     alt={t('messages.imageAlt')}
                     className="rounded-lg max-w-full h-auto cursor-pointer hover:opacity-90 transition-opacity"
-                    onClick={() => window.open(getAuthenticatedFileUrl(getMessageFileApiPath(message.file_path)!), '_blank')}
+                    onClick={() => setPreviewImageUrl(getAuthenticatedFileUrl(getMessageFileApiPath(message.file_path)!))}
                   />
                 ) : (
                   <div className="py-8 px-4 rounded-lg bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 text-sm text-center">[图片]</div>
@@ -2919,6 +2923,16 @@ const float32ArrayToWav = (buffer: Float32Array, sampleRate: number): Blob => {
             </div>
           </div>
         </div>
+      )}
+
+      {/* 图片预览 */}
+      {previewImageUrl && (
+        <ImageViewer
+          imageUrl={previewImageUrl}
+          isVisible={true}
+          onClose={() => setPreviewImageUrl(null)}
+          doubleClickToClose={true}
+        />
       )}
     </div>
   );

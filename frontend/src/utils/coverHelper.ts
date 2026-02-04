@@ -18,19 +18,41 @@ let hasLoggedApkNoServerError = false;
 // 检测是否在APK/Capacitor环境中
 function isCapacitorEnvironment(): boolean {
   try {
-    // 检查是否存在Capacitor
+    // 检查是否存在Capacitor对象（最可靠的检测方式）
     if (typeof window !== 'undefined' && (window as any).Capacitor) {
+      console.log('[coverHelper] 检测到Capacitor对象，确认为APK环境');
       return true;
     }
-    // 检查是否是移动应用（没有有效的origin）
+
+    // 检查是否通过Capacitor协议访问
     if (typeof window !== 'undefined' && window.location) {
-      const origin = window.location.origin;
-      if (!origin || origin === 'null' || origin.startsWith('file://') || origin.startsWith('capacitor://')) {
+      const protocol = window.location.protocol;
+      if (protocol === 'capacitor:' || protocol === 'capacitor-http:' || protocol === 'capacitor-https:') {
+        console.log('[coverHelper] 检测到Capacitor协议，确认为APK环境');
         return true;
       }
+
+      // 检查origin是否无效（移动应用常见情况）
+      const origin = window.location.origin;
+      const hostname = window.location.hostname;
+      console.log('[coverHelper] 当前环境检测:', { protocol, origin, hostname });
+
+      if (!origin || origin === 'null' || origin === 'file://' || origin.startsWith('capacitor://')) {
+        console.log('[coverHelper] origin无效，确认为APK环境');
+        return true;
+      }
+
+      // 额外检查：如果是localhost或常见开发主机名，不认为是APK环境
+      if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname.startsWith('192.168.') || hostname.startsWith('10.')) {
+        console.log('[coverHelper] 检测到本地开发环境，确认为Web环境');
+        return false;
+      }
     }
+
+    console.log('[coverHelper] 未检测到APK环境特征，确认为Web环境');
     return false;
-  } catch {
+  } catch (error) {
+    console.log('[coverHelper] 环境检测出错:', error);
     return false;
   }
 }
@@ -142,20 +164,9 @@ export function getCoverUrl(coverUrl?: string | null): string | null {
             }
           }
         }
-      } else if (isDev) {
-        // 在开发环境的浏览器中，如果没有配置服务器地址，给出友好的提示
-        if (!actualApiUrl || !actualApiUrl.startsWith('http')) {
-          const errorKey = 'coverHelper:web:dev:no-server:logged';
-          const hasLogged = sessionStorage.getItem(errorKey);
-
-          if (!hasLogged) {
-            console.warn('[coverHelper] 💡 开发环境提示: 封面图片使用相对路径加载');
-            console.info('[coverHelper] 📝 如需自定义服务器地址，可在应用设置中配置');
-
-            sessionStorage.setItem(errorKey, 'true');
-          }
-        }
       }
+      // 在Web环境中，不显示APK环境的错误信息
+      // 相对路径在Web环境中是正常的，不需要报错
       return encodedPath;
     } catch (error) {
       console.error('[coverHelper] URL编码失败:', trimmedUrl, error);

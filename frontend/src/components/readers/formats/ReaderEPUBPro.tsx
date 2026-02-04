@@ -11,7 +11,8 @@ import toast from 'react-hot-toast';
 import { GestureHandler, GestureCallbacks } from '../utils/GestureHandler';
 import { useTranslation } from 'react-i18next';
 import { selectSentenceAtPoint } from '../common/text-selection/textSelection';
-import { getFullApiUrl, getApiKeyHeader, getFullBookUrl } from '../../../utils/api';
+import { getFullApiUrl, getApiKeyHeader, getFullBookUrl, getFontsBaseUrl } from '../../../utils/api';
+import { getFontFamily, buildCustomFontsStyleContent } from '../common/theme/themeManager';
 
 interface BookNote {
   id: string;
@@ -28,6 +29,8 @@ interface ReaderEPUBProProps {
   book: BookData;
   settings: ReadingSettings;
   initialPosition?: ReadingPosition;
+  customFonts?: Array<{ id: string; name: string; file_name: string }>;
+  fontCache?: Map<string, Blob>;
   onSettingsChange: (settings: ReadingSettings) => void;
   onProgressChange: (progress: number, position: ReadingPosition) => void;
   onTOCChange: (toc: TOCItem[]) => void;
@@ -50,6 +53,7 @@ export default function ReaderEPUBPro({
   book,
   settings,
   initialPosition,
+  customFonts = [],
   onSettingsChange,
   onProgressChange,
   onTOCChange,
@@ -76,11 +80,16 @@ export default function ReaderEPUBPro({
   
   // 使用 ref 存储最新的 settings，确保在闭包中能访问到最新值
   const settingsRef = useRef<ReadingSettings>(settings);
+  const customFontsRef = useRef(customFonts);
   
-  // 更新 settings ref
+  // 更新 refs
   useEffect(() => {
     settingsRef.current = settings;
   }, [settings]);
+  
+  useEffect(() => {
+    customFontsRef.current = customFonts;
+  }, [customFonts]);
   
   // 监听播放速度变化，动态调整正在播放的音频速度
   useEffect(() => {
@@ -513,26 +522,14 @@ export default function ReaderEPUBPro({
         green: { bg: '#c8e6c9', text: '#2e7d32' },
       }[settings.theme];
 
-      // 应用主题
-      const getFontFamily = () => {
-        switch (settings.fontFamily) {
-          case 'serif':
-            return '"Songti SC", "SimSun", "宋体", "STSong", serif';
-          case 'sans-serif':
-            return '-apple-system, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "微软雅黑", "WenQuanYi Micro Hei", sans-serif';
-          case 'monospace':
-            return '"SF Mono", Monaco, "Cascadia Code", "Roboto Mono", Consolas, "Courier New", monospace';
-          case 'default':
-          default:
-            return '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif';
-        }
-      };
-      
+      // 应用主题（含自定义字体）
+      const fontFamily = getFontFamily(settings.fontFamily);
+
       const theme = {
         body: {
           'font-size': `${settings.fontSize}px !important`,
           'line-height': `${settings.lineHeight} !important`,
-          'font-family': getFontFamily() + ' !important',
+          'font-family': fontFamily + ' !important',
           'padding': `${settings.margin}px !important`,
           'text-indent': `${settings.textIndent}em !important`,
           'background-color': themeStyles.bg + ' !important',
@@ -572,6 +569,84 @@ export default function ReaderEPUBPro({
         keyup?: (e: KeyboardEvent) => void;
       } = {};
 
+      // 【关键修复】统一的字体注入函数
+      const injectCustomFonts = (contents: any, source: string) => {
+        const doc = contents?.document;
+        if (!doc || !doc.head) {
+          return;
+        }
+
+        const fonts = customFontsRef.current;
+        const currentSettings = settingsRef.current;
+        const selectedFontId = currentSettings.fontFamily?.startsWith('custom:') 
+          ? currentSettings.fontFamily.slice(7).trim() 
+          : undefined;
+
+        if (!fonts.length && !selectedFontId) {
+          return;
+        }
+
+
+        // 1. 使用 FontFace API 加载字体（优先）
+        fonts.forEach((font) => {
+          const fontFamilyName = `ReadKnowsCustomFont-${font.id}`;
+          const apiUrl = `${getFontsBaseUrl()}/api/fonts/file-by-id/${encodeURIComponent(font.id)}`;
+          
+          try {
+            if (doc.fonts && typeof doc.fonts.add === 'function' && !doc.fonts.check(`12px ${fontFamilyName}`)) {
+              const fontFace = new FontFace(fontFamilyName, `url("${apiUrl}")`);
+              fontFace.load()
+                .then(() => {
+                  doc.fonts.add(fontFace);
+                })
+                .catch(() => {
+                  // 忽略错误
+                });
+            }
+          } catch (e) {
+            // 忽略错误
+          }
+        });
+
+        // 2. 直接注入 @font-face CSS（addStylesheetRules 不支持 @font-face 规则）
+        const styleContent = buildCustomFontsStyleContent(fonts, getFontsBaseUrl());
+        if (styleContent) {
+          // 移除旧的字体样式
+          const oldStyle = doc.getElementById('readknows-custom-fonts');
+          if (oldStyle) oldStyle.remove();
+          
+          const style = doc.createElement('style');
+          style.id = 'readknows-custom-fonts';
+          style.textContent = styleContent;
+          if (doc.head.firstChild) {
+            doc.head.insertBefore(style, doc.head.firstChild);
+          } else {
+            doc.head.appendChild(style);
+          }
+        }
+
+        // 3. 如果是自定义字体，注入强制字体样式
+        if (selectedFontId) {
+          const fontFamily = getFontFamily(currentSettings.fontFamily);
+          const forceStyle = doc.createElement('style');
+          forceStyle.id = 'readknows-custom-fonts-force';
+          forceStyle.textContent = `
+body, body * {
+  font-family: ${fontFamily} !important;
+}
+*[style*="font-family"] {
+  font-family: ${fontFamily} !important;
+}
+          `.trim();
+          
+          if (doc.head.firstChild) {
+            doc.head.insertBefore(forceStyle, doc.head.firstChild);
+          } else {
+            doc.head.appendChild(forceStyle);
+          }
+        }
+      };
+
       // 监听内容加载
       // epubjs 的 content hook 传入的是 Contents（不是 View）
       // Contents: { document, window, on(), addStylesheetRules(), ... }
@@ -584,6 +659,9 @@ export default function ReaderEPUBPro({
           console.warn('ReaderEPUBPro: contents.document 不是有效的 Document 对象', doc);
           return;
         }
+
+        // 【关键修复】使用统一的字体注入函数
+        injectCustomFonts(contents, 'content.register');
 
         // 在 iframe 的 window 对象上拦截字体加载（更早的拦截）
         try {
@@ -1566,17 +1644,6 @@ export default function ReaderEPUBPro({
                 }
               } catch (e) {}
 
-              // 优先检查并隐藏 UI 元素（功能条、导航栏等）
-              // 如果隐藏了 UI，则不翻页
-              const checkAndHideUI = (window as any).__readerCheckAndHideUI;
-              if (checkAndHideUI && typeof checkAndHideUI === 'function') {
-                const hasHiddenUI = checkAndHideUI();
-                if (hasHiddenUI) {
-                  // 如果隐藏了 UI，不执行翻页
-                  return;
-                }
-              }
-
               const now = Date.now();
               const debounceTime = 300;
               if (now - pageTurnStateRef.current.lastPageTurnTime < debounceTime) return;
@@ -2064,6 +2131,76 @@ export default function ReaderEPUBPro({
       };
 
       eventHandlers.relocated = (location: any) => {
+        // 【关键修复】翻页后重新注入字体
+        setTimeout(() => {
+          const rendition = epubjsRenditionRef.current;
+          if (rendition?.views) {
+            const views = rendition.views();
+            if (views && Array.isArray(views)) {
+              views.forEach((view: any) => {
+                if (view?.document) {
+                  const fonts = customFontsRef.current;
+                  const currentSettings = settingsRef.current;
+                  const selectedFontId = currentSettings.fontFamily?.startsWith('custom:') 
+                    ? currentSettings.fontFamily.slice(7).trim() 
+                    : undefined;
+
+                  if (fonts.length > 0 || selectedFontId) {
+                    // 注入 @font-face
+                    const styleContent = buildCustomFontsStyleContent(fonts, getFontsBaseUrl());
+                    if (styleContent) {
+                      const oldStyle = view.document.getElementById('readknows-custom-fonts');
+                      if (oldStyle) oldStyle.remove();
+                      
+                      const style = view.document.createElement('style');
+                      style.id = 'readknows-custom-fonts';
+                      style.textContent = styleContent;
+                      if (view.document.head.firstChild) {
+                        view.document.head.insertBefore(style, view.document.head.firstChild);
+                      } else {
+                        view.document.head.appendChild(style);
+                      }
+                    }
+                    
+                    // 注入强制字体样式
+                    if (selectedFontId) {
+                      const oldForceStyle = view.document.getElementById('readknows-custom-fonts-force');
+                      if (oldForceStyle) oldForceStyle.remove();
+                      
+                      const fontFamily = getFontFamily(currentSettings.fontFamily);
+                      const forceStyle = view.document.createElement('style');
+                      forceStyle.id = 'readknows-custom-fonts-force';
+                      forceStyle.textContent = `body, body * { font-family: ${fontFamily} !important; }`;
+                      if (view.document.head.firstChild) {
+                        view.document.head.insertBefore(forceStyle, view.document.head.firstChild);
+                      } else {
+                        view.document.head.appendChild(forceStyle);
+                      }
+                    }
+                    
+                    // 使用 FontFace API
+                    fonts.forEach((font) => {
+                      const fontFamilyName = `ReadKnowsCustomFont-${font.id}`;
+                      const apiUrl = `${getFontsBaseUrl()}/api/fonts/file-by-id/${encodeURIComponent(font.id)}`;
+                      
+                      try {
+                        if (view.document.fonts && typeof view.document.fonts.add === 'function' && !view.document.fonts.check(`12px ${fontFamilyName}`)) {
+                          const fontFace = new FontFace(fontFamilyName, `url("${apiUrl}")`);
+                          fontFace.load()
+                            .then(() => {
+                              view.document.fonts.add(fontFace);
+                            })
+                            .catch(() => {});
+                        }
+                      } catch (e) {}
+                    });
+                  }
+                }
+              });
+            }
+          }
+        }, 100);
+
         // 提取位置信息
         const spineIndex = location.start?.index ?? 0;
         const cfi = location.start?.cfi;
@@ -2373,14 +2510,16 @@ export default function ReaderEPUBPro({
           return;
         }
         
-        // 标记已处理，避免容器层重复处理
-        (e as any).__readerHandled = true;
-        
-        if (e.key === settings.keyboardShortcuts.prev || e.key === 'ArrowLeft') {
+        // 处理左右键和上下键翻页
+        if (e.key === settings.keyboardShortcuts.prev || e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
           e.preventDefault();
+          // 标记已处理，避免容器层重复处理
+          (e as any).__readerHandled = true;
           rendition.prev();
-        } else if (e.key === settings.keyboardShortcuts.next || e.key === 'ArrowRight') {
+        } else if (e.key === settings.keyboardShortcuts.next || e.key === 'ArrowRight' || e.key === 'ArrowDown') {
           e.preventDefault();
+          // 标记已处理，避免容器层重复处理
+          (e as any).__readerHandled = true;
           rendition.next();
         }
       };
@@ -3098,26 +3237,14 @@ export default function ReaderEPUBPro({
       green: { bg: '#c8e6c9', text: '#2e7d32' },
     }[settings.theme];
 
-    // 构建新主题
-    const getFontFamily = () => {
-      switch (settings.fontFamily) {
-        case 'serif':
-          return '"Songti SC", "SimSun", "宋体", "STSong", serif';
-        case 'sans-serif':
-          return '-apple-system, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "微软雅黑", "WenQuanYi Micro Hei", sans-serif';
-        case 'monospace':
-          return '"SF Mono", Monaco, "Cascadia Code", "Roboto Mono", Consolas, "Courier New", monospace';
-        case 'default':
-        default:
-          return '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif';
-      }
-    };
-    
+    // 构建新主题（含自定义字体）
+    const fontFamily = getFontFamily(settings.fontFamily);
+
     const theme = {
       body: {
         'font-size': `${settings.fontSize}px !important`,
         'line-height': `${settings.lineHeight} !important`,
-        'font-family': getFontFamily() + ' !important',
+        'font-family': fontFamily + ' !important',
         'padding': `${settings.margin}px !important`,
         'text-indent': `${settings.textIndent}em !important`,
         'background-color': themeStyles.bg + ' !important',
@@ -3155,107 +3282,131 @@ export default function ReaderEPUBPro({
     try {
       rendition.themes.default(theme);
       
-      // 对已经渲染的内容也应用样式
-      rendition.views().forEach((view: any) => {
-        if (view && view.document) {
-          const doc = view.document;
-          // 验证 document 是否有效
-          if (!doc || typeof doc.createElement !== 'function' || !doc.body) {
-            console.warn('ReaderEPUBPro: 跳过无效的 view.document', doc);
-            return;
-          }
-          // 同时设置 html 和 body 的背景色，确保翻页后背景色正确
-          if (doc.documentElement) {
-            doc.documentElement.style.setProperty('background-color', themeStyles.bg, 'important');
-            doc.documentElement.style.setProperty('color', themeStyles.text, 'important');
-          }
-          if (doc.body) {
-            doc.body.style.setProperty('font-size', `${settings.fontSize}px`, 'important');
-            doc.body.style.setProperty('line-height', `${settings.lineHeight}`, 'important');
-            doc.body.style.setProperty('padding', `${settings.margin}px`, 'important');
-            doc.body.style.setProperty('background-color', themeStyles.bg, 'important');
-            doc.body.style.setProperty('color', themeStyles.text, 'important');
-            
-            // 应用字体样式到所有文本元素
-            const getFontFamily = () => {
-              switch (settings.fontFamily) {
-                case 'serif':
-                  return '"Songti SC", "SimSun", "宋体", "STSong", serif';
-                case 'sans-serif':
-                  return '-apple-system, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "微软雅黑", "WenQuanYi Micro Hei", sans-serif';
-                case 'monospace':
-                  return '"SF Mono", Monaco, "Cascadia Code", "Roboto Mono", Consolas, "Courier New", monospace';
-                case 'default':
-                default:
-                  return '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif';
-              }
-            };
-            const fontFamily = getFontFamily();
-            doc.body.style.setProperty('font-family', fontFamily, 'important');
-            
-            // 应用文本缩进到所有段落
-            const paragraphs = doc.querySelectorAll('p');
-            paragraphs.forEach((p: HTMLElement) => {
-              p.style.setProperty('text-indent', `${settings.textIndent}em`, 'important');
-              p.style.setProperty('color', themeStyles.text, 'important');
-              p.style.setProperty('font-size', `${settings.fontSize}px`, 'important');
-              p.style.setProperty('line-height', `${settings.lineHeight}`, 'important');
-              p.style.setProperty('font-family', fontFamily, 'important');
-            });
-            
-            // 强制应用字体和颜色到所有文本元素
-            const textElements = doc.querySelectorAll('p, div, span, h1, h2, h3, h4, h5, h6, li, td, th, a, em, strong, b, i, u, blockquote, pre, code, section, article');
-            textElements.forEach((el: any) => {
-              // 验证 el 是有效的 Element 对象
-              if (el && typeof el.getElementsByTagName === 'function' && el.style) {
-                // 应用字体样式
-                el.style.setProperty('font-size', `${settings.fontSize}px`, 'important');
-                el.style.setProperty('line-height', `${settings.lineHeight}`, 'important');
-                el.style.setProperty('font-family', fontFamily, 'important');
-                
-                // 检查当前颜色，如果是白色或黑色且与主题不匹配，则强制应用
-                let currentColor = '';
-                try {
-                  const iframeWindow = doc.defaultView || (doc as any).parentWindow;
-                  if (iframeWindow) {
-                    const computedStyle = iframeWindow.getComputedStyle(el);
-                    currentColor = computedStyle.color;
-                  }
-                } catch (e) {
-                  // 无法获取计算样式
-                }
-                
-                // 如果当前颜色是白色且主题是亮色，改为深色
-                if (settings.theme === 'light' && (
-                  currentColor === 'rgb(255, 255, 255)' || 
-                  currentColor === '#ffffff' || 
-                  currentColor === 'white' ||
-                  currentColor.includes('rgb(255, 255, 255)')
-                )) {
-                  el.style.setProperty('color', themeStyles.text, 'important');
-                }
-                // 如果当前颜色是黑色且主题是深色，改为浅色
-                else if (settings.theme === 'dark' && (
-                  currentColor === 'rgb(0, 0, 0)' || 
-                  currentColor === '#000000' || 
-                  currentColor === 'black' ||
-                  currentColor.includes('rgb(0, 0, 0)')
-                )) {
-                  el.style.setProperty('color', themeStyles.text, 'important');
-                }
-                // 如果颜色与背景色太接近，也强制应用主题色
-                else if (currentColor === themeStyles.bg || 
-                         (settings.theme === 'dark' && (currentColor === 'rgb(26, 26, 26)' || currentColor.includes('rgb(26, 26, 26)'))) ||
-                         (settings.theme === 'light' && (currentColor === 'rgb(255, 255, 255)' || currentColor.includes('rgb(255, 255, 255)'))) ||
-                         !currentColor) {
-                  el.style.setProperty('color', themeStyles.text, 'important');
-                }
-              }
-            });
-          }
+      const applyFontAndThemeToDoc = (doc: Document) => {
+        if (!doc || typeof doc.createElement !== 'function' || !doc.body) return;
+        if (doc.documentElement) {
+          doc.documentElement.style.setProperty('background-color', themeStyles.bg, 'important');
+          doc.documentElement.style.setProperty('color', themeStyles.text, 'important');
         }
-      });
+        doc.body.style.setProperty('font-size', `${settings.fontSize}px`, 'important');
+        doc.body.style.setProperty('line-height', `${settings.lineHeight}`, 'important');
+        doc.body.style.setProperty('padding', `${settings.margin}px`, 'important');
+        doc.body.style.setProperty('background-color', themeStyles.bg, 'important');
+        doc.body.style.setProperty('color', themeStyles.text, 'important');
+        // 使用内联样式确保字体优先级最高
+        doc.body.setAttribute('style', `${doc.body.getAttribute('style') || ''}; font-family: ${fontFamily} !important;`);
+
+        const paragraphs = doc.querySelectorAll('p');
+        paragraphs.forEach((p: HTMLElement) => {
+          p.style.setProperty('text-indent', `${settings.textIndent}em`, 'important');
+          p.style.setProperty('color', themeStyles.text, 'important');
+          p.style.setProperty('font-size', `${settings.fontSize}px`, 'important');
+          p.style.setProperty('line-height', `${settings.lineHeight}`, 'important');
+          // 直接设置style属性确保最高优先级
+          p.setAttribute('style', `${p.getAttribute('style') || ''}; font-family: ${fontFamily} !important;`);
+        });
+
+        // 为所有文本元素设置字体
+        const textElements = doc.querySelectorAll('p, div, span, h1, h2, h3, h4, h5, h6, li, td, th, a, em, strong, b, i, u, blockquote, pre, code, section, article, body');
+        textElements.forEach((el: any) => {
+          if (el && typeof el.getElementsByTagName === 'function' && el.style) {
+            el.style.setProperty('font-size', `${settings.fontSize}px`, 'important');
+            el.style.setProperty('line-height', `${settings.lineHeight}`, 'important');
+            // 使用setAttribute确保样式优先级
+            el.setAttribute('style', `${el.getAttribute('style') || ''}; font-family: ${fontFamily} !important;`);
+            let currentColor = '';
+            try {
+              const win = doc.defaultView || (doc as any).parentWindow;
+              if (win) currentColor = win.getComputedStyle(el).color;
+            } catch (_) {}
+            if (settings.theme === 'light' && (currentColor === 'rgb(255, 255, 255)' || currentColor === '#ffffff' || currentColor === 'white' || currentColor.includes('rgb(255, 255, 255)')))
+              el.style.setProperty('color', themeStyles.text, 'important');
+            else if (settings.theme === 'dark' && (currentColor === 'rgb(0, 0, 0)' || currentColor === '#000000' || currentColor === 'black' || currentColor.includes('rgb(0, 0, 0)')))
+              el.style.setProperty('color', themeStyles.text, 'important');
+            else if (!currentColor || currentColor === themeStyles.bg)
+              el.style.setProperty('color', themeStyles.text, 'important');
+          }
+        });
+      };
+
+      // 对已经渲染的内容也应用样式（rendition.views() 可能为空，故用 iframe 兜底）
+      const views = rendition.views();
+      if (views && Array.isArray(views)) {
+        views.forEach((view: any) => {
+          if (view?.document) applyFontAndThemeToDoc(view.document);
+        });
+      }
+      const iframe = containerRef.current?.querySelector('iframe');
+      const iframeDoc = iframe?.contentDocument || (iframe as HTMLIFrameElement)?.contentWindow?.document;
+      if (iframeDoc) applyFontAndThemeToDoc(iframeDoc);
       
+      // 【关键修复】应用主题后，重新注入字体样式
+      setTimeout(() => {
+        const views2 = rendition.views?.();
+        if (views2 && Array.isArray(views2)) {
+          views2.forEach((view: any) => {
+            if (view?.document) {
+              const tempContents = {
+                document: view.document,
+                addStylesheetRules: (rules: any) => {
+                  // 尝试使用 epubjs 的方式添加样式
+                  try {
+                    if (view.document?.defaultView?.epubjs?.contents?.addStylesheetRules) {
+                      view.document.defaultView.epubjs.contents.addStylesheetRules(rules);
+                    } else {
+                      // 回退：直接注入 CSS
+                      const style = view.document.createElement('style');
+                      style.textContent = Object.entries(rules).map(([key, value]: [string, any]) => {
+                        if (key.startsWith('@font-face')) {
+                          return `@font-face { ${Object.entries(value).map(([k, v]) => `${k}: ${v}`).join('; ')} }`;
+                        }
+                        return `${key} { ${Object.entries(value).map(([k, v]) => `${k}: ${v}`).join('; ')} }`;
+                      }).join('\n');
+                      view.document.head.appendChild(style);
+                    }
+                  } catch (e) {
+                    console.warn('[主题useEffect] 注入字体样式失败:', e);
+                  }
+                }
+              };
+              
+              // 注入字体
+              const fonts = customFontsRef.current;
+              const currentSettings = settingsRef.current;
+              const selectedFontId = currentSettings.fontFamily?.startsWith('custom:') 
+                ? currentSettings.fontFamily.slice(7).trim() 
+                : undefined;
+
+              if (fonts.length > 0 || selectedFontId) {
+                const styleContent = buildCustomFontsStyleContent(fonts, getFontsBaseUrl());
+                if (styleContent) {
+                  const style = view.document.createElement('style');
+                  style.id = 'readknows-custom-fonts';
+                  style.textContent = styleContent;
+                  if (view.document.head.firstChild) {
+                    view.document.head.insertBefore(style, view.document.head.firstChild);
+                  } else {
+                    view.document.head.appendChild(style);
+                  }
+                  
+                  if (selectedFontId) {
+                    const fontFamily = getFontFamily(currentSettings.fontFamily);
+                    const forceStyle = view.document.createElement('style');
+                    forceStyle.id = 'readknows-custom-fonts-force';
+                    forceStyle.textContent = `body, body * { font-family: ${fontFamily} !important; }`;
+                    if (view.document.head.firstChild) {
+                      view.document.head.insertBefore(forceStyle, view.document.head.firstChild);
+                    } else {
+                      view.document.head.appendChild(forceStyle);
+                    }
+                  }
+                }
+              }
+            }
+          });
+        }
+      }, 300);
+
       // 等待样式生效后重新计算分页和布局
       setTimeout(async () => {
         try {
@@ -3334,6 +3485,79 @@ export default function ReaderEPUBPro({
       console.error('ReaderEPUBPro: 更新主题失败', error);
     }
   }, [settings.theme, settings.fontSize, settings.fontFamily, settings.lineHeight, settings.margin, settings.textIndent]);
+
+  // 监听自定义字体变化，重新注入@font-face CSS到iframe并强制重新应用
+  useEffect(() => {
+    const rendition = epubjsRenditionRef.current;
+    if (!rendition) return;
+
+    const fonts = customFontsRef.current;
+    const currentSettings = settingsRef.current;
+    const selectedFontId = currentSettings.fontFamily?.startsWith('custom:') 
+      ? currentSettings.fontFamily.slice(7).trim() 
+      : undefined;
+
+    if (!fonts.length && !selectedFontId) return;
+
+    // 延迟注入，确保 rendition 已就绪
+    setTimeout(() => {
+      const views = rendition.views?.();
+      if (views && Array.isArray(views)) {
+        views.forEach((view: any) => {
+          if (view?.document) {
+            // 注入 @font-face
+            const styleContent = buildCustomFontsStyleContent(fonts, getFontsBaseUrl());
+            if (styleContent) {
+              const oldStyle = view.document.getElementById('readknows-custom-fonts');
+              if (oldStyle) oldStyle.remove();
+              
+              const style = view.document.createElement('style');
+              style.id = 'readknows-custom-fonts';
+              style.textContent = styleContent;
+              if (view.document.head.firstChild) {
+                view.document.head.insertBefore(style, view.document.head.firstChild);
+              } else {
+                view.document.head.appendChild(style);
+              }
+            }
+            
+            // 注入强制字体样式
+            if (selectedFontId) {
+              const oldForceStyle = view.document.getElementById('readknows-custom-fonts-force');
+              if (oldForceStyle) oldForceStyle.remove();
+              
+              const fontFamily = getFontFamily(currentSettings.fontFamily);
+              const forceStyle = view.document.createElement('style');
+              forceStyle.id = 'readknows-custom-fonts-force';
+              forceStyle.textContent = `body, body * { font-family: ${fontFamily} !important; }`;
+              if (view.document.head.firstChild) {
+                view.document.head.insertBefore(forceStyle, view.document.head.firstChild);
+              } else {
+                view.document.head.appendChild(forceStyle);
+              }
+            }
+            
+            // 使用 FontFace API
+            fonts.forEach((font) => {
+              const fontFamilyName = `ReadKnowsCustomFont-${font.id}`;
+              const apiUrl = `${getFontsBaseUrl()}/api/fonts/file-by-id/${encodeURIComponent(font.id)}`;
+              
+              try {
+                if (view.document.fonts && typeof view.document.fonts.add === 'function' && !view.document.fonts.check(`12px ${fontFamilyName}`)) {
+                  const fontFace = new FontFace(fontFamilyName, `url("${apiUrl}")`);
+                  fontFace.load()
+                    .then(() => {
+                      view.document.fonts.add(fontFace);
+                    })
+                    .catch(() => {});
+                }
+              } catch (e) {}
+            });
+          }
+        });
+      }
+    }, 200);
+  }, [customFonts, settings.fontFamily]);
 
   // 监听高亮列表变化并自动渲染到阅读器
   useEffect(() => {
@@ -3697,7 +3921,7 @@ export default function ReaderEPUBPro({
             try {
               range = (rendition as any).getRange?.(note.position);
               if (!range) {
-                console.log('[笔记标记] CFI 定位失败，尝试文本匹配:', note.position);
+                // console.log('[笔记标记] CFI 定位失败，尝试文本匹配:', note.position);
               }
             } catch (e) {
               console.warn('[笔记标记] CFI 定位异常:', e, note.position);

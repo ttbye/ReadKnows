@@ -154,7 +154,7 @@ export function useAudioLoader(config: AudioLoaderConfig) {
         const instance = globalAudioManager.getInstance();
         if (instance && instance.audio) {
           const existingAudio = instance.audio;
-          audioRef.current = existingAudio;
+          (audioRef as any).current = existingAudio;
           setLoading(false);
 
           // 获取开始时间
@@ -175,7 +175,7 @@ export function useAudioLoader(config: AudioLoaderConfig) {
       const audioUrl = getFullApiUrl(`/audiobooks/${audiobookId}/files/${fileId}`);
       const authHeaders = getAuthHeaders();
       const audio = new Audio();
-      audioRef.current = audio;
+      (audioRef as any).current = audio;
 
       // 设置PWA专用事件处理器
       if (setupPWAAudioHandlers && pwaAudioHandlersCleanupRef) {

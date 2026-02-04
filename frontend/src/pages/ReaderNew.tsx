@@ -52,89 +52,124 @@ export default function ReaderNew() {
     return 18;
   };
 
-  // 获取阅读设置（仅从本地localStorage读取，不同步服务器）
+  // 获取阅读设置（优先从服务器获取，用户偏好持久化）
   const fetchSettings = async () => {
     try {
-      // 阅读设置仅保存在本地，不同步服务器
-      // 这样不同平台可以有不同的字体设置而不冲突
+      // 首先尝试从服务器获取用户的阅读设置
+      let serverSettings = null;
+      try {
+        const serverResponse = await api.get('/reading/settings');
+        if (serverResponse.data?.settings) {
+          serverSettings = serverResponse.data.settings;
+        } 
+      } catch (serverError: any) {
+        console.error('[ReaderNew] 从服务器获取设置失败:', serverError.message);
+        if (serverError.response) {
+          console.error('[ReaderNew] 服务器响应状态:', serverError.response.status);
+          if (serverError.response.status === 401) {
+            console.error('[ReaderNew] 用户未认证，请重新登录');
+          }
+        } else {
+          console.error('[ReaderNew] 网络错误，无法连接到服务器');
+        }
+      }
+
+      // 获取本地设置作为fallback
       const savedSettings = localStorage.getItem('reading-settings');
       const settingsVersion = localStorage.getItem('reading-settings-version');
+
+      let localParsed = null;
       if (savedSettings) {
         try {
-          const parsed = JSON.parse(savedSettings);
-          // 确保所有字段都被正确恢复，包括嵌套对象
-          const restoredSettings: ReadingSettings = {
-            ...defaultSettings,
-            ...parsed,
-            // 确保嵌套对象也被正确合并
-            keyboardShortcuts: {
-              ...defaultSettings.keyboardShortcuts,
-              ...(parsed.keyboardShortcuts || {}),
-            },
-          };
-
-          // 兼容升级：如果缺少翻页模式/方式字段，补齐默认值（左右滑动翻页）
-          if (restoredSettings.pageTurnMethod !== 'click' && restoredSettings.pageTurnMethod !== 'swipe') {
-            restoredSettings.pageTurnMethod = 'swipe';
-          }
-          if (restoredSettings.pageTurnMode !== 'horizontal' && restoredSettings.pageTurnMode !== 'vertical') {
-            restoredSettings.pageTurnMode = 'horizontal';
-          }
-          
-          // 兼容升级：确保PDF自动旋转默认为false（如果未设置）
-          if (restoredSettings.pdfAutoRotate === undefined) {
-            restoredSettings.pdfAutoRotate = false;
-          }
-
-          // 兼容升级：如果老版本默认字号过小（或用户从未主动调整），自动修复到更舒适的字号
-          // 仅在首次升级时执行一次，后续完全尊重用户在本机的设置
-          if (!settingsVersion) {
-            const recommended = getRecommendedFontSize();
-            const fontSize = typeof restoredSettings.fontSize === 'number' ? restoredSettings.fontSize : defaultSettings.fontSize;
-            // 旧默认常见为 16，或小于 18 的情况：提升到推荐值
-            if (fontSize < 18) {
-              restoredSettings.fontSize = Math.max(18, recommended);
-              // 同步写回 localStorage，保证“不同书籍体验一致”
-              try {
-                localStorage.setItem('reading-settings', JSON.stringify(restoredSettings));
-              } catch (e) {
-                // 忽略写回失败
-              }
-            }
-            localStorage.setItem('reading-settings-version', '2');
-          }
-
-          // console.log('[ReaderNew] 从 localStorage 恢复设置:', {
-          //   fontSize: restoredSettings.fontSize,
-          //   fontFamily: restoredSettings.fontFamily,
-          //   lineHeight: restoredSettings.lineHeight,
-          //   theme: restoredSettings.theme,
-          //   margin: restoredSettings.margin,
-          //   textIndent: restoredSettings.textIndent,
-          // });
-          setSettings(restoredSettings);
+          localParsed = JSON.parse(savedSettings);
         } catch (e) {
           console.error('ReaderNew: 解析本地设置失败', e);
-          setSettings(defaultSettings);
         }
+      }
+
+      // 设置合并策略：服务器设置优先，本地设置作为fallback
+      let finalSettings: ReadingSettings;
+
+      if (serverSettings) {
+        // 有服务器设置，使用服务器设置，但合并本地设置中可能缺失的字段
+        finalSettings = {
+          ...defaultSettings,
+          ...localParsed, // 本地设置作为基础
+          ...serverSettings, // 服务器设置覆盖本地设置（用户偏好优先）
+        };
+      } else if (localParsed) {
+        // 只有本地设置
+        finalSettings = {
+          ...defaultSettings,
+          ...localParsed,
+        };
       } else {
-        // 首次使用：使用更舒适的默认字号，并按屏幕轻度自适配
-        const firstSettings: ReadingSettings = {
+        // 首次使用
+        finalSettings = {
           ...defaultSettings,
           fontSize: Math.max(defaultSettings.fontSize, getRecommendedFontSize()),
         };
-        // console.log('[ReaderNew] 首次使用，创建默认设置:', {
-        //   fontSize: firstSettings.fontSize,
-        //   fontFamily: firstSettings.fontFamily,
-        //   lineHeight: firstSettings.lineHeight,
-        // });
-        setSettings(firstSettings);
-        try {
-          localStorage.setItem('reading-settings', JSON.stringify(firstSettings));
-          localStorage.setItem('reading-settings-version', '2');
-        } catch (e) {
-          // 忽略写入失败
+      }
+
+      // 确保嵌套对象也被正确合并
+      finalSettings.keyboardShortcuts = {
+        ...defaultSettings.keyboardShortcuts,
+        ...(localParsed?.keyboardShortcuts || {}),
+        ...(serverSettings?.keyboardShortcuts || {}),
+      };
+
+      // 兼容升级逻辑
+      if (finalSettings.pageTurnMethod !== 'click' && finalSettings.pageTurnMethod !== 'swipe') {
+        finalSettings.pageTurnMethod = 'swipe';
+      }
+      if (finalSettings.pageTurnMode !== 'horizontal' && finalSettings.pageTurnMode !== 'vertical') {
+        finalSettings.pageTurnMode = 'horizontal';
+      }
+      if (finalSettings.pdfAutoRotate === undefined) {
+        finalSettings.pdfAutoRotate = false;
+      }
+
+      // 兼容升级：如果老版本默认字号过小
+      if (!settingsVersion && !serverSettings) {
+        const recommended = getRecommendedFontSize();
+        const fontSize = typeof finalSettings.fontSize === 'number' ? finalSettings.fontSize : defaultSettings.fontSize;
+        if (fontSize < 18) {
+          finalSettings.fontSize = Math.max(18, recommended);
         }
+        localStorage.setItem('reading-settings-version', '2');
+      }
+
+      // console.log('[ReaderNew] 最终设置:', {
+      //   source: serverSettings ? 'server' : localParsed ? 'local' : 'default',
+      //   fontSize: finalSettings.fontSize,
+      //   fontFamily: finalSettings.fontFamily,
+      //   theme: finalSettings.theme,
+      //   hasServerSettings: !!serverSettings,
+      //   hasLocalSettings: !!localParsed,
+      // });
+
+    // 如果有服务器设置，检查字体设置
+    if (serverSettings && serverSettings.fontFamily) {
+      // console.log('[ReaderNew] 服务器字体设置:', serverSettings.fontFamily);
+    }
+    if (localParsed && localParsed.fontFamily) {
+      // console.log('[ReaderNew] 本地字体设置:', localParsed.fontFamily);
+    }
+
+      if (serverSettings) {
+        // console.log('[ReaderNew] 服务器设置详情:', serverSettings);
+      }
+      if (localParsed) {
+        // console.log('[ReaderNew] 本地设置详情:', localParsed);
+      }
+
+      setSettings(finalSettings);
+
+      // 保存最终设置到本地存储（作为缓存）
+      try {
+        localStorage.setItem('reading-settings', JSON.stringify(finalSettings));
+      } catch (e) {
+        console.warn('保存设置到本地存储失败:', e);
       }
     } catch (error) {
       console.error('ReaderNew: 获取阅读设置失败', error);
@@ -142,7 +177,7 @@ export default function ReaderNew() {
     }
   };
 
-  // 保存阅读设置（仅保存到本地localStorage）
+  // 保存阅读设置（同时保存到服务器和本地）
   const saveSettings = async (newSettings: ReadingSettings) => {
     // 确保所有字段都被包含，合并默认值以防止字段丢失
     const completeSettings: ReadingSettings = {
@@ -154,14 +189,26 @@ export default function ReaderNew() {
         ...(newSettings.keyboardShortcuts || {}),
       },
     };
-    
+
     // 更新状态
     setSettings(completeSettings);
-    
-    // 立即保存到 localStorage
+
+    // 保存到服务器（用户偏好持久化）
     try {
-      // 仅保存到本地，不同步服务器
-      // 这样每个设备可以有独立的字体大小、行距等设置
+      const response = await api.post('/reading/settings', completeSettings);
+    } catch (serverError: any) {
+      console.error('[ReaderNew] 保存设置到服务器失败:', serverError.message);
+      if (serverError.response) {
+        console.error('[ReaderNew] 服务器响应状态:', serverError.response.status);
+        console.error('[ReaderNew] 服务器响应数据:', serverError.response.data);
+      } else if (serverError.request) {
+        console.error('[ReaderNew] 网络请求失败，无响应');
+      }
+      // 服务器保存失败不影响本地保存
+    }
+
+    // 保存到本地存储（作为缓存和离线支持）
+    try {
       const settingsJson = JSON.stringify(completeSettings);
       localStorage.setItem('reading-settings', settingsJson);
       // 同时保存TTS设置到独立的localStorage键（确保TTS设置持久化）
@@ -231,7 +278,6 @@ export default function ReaderNew() {
         if (officeTypes.includes(bookData.file_type?.toLowerCase())) {
           const pdfFormat = formats.find((f: any) => f.file_type?.toLowerCase() === 'pdf');
           if (pdfFormat) {
-            console.log('[ReaderNew] Office 文件检测到 PDF 版本，使用 PDF 阅读器');
             bookData = pdfFormat; // 使用 PDF 版本的书籍数据
           }
         }

@@ -122,21 +122,19 @@ export function extractEpubMetadata(filePath: string, bookDir?: string): Promise
                           if (bookDir) {
                             try {
                               // 确保目录存在
-                              console.log('[EPUB封面提取] 开始处理封面:', {
-                                bookDir,
-                                coverPath,
-                                bookDirExists: fs.existsSync(bookDir)
-                              });
+                              // console.log('[EPUB封面提取] 开始处理封面:', {
+                              //   bookDir,
+                              //   coverPath,
+                              //   bookDirExists: fs.existsSync(bookDir)
+                              // });
                               
                               if (!fs.existsSync(bookDir)) {
                                 fs.mkdirSync(bookDir, { recursive: true });
-                                console.log('[EPUB封面提取] 创建书籍目录:', bookDir);
                               }
                               
                               // 检查目录权限
                               try {
                                 fs.accessSync(bookDir, fs.constants.W_OK);
-                                console.log('[EPUB封面提取] 目录可写');
                               } catch (permError) {
                                 console.error('[EPUB封面提取] 目录不可写:', bookDir, permError);
                                 throw new Error(`目录不可写: ${bookDir}`);
@@ -155,19 +153,18 @@ export function extractEpubMetadata(filePath: string, bookDir?: string): Promise
                                 console.warn('[EPUB封面提取] 无法读取封面图片数据:', coverPath);
                                 coverUrl = 'cover';
                               } else {
-                                console.log('[EPUB封面提取] 封面数据大小:', coverBuffer.length, 'bytes');
+                                // console.log('[EPUB封面提取] 封面数据大小:', coverBuffer.length, 'bytes');
                                 
                                 // 写入封面文件
                             fs.writeFileSync(coverFilePath, coverBuffer);
-                                console.log('[EPUB封面提取] 封面文件已写入');
                                 
                                 // 验证文件是否写入成功
                                 if (fs.existsSync(coverFilePath)) {
                                   const stats = fs.statSync(coverFilePath);
-                                  console.log('[EPUB封面提取] 封面文件验证成功:', {
-                                    path: coverFilePath,
-                                    size: stats.size
-                                  });
+                                  // console.log('[EPUB封面提取] 封面文件验证成功:', {
+                                  //   path: coverFilePath,
+                                  //   size: stats.size
+                                  // });
                                 } else {
                                   console.error('[EPUB封面提取] 封面文件写入后不存在!');
                                   throw new Error('封面文件写入失败');
@@ -177,14 +174,14 @@ export function extractEpubMetadata(filePath: string, bookDir?: string): Promise
                             const { booksDir } = require('../config/paths');
                             const relativePath = path.relative(booksDir, coverFilePath);
                             coverUrl = `/books/${relativePath.replace(/\\/g, '/')}`;
-                                console.log('[EPUB封面提取] 封面图片已保存:', {
-                                  coverPath,
-                                  coverFilePath,
-                                  coverUrl,
-                                  fileSize: coverBuffer.length,
-                                  bookDir,
-                                  relativePath
-                                });
+                                // console.log('[EPUB封面提取] 封面图片已保存:', {
+                                //   coverPath,
+                                //   coverFilePath,
+                                //   coverUrl,
+                                //   fileSize: coverBuffer.length,
+                                //   bookDir,
+                                //   relativePath
+                                // });
                               }
                             } catch (saveError: any) {
                               console.error('[EPUB封面提取] 保存封面图片失败:', {
@@ -198,7 +195,6 @@ export function extractEpubMetadata(filePath: string, bookDir?: string): Promise
                             }
                           } else {
                             // 如果没有提供bookDir，返回标识
-                            console.log('[EPUB封面提取] 未提供bookDir，跳过保存');
                             coverUrl = 'cover';
                           }
                         } else {

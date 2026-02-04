@@ -61,6 +61,7 @@ export default function AccountSettings() {
   const [hasLocalKey, setHasLocalKey] = useState<boolean>(false);
   const [showSetRecoveryModal, setShowSetRecoveryModal] = useState(false);
   const [showRestoreModal, setShowRestoreModal] = useState(false);
+  const [recoveryModalOpenedAfterEnable, setRecoveryModalOpenedAfterEnable] = useState(false);
   const [recoveryPassword, setRecoveryPassword] = useState('');
   const [recoveryPasswordConfirm, setRecoveryPasswordConfirm] = useState('');
   const [restorePassword, setRestorePassword] = useState('');
@@ -430,6 +431,12 @@ export default function AccountSettings() {
         setE2eeHasBackup(!!(r.data.user as any).e2ee_has_backup);
         setHasLocalKey(true);
         toast.success(t('accountSettings.e2eeEnabled') || '端到端加密已启用');
+
+        // 首次启用且服务器无恢复备份时，自动弹出设置恢复密码
+        if (!(r.data.user as any).e2ee_has_backup) {
+          setRecoveryModalOpenedAfterEnable(true);
+          setShowSetRecoveryModal(true);
+        }
       } else {
         toast.error(t('accountSettings.e2eeEnableFailed') || '启用失败');
       }
@@ -459,6 +466,7 @@ export default function AccountSettings() {
         setShowSetRecoveryModal(false);
         setRecoveryPassword('');
         setRecoveryPasswordConfirm('');
+        setRecoveryModalOpenedAfterEnable(false);
         toast.success(t('accountSettings.e2eeRecoverySetSuccess') || '恢复密码已设置');
       } else {
         toast.error(t('accountSettings.e2eeRecoverySetFailed') || '设置失败');
@@ -1050,16 +1058,21 @@ export default function AccountSettings() {
 
       {/* 设置/更新恢复密码 弹窗 */}
       {showSetRecoveryModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => !recoveryLoading && setShowSetRecoveryModal(false)}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => { if (!recoveryLoading) { setShowSetRecoveryModal(false); setRecoveryModalOpenedAfterEnable(false); } }}>
           <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl p-4 w-full max-w-sm mx-4" onClick={e => e.stopPropagation()}>
             <h3 className="font-semibold text-gray-900 dark:text-gray-100 mb-3">{e2eeHasBackup ? (t('accountSettings.e2eeUpdateRecovery') || '更新恢复密码') : (t('accountSettings.e2eeSetRecovery') || '设置恢复密码')}</h3>
+            {recoveryModalOpenedAfterEnable && (
+              <p className="text-sm text-amber-700 dark:text-amber-400 mb-3 bg-amber-50 dark:bg-amber-900/20 p-2 rounded">
+                {t('accountSettings.e2eeSetRecoveryAfterEnableHint') || '建议立即设置恢复密码，以便在换设备后能恢复密钥并查看加密消息。'}
+              </p>
+            )}
             <p className="text-sm text-gray-600 dark:text-gray-400 mb-3">{t('accountSettings.e2eeRecoveryPasswordHint') || '用于在新设备上恢复密钥，请妥善保管。至少 6 位。'}</p>
             <div className="space-y-3">
               <PasswordInput value={recoveryPassword} onChange={e => setRecoveryPassword(e.target.value)} placeholder={t('accountSettings.e2eeRecoveryPassword') || '恢复密码'} className="input w-full" />
               <PasswordInput value={recoveryPasswordConfirm} onChange={e => setRecoveryPasswordConfirm(e.target.value)} placeholder={t('accountSettings.e2eeRecoveryPasswordConfirm') || '确认恢复密码'} className="input w-full" />
             </div>
             <div className="flex justify-end gap-2 mt-4">
-              <button onClick={() => !recoveryLoading && setShowSetRecoveryModal(false)} className="btn btn-secondary">{t('common.cancel')}</button>
+              <button onClick={() => { if (!recoveryLoading) { setShowSetRecoveryModal(false); setRecoveryModalOpenedAfterEnable(false); } }} className="btn btn-secondary">{t('common.cancel')}</button>
               <button onClick={handleSetRecoveryPassword} disabled={recoveryLoading} className="btn btn-primary">{recoveryLoading ? t('common.loading') : t('common.confirm')}</button>
             </div>
           </div>

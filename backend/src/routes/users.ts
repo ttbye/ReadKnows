@@ -37,7 +37,7 @@ router.get('/me', authenticateToken, async (req: AuthRequest, res) => {
   try {
     const userId = req.userId!;
     const user = db
-      .prepare('SELECT id, username, email, role, nickname, language, can_upload_private, max_private_books, can_upload_books, can_edit_books, can_download, can_push, can_upload_audiobook, e2ee_public_key, e2ee_private_key_encrypted, created_at, updated_at, last_login_time, avatar_path FROM users WHERE id = ?')
+      .prepare('SELECT id, username, email, role, nickname, language, can_upload_private, max_private_books, can_upload_books, can_edit_books, can_download, can_push, can_upload_audiobook, can_use_friends, e2ee_public_key, e2ee_private_key_encrypted, created_at, updated_at, last_login_time, avatar_path FROM users WHERE id = ?')
       .get(userId) as any;
 
     if (!user) {
@@ -94,10 +94,20 @@ router.get('/me', authenticateToken, async (req: AuthRequest, res) => {
     if (user.can_push === undefined || user.can_push === null) {
       user.can_push = true;
     } else {
-      const numValue = typeof user.can_push === 'string' 
-        ? parseInt(user.can_push, 10) 
+      const numValue = typeof user.can_push === 'string'
+        ? parseInt(user.can_push, 10)
         : Number(user.can_push);
       user.can_push = numValue === 1;
+    }
+
+    // can_use_friends: 默认值：所有用户为 true（允许，向后兼容）
+    if (user.can_use_friends === undefined || user.can_use_friends === null) {
+      user.can_use_friends = true;
+    } else {
+      const numValue = typeof user.can_use_friends === 'string'
+        ? parseInt(user.can_use_friends, 10)
+        : Number(user.can_use_friends);
+      user.can_use_friends = numValue === 1;
     }
 
     // can_upload_audiobook: 默认值：管理员为 true（允许），普通用户为 false（禁用）
@@ -176,7 +186,7 @@ router.put('/me', authenticateToken, async (req: AuthRequest, res) => {
     db.prepare(`UPDATE users SET ${updateFields.join(', ')} WHERE id = ?`).run(...updateValues);
 
     const updatedUser = db
-      .prepare('SELECT id, username, email, role, nickname, language, can_upload_private, max_private_books, can_upload_books, can_edit_books, can_download, can_push, can_upload_audiobook, created_at, updated_at, last_login_time, avatar_path FROM users WHERE id = ?')
+      .prepare('SELECT id, username, email, role, nickname, language, can_upload_private, max_private_books, can_upload_books, can_edit_books, can_download, can_push, can_upload_audiobook, can_use_friends, created_at, updated_at, last_login_time, avatar_path FROM users WHERE id = ?')
       .get(userId) as any;
 
     // 转换权限字段为布尔值
@@ -248,7 +258,7 @@ const avatarUploadHandler = [authenticateToken, uploadAvatar.single('avatar'), a
       const oldFull = path.join(avatarsDir, oldPath);
       try { if (fs.existsSync(oldFull)) fs.unlinkSync(oldFull); } catch (_) {}
     }
-    const updatedUser = db.prepare('SELECT id, username, email, role, nickname, language, can_upload_private, max_private_books, can_upload_books, can_edit_books, can_download, can_push, can_upload_audiobook, created_at, updated_at, last_login_time, avatar_path FROM users WHERE id = ?').get(userId) as any;
+    const updatedUser = db.prepare('SELECT id, username, email, role, nickname, language, can_upload_private, max_private_books, can_upload_books, can_edit_books, can_download, can_push, can_upload_audiobook, can_use_friends, created_at, updated_at, last_login_time, avatar_path FROM users WHERE id = ?').get(userId) as any;
     res.json({ message: '头像已更新', user: updatedUser });
   } catch (error: any) {
     console.error('上传头像错误:', error);
@@ -302,7 +312,7 @@ router.post('/me/avatar/from-url', authenticateToken, async (req: AuthRequest, r
       const oldFull = path.join(avatarsDir, oldPath);
       try { if (fs.existsSync(oldFull)) fs.unlinkSync(oldFull); } catch (_) {}
     }
-    const updatedUser = db.prepare('SELECT id, username, email, role, nickname, language, can_upload_private, max_private_books, can_upload_books, can_edit_books, can_download, can_push, can_upload_audiobook, created_at, updated_at, last_login_time, avatar_path FROM users WHERE id = ?').get(userId) as any;
+    const updatedUser = db.prepare('SELECT id, username, email, role, nickname, language, can_upload_private, max_private_books, can_upload_books, can_edit_books, can_download, can_push, can_upload_audiobook, can_use_friends, created_at, updated_at, last_login_time, avatar_path FROM users WHERE id = ?').get(userId) as any;
     res.json({ message: '头像已更新', user: updatedUser });
   } catch (e: any) {
     if (e.response) return res.status(400).json({ error: '无法获取图片，请检查链接是否有效' });
@@ -322,7 +332,7 @@ router.delete('/me/avatar', authenticateToken, async (req: AuthRequest, res) => 
       const oldFull = path.join(avatarsDir, oldPath);
       try { if (fs.existsSync(oldFull)) fs.unlinkSync(oldFull); } catch (_) {}
     }
-    const updatedUser = db.prepare('SELECT id, username, email, role, nickname, language, can_upload_private, max_private_books, can_upload_books, can_edit_books, can_download, can_push, can_upload_audiobook, created_at, updated_at, last_login_time, avatar_path FROM users WHERE id = ?').get(userId) as any;
+    const updatedUser = db.prepare('SELECT id, username, email, role, nickname, language, can_upload_private, max_private_books, can_upload_books, can_edit_books, can_download, can_push, can_upload_audiobook, can_use_friends, created_at, updated_at, last_login_time, avatar_path FROM users WHERE id = ?').get(userId) as any;
     res.json({ message: '头像已清除', user: updatedUser });
   } catch (error: any) {
     console.error('清除头像错误:', error);
@@ -456,7 +466,7 @@ router.get('/:id/e2ee-public-key', authenticateToken, async (req: AuthRequest, r
 // 创建新用户（仅管理员）
 router.post('/', authenticateToken, requireAdmin, async (req: AuthRequest, res) => {
   try {
-    const { username, email, password, role, can_upload_private, max_private_books, can_upload_books, can_edit_books, can_download, can_push, can_upload_audiobook } = req.body;
+    const { username, email, password, role, can_upload_private, max_private_books, can_upload_books, can_edit_books, can_download, can_push, can_upload_audiobook, can_use_friends } = req.body;
 
     if (!username || !email || !password) {
       return res.status(400).json({ error: '请提供用户名、邮箱和密码' });
@@ -518,13 +528,16 @@ router.post('/', authenticateToken, requireAdmin, async (req: AuthRequest, res) 
     const canUploadAudiobook = can_upload_audiobook !== undefined 
       ? (can_upload_audiobook === true || can_upload_audiobook === 1 ? 1 : 0)
       : (userRole === 'admin' ? 1 : 0); // 默认：管理员允许，普通用户禁用
+    const canUseFriends = can_use_friends !== undefined
+      ? (can_use_friends === true || can_use_friends === 1 ? 1 : 0)
+      : 1; // 默认：所有用户允许（向后兼容）
     
     db.prepare(
-      'INSERT INTO users (id, username, email, password, role, can_upload_private, max_private_books, can_upload_books, can_edit_books, can_download, can_push, can_upload_audiobook) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
-    ).run(userId, username, email, hashedPassword, userRole, canUploadPrivate, maxPrivateBooks, canUploadBooks, canEditBooks, canDownload, canPush, canUploadAudiobook);
+      'INSERT INTO users (id, username, email, password, role, can_upload_private, max_private_books, can_upload_books, can_edit_books, can_download, can_push, can_upload_audiobook, can_use_friends) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+    ).run(userId, username, email, hashedPassword, userRole, canUploadPrivate, maxPrivateBooks, canUploadBooks, canEditBooks, canDownload, canPush, canUploadAudiobook, canUseFriends);
 
     const newUser = db
-      .prepare('SELECT id, username, email, role, nickname, can_upload_private, max_private_books, can_upload_books, can_edit_books, can_download, can_push, can_upload_audiobook, created_at, updated_at FROM users WHERE id = ?')
+      .prepare('SELECT id, username, email, role, nickname, can_upload_private, max_private_books, can_upload_books, can_edit_books, can_download, can_push, can_upload_audiobook, can_use_friends, created_at, updated_at FROM users WHERE id = ?')
       .get(userId) as any;
 
     // 转换权限字段为布尔值
@@ -582,7 +595,7 @@ router.get('/', authenticateToken, requireAdmin, async (req: AuthRequest, res) =
     const { page = 1, limit = 20, search } = req.query;
     const offset = (Number(page) - 1) * Number(limit);
 
-    let query = 'SELECT id, username, email, role, nickname, can_upload_private, max_private_books, can_upload_books, can_edit_books, can_download, can_push, can_upload_audiobook, created_at, updated_at, last_login_time FROM users';
+    let query = 'SELECT id, username, email, role, nickname, can_upload_private, max_private_books, can_upload_books, can_edit_books, can_download, can_push, can_upload_audiobook, can_use_friends, created_at, updated_at, last_login_time FROM users';
     const params: any[] = [];
     let countQuery = 'SELECT COUNT(*) as count FROM users';
     const countParams: any[] = [];
@@ -675,7 +688,7 @@ router.put('/:id', authenticateToken, requireAdmin, async (req: AuthRequest, res
   
   try {
     const { id } = req.params;
-    const { email, nickname, can_upload_private, max_private_books, can_upload_books, can_edit_books, can_download, can_push, can_upload_audiobook } = req.body;
+    const { email, nickname, can_upload_private, max_private_books, can_upload_books, can_edit_books, can_download, can_push, can_upload_audiobook, can_use_friends } = req.body;
     const currentUserId = req.userId!;
 
     // 不允许修改用户名
@@ -702,7 +715,7 @@ router.put('/:id', authenticateToken, requireAdmin, async (req: AuthRequest, res
     }
 
     // 使用事务确保操作的原子性
-    const updateUser = db.transaction((userId: string, userEmail: string, userNickname: string | null | undefined, canUploadPrivate: number | undefined, maxPrivateBooks: number | undefined, canUploadBooks: number | undefined, canEditBooks: number | undefined, canDownload: number | undefined, canPush: number | undefined, canUploadAudiobook: number | undefined) => {
+    const updateUser = db.transaction((userId: string, userEmail: string, userNickname: string | null | undefined, canUploadPrivate: number | undefined, maxPrivateBooks: number | undefined, canUploadBooks: number | undefined, canEditBooks: number | undefined, canDownload: number | undefined, canPush: number | undefined, canUploadAudiobook: number | undefined, canUseFriends: number | undefined) => {
       try {
         // 更新邮箱和昵称
         const updateFields: string[] = ['email = ?'];
@@ -758,7 +771,12 @@ router.put('/:id', authenticateToken, requireAdmin, async (req: AuthRequest, res
           updateFields.push('can_upload_audiobook = ?');
           updateValues.push(canUploadAudiobook);
         }
-        
+
+        if (canUseFriends !== undefined) {
+          updateFields.push('can_use_friends = ?');
+          updateValues.push(canUseFriends);
+        }
+
         updateFields.push('updated_at = CURRENT_TIMESTAMP');
         updateValues.push(userId);
         
@@ -770,7 +788,7 @@ router.put('/:id', authenticateToken, requireAdmin, async (req: AuthRequest, res
         
         // 获取更新后的用户信息
         const updatedUser = db
-          .prepare('SELECT id, username, email, role, nickname, can_upload_private, max_private_books, can_upload_books, can_edit_books, can_download, can_push, can_upload_audiobook, created_at, updated_at FROM users WHERE id = ?')
+          .prepare('SELECT id, username, email, role, nickname, can_upload_private, max_private_books, can_upload_books, can_edit_books, can_download, can_push, can_upload_audiobook, can_use_friends, created_at, updated_at FROM users WHERE id = ?')
           .get(userId) as any;
         
         return updatedUser;
@@ -821,10 +839,13 @@ router.put('/:id', authenticateToken, requireAdmin, async (req: AuthRequest, res
     const canPushValue = can_push !== undefined 
       ? (can_push === true || can_push === 1 ? 1 : 0) 
       : undefined;
-    const canUploadAudiobookValue = can_upload_audiobook !== undefined 
-      ? (can_upload_audiobook === true || can_upload_audiobook === 1 ? 1 : 0) 
+    const canUploadAudiobookValue = can_upload_audiobook !== undefined
+      ? (can_upload_audiobook === true || can_upload_audiobook === 1 ? 1 : 0)
       : undefined;
-    const updatedUser = updateUser(id, email, nicknameValue, canUploadPrivateValue, maxPrivateBooksValue, canUploadBooksValue, canEditBooksValue, canDownloadValue, canPushValue, canUploadAudiobookValue);
+    const canUseFriendsValue = can_use_friends !== undefined
+      ? (can_use_friends === true || can_use_friends === 1 ? 1 : 0)
+      : undefined;
+    const updatedUser = updateUser(id, email, nicknameValue, canUploadPrivateValue, maxPrivateBooksValue, canUploadBooksValue, canEditBooksValue, canDownloadValue, canPushValue, canUploadAudiobookValue, canUseFriendsValue);
 
     // 转换权限字段为布尔值
     if (updatedUser.can_upload_private !== undefined && updatedUser.can_upload_private !== null) {
@@ -861,6 +882,12 @@ router.put('/:id', authenticateToken, requireAdmin, async (req: AuthRequest, res
       updatedUser.can_upload_audiobook = updatedUser.can_upload_audiobook === 1;
     } else {
       updatedUser.can_upload_audiobook = updatedUser.role === 'admin';
+    }
+
+    if (updatedUser.can_use_friends !== undefined && updatedUser.can_use_friends !== null) {
+      updatedUser.can_use_friends = updatedUser.can_use_friends === 1;
+    } else {
+      updatedUser.can_use_friends = true; // 默认允许（向后兼容）
     }
 
     // 设置 max_private_books 默认值（向后兼容，默认为30）

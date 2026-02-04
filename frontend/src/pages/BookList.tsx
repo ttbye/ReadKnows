@@ -43,7 +43,8 @@ export default function BookList() {
     const title = (b?.title || '').toString();
     return b?.category === '笔记' || title.includes('[笔记]');
   };
-  const { isAuthenticated } = useAuthStore();
+  const { isAuthenticated, user } = useAuthStore();
+  const canUseFriends = user?.can_use_friends !== undefined ? user.can_use_friends : true;
   const navigate = useNavigate();
   const [books, setBooks] = useState<BookItem[]>([]);
   const [recentBooks, setRecentBooks] = useState<BookItem[]>([]);
@@ -980,8 +981,8 @@ export default function BookList() {
                       {t('book.private') || '私有'}
                     </button>
                   )}
-                  {/* "分享给我"按钮 - 只在有分享书籍时显示 */}
-                  {scopeCounts.shared > 0 && (
+                  {/* "分享给我"按钮 - 只在有分享书籍且有书友权限时显示 */}
+                  {scopeCounts.shared > 0 && canUseFriends && (
                     <button
                       onClick={() => {
                         setSelectedScope('shared');
@@ -996,8 +997,8 @@ export default function BookList() {
                       {t('book.shared') || '分享给我'}
                     </button>
                   )}
-                  {/* "书友会可见"按钮 - 只在有群组书籍时显示 */}
-                  {scopeCounts.group > 0 && (
+                  {/* "书友会可见"按钮 - 只在有群组书籍且有书友权限时显示 */}
+                  {scopeCounts.group > 0 && canUseFriends && (
                     <button
                       onClick={() => {
                         setSelectedScope('group');

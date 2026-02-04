@@ -8,6 +8,7 @@ import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { BookData, ReadingSettings, ReadingPosition, TOCItem } from '../../../types/reader';
 import { offlineStorage } from '../../../utils/offlineStorage';
 import { getFullApiUrl, getFullBookUrl } from '../../../utils/api';
+import { getFontFamily } from '../common/theme/themeManager';
 import toast from 'react-hot-toast';
 import { X, Clock, Search, Bookmark, BookmarkCheck } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -16,6 +17,8 @@ interface ReaderTXTProProps {
   book: BookData;
   settings: ReadingSettings;
   initialPosition?: ReadingPosition;
+  customFonts?: Array<{ id: string; name: string; file_name: string }>;
+  fontCache?: Map<string, Blob>;
   onSettingsChange: (settings: ReadingSettings) => void;
   onProgressChange: (progress: number, position: ReadingPosition) => void;
   onTOCChange: (toc: TOCItem[]) => void;
@@ -46,6 +49,7 @@ export default function ReaderTXTPro({
   book,
   settings,
   initialPosition,
+  customFonts = [],
   onSettingsChange,
   onProgressChange,
   onTOCChange,
@@ -662,12 +666,7 @@ export default function ReaderTXTPro({
       green: { bg: '#c8e6c9', text: '#2e7d32' },
     }[settings.theme];
 
-    const fontFamily = {
-      default: '-apple-system, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "微软雅黑", "WenQuanYi Micro Hei", sans-serif',
-      serif: '"Songti SC", "SimSun", "宋体", "STSong", serif',
-      'sans-serif': '-apple-system, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "微软雅黑", "WenQuanYi Micro Hei", sans-serif',
-      monospace: '"Courier New", "Monaco", "Consolas", monospace',
-    }[settings.fontFamily] || '-apple-system, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "微软雅黑", "WenQuanYi Micro Hei", sans-serif';
+    const fontFamily = getFontFamily(settings.fontFamily);
 
     return `
       background-color: ${themeStyles.bg};
@@ -688,12 +687,7 @@ export default function ReaderTXTPro({
       green: { bg: '#c8e6c9', text: '#2e7d32' },
     }[settings.theme];
 
-    const fontFamily = {
-      default: '-apple-system, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "微软雅黑", "WenQuanYi Micro Hei", sans-serif',
-      serif: '"Songti SC", "SimSun", "宋体", "STSong", serif',
-      'sans-serif': '-apple-system, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "微软雅黑", "WenQuanYi Micro Hei", sans-serif',
-      monospace: '"Courier New", "Monaco", "Consolas", monospace',
-    }[settings.fontFamily] || '-apple-system, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "微软雅黑", "WenQuanYi Micro Hei", sans-serif';
+    const fontFamily = getFontFamily(settings.fontFamily);
 
     return {
       backgroundColor: themeStyles.bg,

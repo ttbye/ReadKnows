@@ -15,7 +15,8 @@ const router = express.Router();
 // 添加到书架
 router.post('/add', authenticateToken, async (req: AuthRequest, res) => {
   try {
-    const { bookId } = req.body;
+    const rawBookId = req.body?.bookId;
+    const bookId = rawBookId != null && String(rawBookId).trim() !== '' ? String(rawBookId).trim() : '';
     const userId = req.userId!;
 
     if (!bookId) {
@@ -43,7 +44,7 @@ router.post('/add', authenticateToken, async (req: AuthRequest, res) => {
       .get(userId, mainBookId);
 
     if (existing) {
-      return res.status(400).json({ error: '书籍已在书架中' });
+      return res.status(409).json({ error: '书籍已在书架中' });
     }
 
     // 获取书籍信息用于日志

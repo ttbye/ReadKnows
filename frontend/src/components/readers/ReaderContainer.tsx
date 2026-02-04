@@ -5,7 +5,7 @@
  */
 
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { Settings, X, BookmarkCheck, Sparkles, ChevronLeft } from 'lucide-react';
+import { Settings, X, BookmarkCheck, Sparkles, ChevronLeft, Heart } from 'lucide-react';
 import { ReaderConfig, ReadingPosition, TOCItem, Highlight } from '../../types/reader';
 
 // 书签接口
@@ -47,6 +47,8 @@ import AIChatModal from './AIChatModal';
 import ProgressJumpModal from './ProgressJumpModal';
 import ShareExcerptModal, { ShareExcerptData } from './ShareExcerptModal';
 import toast from 'react-hot-toast';
+import api, { getFontsBaseUrl } from '../../utils/api';
+import { buildCustomFontsStyleContent } from './common/theme/themeManager';
 import { useAuthStore } from '../../store/authStore';
 import { addOrUpdateLocalHighlight, deleteLocalHighlight, generateHighlightId, getLocalHighlights, hasLocalHighlight, refreshHighlightsFromServer, syncHighlightQueue } from '../../utils/highlights';
 import { useNetworkStatus } from '../../hooks/useNetworkStatus';
@@ -54,7 +56,8 @@ import { useTranslation } from 'react-i18next';
 
 export default function ReaderContainer({ config }: { config: ReaderConfig }) {
   const { t } = useTranslation();
-  const { isAuthenticated } = useAuthStore();
+  const { isAuthenticated, user } = useAuthStore();
+  const canUseFriends = user?.can_use_friends !== undefined ? user.can_use_friends : true;
   const [showBottomNav, setShowBottomNav] = useState(false); // 底部栏默认隐藏，只有点击设置时才显示
   const [showTOC, setShowTOC] = useState(false);
   const [showSideTOC, setShowSideTOC] = useState(false); // 默认不显示左侧目录，用户需要手动打开
@@ -71,12 +74,21 @@ export default function ReaderContainer({ config }: { config: ReaderConfig }) {
   const [selectionPosition, setSelectionPosition] = useState<{ x: number; y: number } | null>(null);
   const [selectedCfiRange, setSelectedCfiRange] = useState<string | null>(null);
   const [showSelectionToolbar, setShowSelectionToolbar] = useState(false);
+
+  // 顶部工具栏测量相关状态
+  const topBarRef = useRef<HTMLDivElement>(null);
+  const [topBarBottom, setTopBarBottom] = useState(56); // 默认顶部栏高度
   const [showCreateNoteModal, setShowCreateNoteModal] = useState(false);
   const [showAIModal, setShowAIModal] = useState(false);
   const [showShareExcerptModal, setShowShareExcerptModal] = useState(false);
   const [shareExcerptData, setShareExcerptData] = useState<ShareExcerptData | null>(null);
   const [imageViewerUrl, setImageViewerUrl] = useState<string | null>(null);
-  
+  const [customFonts, setCustomFonts] = useState<Array<{ id: string; name: string; file_name: string }>>([]);
+
+  // 书籍收藏状态
+  const [isBookInShelf, setIsBookInShelf] = useState(false);
+  const [checkingShelfStatus, setCheckingShelfStatus] = useState(false);
+
   // 笔记接口
   interface BookNote {
     id: string;
@@ -259,6 +271,114 @@ export default function ReaderContainer({ config }: { config: ReaderConfig }) {
       clearInterval(checkInterval);
     };
   }, [showSettings, isTTSPlaying, ttsCurrentIndex, ttsTotalParagraphs, showTTSFloatingButton, showBottomNav]);
+
+  // 字体缓存管理
+  const fontCache = useRef<Map<string, Blob>>(new Map());
+
+  // 检查字体是否已缓存
+  const isFontCached = (fontId: string): boolean => {
+    return fontCache.current.has(fontId);
+  };
+
+  // 从缓存获取字体
+  const getCachedFont = (fontId: string): Blob | null => {
+    return fontCache.current.get(fontId) || null;
+  };
+
+  // 缓存字体文件
+  const cacheFont = (fontId: string, fontBlob: Blob) => {
+    fontCache.current.set(fontId, fontBlob);
+  };
+
+  // 预加载和缓存字体文件
+  const preloadFont = async (fontId: string, fontName: string): Promise<void> => {
+    if (isFontCached(fontId)) {
+      return;
+    }
+
+    try {
+      const response = await api.get(`/fonts/file-by-id/${fontId}`, {
+        responseType: 'blob',
+        timeout: 30000, // 30秒超时
+      });
+
+      if (response.data && response.data instanceof Blob) {
+        cacheFont(fontId, response.data);
+      } else {
+        console.warn(`[ReaderContainer] 字体 ${fontId} 下载失败：无效响应`, response);
+      }
+    } catch (error: any) {
+      console.error(`[ReaderContainer] 下载字体 ${fontId} 失败:`, error);
+      if (error.response) {
+        console.error(`[ReaderContainer] HTTP状态: ${error.response.status}, 响应:`, error.response.data);
+      }
+    }
+  };
+
+  // 拉取系统设置中上传的自定义字体，供阅读设置选择并注入 @font-face
+  useEffect(() => {
+    let cancelled = false;
+    api.get('/fonts', { timeout: 5000 }).then((res) => {
+      if (!cancelled) {
+        const fonts = res.data?.fonts || [];
+        if (fonts.length) {
+          const processedFonts = fonts.map((f: any) => ({ id: f.id, name: f.name || f.file_name, file_name: f.file_name }));
+          setCustomFonts(processedFonts);
+
+          // 预加载所有字体文件到缓存
+          processedFonts.forEach((font) => {
+            preloadFont(font.id, font.name);
+          });
+        }
+      }
+    }).catch((error) => {
+      console.error('[ReaderContainer] 获取字体失败:', error);
+    });
+    return () => { cancelled = true; };
+  }, []);
+
+  // 检查书籍是否已在书架中
+  const checkBookShelfStatus = useCallback(async () => {
+    if (!config.book?.id) return;
+
+    setCheckingShelfStatus(true);
+    try {
+      // 使用书架列表API来检查（临时方案，后续可以添加专门的检查API）
+      const response = await api.get('/shelf/my');
+      const inShelf = response.data?.books?.some((book: any) => book.id === config.book.id) || false;
+      setIsBookInShelf(inShelf);
+    } catch (error) {
+      console.error('检查书架状态失败:', error);
+      // 如果检查失败，默认认为不在书架中
+      setIsBookInShelf(false);
+    } finally {
+      setCheckingShelfStatus(false);
+    }
+  }, [config.book?.id]);
+
+  // 在书籍加载时检查书架状态
+  useEffect(() => {
+    if (config.book?.id) {
+      checkBookShelfStatus();
+    }
+  }, [config.book?.id, checkBookShelfStatus]);
+
+  // 监听窗口大小变化，重新测量顶部工具栏高度
+  useEffect(() => {
+    const updateTopBarHeight = () => {
+      if (topBarRef.current) {
+        const rect = topBarRef.current.getBoundingClientRect();
+        setTopBarBottom(rect.bottom);
+      }
+    };
+
+    // 初始测量
+    updateTopBarHeight();
+
+    // 监听resize事件
+    window.addEventListener('resize', updateTopBarHeight);
+    return () => window.removeEventListener('resize', updateTopBarHeight);
+  }, []);
 
   // 加载书签
   const loadBookmarks = useCallback(() => {
@@ -952,7 +1072,6 @@ export default function ReaderContainer({ config }: { config: ReaderConfig }) {
 
   // 处理添加笔记
   const handleAddNote = useCallback((text: string) => {
-    console.log('[ReaderContainer] handleAddNote', { textLen: text?.length, hasCfi: !!selectedCfiRange });
     setSelectedText(text);
     setShowCreateNoteModal(true);
     setShowSelectionToolbar(false);
@@ -962,7 +1081,6 @@ export default function ReaderContainer({ config }: { config: ReaderConfig }) {
 
   // 处理AI对话
   const handleAI = useCallback(() => {
-    console.log('[ReaderContainer] handleAI', { textLen: selectedText?.length });
     setShowAIModal(true);
     setShowSelectionToolbar(false);
     // 不清除文本选择，保留选中文本供AI使用
@@ -1053,7 +1171,6 @@ export default function ReaderContainer({ config }: { config: ReaderConfig }) {
 
   // 处理 EPUB 高亮（支持再次点击取消）
   const handleToggleHighlight = useCallback(async (color?: string) => {
-    console.log('[ReaderContainer] handleToggleHighlight', { hasCfi: !!selectedCfiRange, selectedTextLen: selectedText?.length, color });
     if (config.book.file_type !== 'epub') {
       toast.error(t('reader.onlyEpubHighlight'));
       return;
@@ -1295,6 +1412,8 @@ export default function ReaderContainer({ config }: { config: ReaderConfig }) {
             book={config.book}
             settings={config.settings}
             initialPosition={config.initialPosition}
+            customFonts={customFonts}
+            fontCache={fontCache.current}
             onSettingsChange={config.onSettingsChange}
             onProgressChange={handleProgressChange}
             onTOCChange={setToc}
@@ -1326,6 +1445,8 @@ export default function ReaderContainer({ config }: { config: ReaderConfig }) {
             book={config.book}
             settings={config.settings}
             initialPosition={config.initialPosition}
+            customFonts={customFonts}
+            fontCache={fontCache.current}
             onSettingsChange={config.onSettingsChange}
             onProgressChange={handleProgressChange}
             onTOCChange={setToc}
@@ -1343,6 +1464,8 @@ export default function ReaderContainer({ config }: { config: ReaderConfig }) {
             book={config.book}
             settings={config.settings}
             initialPosition={config.initialPosition}
+            customFonts={customFonts}
+            fontCache={fontCache.current}
             onSettingsChange={config.onSettingsChange}
             onProgressChange={handleProgressChange}
             onTOCChange={setToc}
@@ -1519,6 +1642,13 @@ export default function ReaderContainer({ config }: { config: ReaderConfig }) {
           // 作为"锚点"：交给工具栏自己决定显示在上方还是下方
           y: rect.top,
         });
+
+        // 测量顶部工具栏高度（用于避让功能菜单）
+        if (topBarRef.current) {
+          const rect = topBarRef.current.getBoundingClientRect();
+          setTopBarBottom(rect.bottom);
+        }
+
         setShowSelectionToolbar(true);
       }, 50);
     };
@@ -1601,9 +1731,8 @@ export default function ReaderContainer({ config }: { config: ReaderConfig }) {
     if (!isMobile) {
       return '0px'; // 桌面设备不需要安全区域
     }
-    // 移动设备：使用最小值20px，但不超过实际安全区域，最大44px（iPhone X标准值）
-    // 这样可以确保在所有设备上都有足够的空间，但不会过大
-    return 'clamp(20px, env(safe-area-inset-top, 20px), 44px)';
+    // 移动设备：仅使用实际安全区域，无刘海设备时为0，有刘海时使用实际值
+    return 'env(safe-area-inset-top, 0px)';
   };
 
   // 计算工具栏顶部位置（固定位置，不随安全区域变化）
@@ -1642,6 +1771,11 @@ export default function ReaderContainer({ config }: { config: ReaderConfig }) {
         paddingTop: getSafeAreaTop(),
       }}
     >
+      {/* 注入自定义字体 @font-face，供 TXT/Office 等主文档内阅读使用 */}
+      {customFonts.length > 0 && (() => {
+        const css = buildCustomFontsStyleContent(customFonts, getFontsBaseUrl());
+        return <style dangerouslySetInnerHTML={{ __html: css }} data-main-document="true" />;
+      })()}
       {/* ✅ 修复：PWA模式下顶部状态栏占位div，使用阅读器主题颜色（区别于其他页面） */}
       {(() => {
         const isPWAMode = typeof window !== 'undefined' && window.matchMedia('(display-mode: standalone)').matches;
@@ -1661,6 +1795,7 @@ export default function ReaderContainer({ config }: { config: ReaderConfig }) {
       })()}
       {/* 顶部工具栏 - 始终显示，固定高度48px；z-[10002] 高于状态栏占位 z-[10001]，避免 PWA 移动端被遮挡 */}
       <div
+        ref={topBarRef}
         className="fixed left-0 right-0 z-[10002]"
         style={{
           top: getToolbarTop(),
@@ -1756,6 +1891,52 @@ export default function ReaderContainer({ config }: { config: ReaderConfig }) {
           </div>
 
           <div className="flex items-center gap-2 flex-shrink-0">
+            {/* 收藏本书按钮 */}
+            <button
+              onClick={async () => {
+                const bookId = config.book?.id;
+                if (bookId == null || bookId === '') {
+                  toast.error(t('book.addToShelfErrorNoId') || '无法添加：书籍信息不完整');
+                  return;
+                }
+
+                try {
+                  if (isBookInShelf) {
+                    // 从书架中移除
+                    await api.delete(`/shelf/remove/${bookId}`);
+                    setIsBookInShelf(false);
+                    toast.success(t('book.removedFromShelf') || '已从书架移除');
+                  } else {
+                    // 添加到书架
+                    await api.post('/shelf/add', { bookId: String(bookId) });
+                    setIsBookInShelf(true);
+                    toast.success(t('book.addedToShelf'));
+                  }
+                } catch (error: any) {
+                  const status = error.response?.status;
+                  const msg = error.response?.data?.error || (isBookInShelf ? '移除书架失败' : '添加书架失败');
+
+                  if (status === 409 && !isBookInShelf) {
+                    // 已在书架中，更新状态
+                    setIsBookInShelf(true);
+                    toast.success(t('book.alreadyInShelf') || msg);
+                  } else {
+                    console.error(isBookInShelf ? '移除书架失败:' : '添加书架失败:', error);
+                    toast.error(msg);
+                  }
+                }
+              }}
+              className={`p-2 rounded-lg transition-all duration-200 flex-shrink-0 ${
+                isBookInShelf
+                  ? 'text-red-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20'
+                  : 'text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700/50'
+              }`}
+              aria-label={isBookInShelf ? t('book.removeFromShelf') : t('book.addToShelf')}
+              title={isBookInShelf ? t('book.removeFromShelf') : t('book.addToShelf')}
+              disabled={checkingShelfStatus}
+            >
+              <Heart className={`w-5 h-5 ${isBookInShelf ? 'fill-current' : ''}`} />
+            </button>
             {/* 书签列表按钮 - 有书签时显示 */}
             {bookmarks.length > 0 && (
               <button
@@ -2254,6 +2435,7 @@ export default function ReaderContainer({ config }: { config: ReaderConfig }) {
           <ReadingSettingsPanel
           settings={config.settings}
           bookType={config.book.file_type}
+          customFonts={customFonts}
           onSettingsChange={config.onSettingsChange}
           onClose={() => {
             // 正常关闭面板
@@ -2319,6 +2501,7 @@ export default function ReaderContainer({ config }: { config: ReaderConfig }) {
           <TextSelectionToolbar
             selectedText={selectedText}
             position={selectionPosition}
+            minTopOffset={topBarBottom}
             onAddNote={handleAddNote}
             onToggleHighlight={handleToggleHighlight}
             isHighlighted={!!(selectedCfiRange && hasLocalHighlight(config.book.id, selectedCfiRange))}
@@ -2327,7 +2510,7 @@ export default function ReaderContainer({ config }: { config: ReaderConfig }) {
             onDictionary={handleDictionary}
             onTranslate={handleTranslate}
             onAI={handleAI}
-            onShareExcerpt={handleShareExcerpt}
+            onShareExcerpt={canUseFriends ? handleShareExcerpt : undefined}
             onClose={() => {
               setShowSelectionToolbar(false);
               window.getSelection()?.removeAllRanges();
@@ -2477,11 +2660,10 @@ export default function ReaderContainer({ config }: { config: ReaderConfig }) {
         isVisible={showProgressJump}
         onClose={() => setShowProgressJump(false)}
         onJump={handleProgressJump}
-        book={config.book}
         position={currentPosition}
         settings={config.settings}
-        bookType={config.book.file_type === 'epub' ? 'epub' : 
-                 config.book.file_type === 'pdf' ? 'pdf' : 
+        bookType={config.book.file_type === 'epub' ? 'epub' :
+                 config.book.file_type === 'pdf' ? 'pdf' :
                  config.book.file_type === 'txt' ? 'txt' : 'office'}
       />
 

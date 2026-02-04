@@ -62,6 +62,7 @@ export default function BookDetailModal({ bookId, isOpen, onClose, onBookUpdated
   const navigate = useNavigate();
   const { isAuthenticated, user } = useAuthStore();
   const { t, i18n } = useTranslation();
+  const canUseFriends = user?.can_use_friends !== undefined ? user.can_use_friends : true;
   const [book, setBook] = useState<BookDetail | null>(null);
   const [formats, setFormats] = useState<BookDetail[]>([]);
   const [selectedFormatId, setSelectedFormatId] = useState<string | null>(null);
@@ -1574,7 +1575,7 @@ export default function BookDetailModal({ bookId, isOpen, onClose, onBookUpdated
                           <span className="text-[9px] md:text-[10px] font-medium">{t('book.push')}</span>
                         </button>
                         {/* 分享按钮 */}
-                        {(user?.role === 'admin' || book?.uploader_id === user?.id) && (
+                        {(user?.role === 'admin' || book?.uploader_id === user?.id) && canUseFriends && (
                           <button
                             onClick={() => {
                               fetchGroupsAndUsers();
@@ -1588,7 +1589,7 @@ export default function BookDetailModal({ bookId, isOpen, onClose, onBookUpdated
                           </button>
                         )}
                         {/* 群组可见性设置按钮 */}
-                        {(user?.role === 'admin' || book?.uploader_id === user?.id) && (
+                        {(user?.role === 'admin' || book?.uploader_id === user?.id) && canUseFriends && (
                           <button
                             onClick={() => {
                               fetchGroupsAndUsers();

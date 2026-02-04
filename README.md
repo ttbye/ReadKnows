@@ -6,7 +6,7 @@
 
 <div align="center">
 
-![Version](https://img.shields.io/badge/version-2.3.261.beta-blue.svg)
+![Version](https://img.shields.io/badge/version-2.4.262-blue.svg)
 ![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)
 ![Docker](https://img.shields.io/badge/docker-ready-blue.svg)
 ![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux%20%7C%20NAS-lightgrey.svg)
@@ -48,6 +48,7 @@ ReadKnows is a powerful private e-book management platform that supports reading
 - 📄 **Office Documents**: Word, Excel, PowerPoint support
 - 🎧 **Audiobooks**: Import, organize and play audiobooks
 - 💬 **Book Friends & Chat**: Friends, groups, messaging, file sharing
+- 🔤 **OCR Recognition**: Image text recognition for PDF and images (supports multiple languages)
 
 ---
 
@@ -63,6 +64,7 @@ ReadKnows is a powerful private e-book management platform that supports reading
 - Notes and highlights (offline sync)
 - Full-text search
 - Reading progress sync across devices
+- OCR text recognition for PDF images (supports multiple languages)
 
 ### 📚 Management Features
 - Upload, delete, edit book information

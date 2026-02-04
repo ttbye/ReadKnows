@@ -19,6 +19,7 @@ interface User {
   can_edit_books?: boolean;
   can_download?: boolean;
   can_push?: boolean;
+  can_use_friends?: boolean;
   nickname?: string;
   avatar_path?: string | null;
 }

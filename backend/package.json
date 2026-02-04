@@ -1,6 +1,6 @@
 {
   "name": "readknows-backend",
-  "version": "2.3.261.beta",
+  "version": "2.4.262",
   "description": "ReadKnows-API",
   "author": "ttbye",
   "main": "dist/index.js",

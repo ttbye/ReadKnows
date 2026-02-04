@@ -8,8 +8,9 @@
 import express from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import { db } from '../db';
-import { authenticateToken, AuthRequest } from '../middleware/auth';
+import { authenticateToken, AuthRequest, requireCanUseFriends } from '../middleware/auth';
 import multer from 'multer';
+
 import path from 'path';
 import fs from 'fs';
 import * as iconv from 'iconv-lite';
@@ -76,6 +77,8 @@ const router = express.Router();
 
 // 所有路由都需要认证
 router.use(authenticateToken);
+// 为所有消息路由应用书友权限检查
+router.use(requireCanUseFriends);
 
 // 消息文件存储目录
 import { messagesDir } from '../config/paths';

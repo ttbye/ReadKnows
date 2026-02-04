@@ -8,6 +8,7 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { BookData, ReadingSettings, ReadingPosition, TOCItem } from '../../../types/reader';
 import { offlineStorage } from '../../../utils/offlineStorage';
 import api from '../../../utils/api';
+import { getFontFamily } from '../common/theme/themeManager';
 import toast from 'react-hot-toast';
 import { X, Download, FileText, FileSpreadsheet, Presentation } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
@@ -19,6 +20,8 @@ interface ReaderOfficeProProps {
   book: BookData;
   settings: ReadingSettings;
   initialPosition?: ReadingPosition;
+  customFonts?: Array<{ id: string; name: string; file_name: string }>;
+  fontCache?: Map<string, Blob>;
   onSettingsChange: (settings: ReadingSettings) => void;
   onProgressChange: (progress: number, position: ReadingPosition) => void;
   onTOCChange: (toc: TOCItem[]) => void;
@@ -29,6 +32,7 @@ export default function ReaderOfficePro({
   book,
   settings,
   initialPosition,
+  customFonts = [],
   onSettingsChange,
   onProgressChange,
   onTOCChange,
@@ -775,7 +779,7 @@ export default function ReaderOfficePro({
         <div
           className="w-full"
           style={{
-            fontFamily: settings.fontFamily,
+            fontFamily: getFontFamily(settings.fontFamily),
             fontSize: `${settings.fontSize}px`,
             lineHeight: settings.lineHeight,
             color: themeStyles.text,
@@ -812,7 +816,7 @@ export default function ReaderOfficePro({
               ref={docxPreviewRef}
               className="docx-preview-container w-full"
               style={{
-                fontFamily: settings.fontFamily,
+                fontFamily: getFontFamily(settings.fontFamily),
                 fontSize: `${settings.fontSize}px`,
                 lineHeight: settings.lineHeight,
                 color: themeStyles.text,
@@ -830,7 +834,7 @@ export default function ReaderOfficePro({
             <div
               className="excel-preview-container w-full"
               style={{
-                fontFamily: settings.fontFamily,
+                fontFamily: getFontFamily(settings.fontFamily),
                 fontSize: `${settings.fontSize}px`,
                 lineHeight: settings.lineHeight,
                 color: themeStyles.text,
@@ -939,7 +943,7 @@ export default function ReaderOfficePro({
               <div
                 className="docx-content"
                 style={{
-                  fontFamily: settings.fontFamily,
+                  fontFamily: getFontFamily(settings.fontFamily),
                   fontSize: `${settings.fontSize}px`,
                   lineHeight: settings.lineHeight,
                   color: themeStyles.text,
@@ -964,7 +968,7 @@ export default function ReaderOfficePro({
               <div
                 className="whitespace-pre-wrap break-words"
                 style={{
-                  fontFamily: settings.fontFamily,
+                  fontFamily: getFontFamily(settings.fontFamily),
                   fontSize: `${settings.fontSize}px`,
                   lineHeight: settings.lineHeight,
                   color: themeStyles.text,

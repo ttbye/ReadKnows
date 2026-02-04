@@ -387,3 +387,39 @@ export function verifyApiKey(
   }
 }
 
+// 检查用户是否有书友权限
+export function requireCanUseFriends(
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+) {
+  try {
+    const userId = req.userId;
+    if (!userId) {
+      return res.status(401).json({ error: '用户未认证' });
+    }
+
+    const user = db
+      .prepare('SELECT can_use_friends FROM users WHERE id = ?')
+      .get(userId) as { can_use_friends: number | null } | undefined;
+
+    if (!user) {
+      return res.status(404).json({ error: '用户不存在' });
+    }
+
+    // 检查书友权限（默认值为 true）
+    const canUseFriends = user.can_use_friends === null || user.can_use_friends === undefined
+      ? true
+      : user.can_use_friends === 1;
+
+    if (!canUseFriends) {
+      return res.status(403).json({ error: '无书友功能权限' });
+    }
+
+    next();
+  } catch (error: any) {
+    console.error('检查书友权限失败:', error);
+    return res.status(500).json({ error: '检查权限时发生错误' });
+  }
+}
+

@@ -11,6 +11,7 @@ import { useTranslation } from 'react-i18next';
 interface TextSelectionToolbarProps {
   selectedText: string;
   position: { x: number; y: number };
+  minTopOffset?: number;
   onAddNote: (text: string) => void;
   onToggleHighlight?: (color?: string) => void;
   isHighlighted?: boolean;
@@ -26,6 +27,7 @@ interface TextSelectionToolbarProps {
 export default function TextSelectionToolbar({
   selectedText,
   position,
+  minTopOffset = 10,
   onAddNote,
   onToggleHighlight,
   isHighlighted,
@@ -70,8 +72,8 @@ export default function TextSelectionToolbar({
       x = 10;
     }
 
-    // 垂直方向：优先上方；如果上方放不下，则放到锚点下方
-    if (y < 10) {
+    // 垂直方向：优先上方；如果上方放不下（包括被顶栏遮挡），则放到锚点下方
+    if (y < minTopOffset) {
       y = position.y + GAP;
     }
     if (y + rect.height > viewportHeight) {

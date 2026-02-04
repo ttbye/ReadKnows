@@ -765,31 +765,45 @@ router.post('/settings', authenticateToken, async (req: AuthRequest, res) => {
     const userId = req.userId!;
     const settings = req.body;
 
+    console.log('[Reading Settings API] 保存设置，用户:', userId, '设置大小:', JSON.stringify(settings).length);
+    console.log('[Reading Settings API] 字体设置:', settings.fontFamily);
+
     // 检查是否已有设置
     const existing = db
       .prepare('SELECT id FROM reading_settings WHERE user_id = ?')
       .get(userId) as any;
 
+    const settingsJson = JSON.stringify(settings);
+
     if (existing) {
       // 更新设置
+      console.log('[Reading Settings API] 更新现有设置');
       db.prepare(`
-        UPDATE reading_settings 
-        SET settings = ?, updated_at = ?
+        UPDATE reading_settings
+        SET settings = ?, updated_at = CURRENT_TIMESTAMP
         WHERE user_id = ?
-      `).run(JSON.stringify(settings), userId);
+      `).run(settingsJson, userId);
     } else {
       // 创建新设置
+      console.log('[Reading Settings API] 创建新设置');
       const settingsId = uuidv4();
       db.prepare(`
         INSERT INTO reading_settings (id, user_id, settings)
         VALUES (?, ?, ?)
-      `).run(settingsId, userId, JSON.stringify(settings));
+      `).run(settingsId, userId, settingsJson);
     }
 
+    console.log('[Reading Settings API] 设置保存成功');
     res.json({ message: '设置已保存' });
   } catch (error: any) {
-    console.error('保存阅读设置错误:', error);
-    res.status(500).json({ error: '保存失败' });
+    console.error('[Reading Settings API] 保存阅读设置错误:', error);
+    console.error('[Reading Settings API] 错误详情:', {
+      message: error.message,
+      stack: error.stack,
+      userId: req.userId,
+      settingsKeys: req.body ? Object.keys(req.body) : 'null'
+    });
+    res.status(500).json({ error: '保存失败', details: error.message });
   }
 });
 
@@ -798,11 +812,16 @@ router.get('/settings', authenticateToken, async (req: AuthRequest, res) => {
   try {
     const userId = req.userId!;
 
+    console.log('[Reading Settings API] 获取设置，用户:', userId);
+
     const result = db
       .prepare('SELECT settings FROM reading_settings WHERE user_id = ?')
       .get(userId) as any;
 
+    console.log('[Reading Settings API] 数据库查询结果:', result ? '有数据' : '无数据');
+
     if (!result || !result.settings) {
+      console.log('[Reading Settings API] 返回默认设置');
       // 返回默认设置
       return res.json({
         settings: {
@@ -822,7 +841,9 @@ router.get('/settings', authenticateToken, async (req: AuthRequest, res) => {
       });
     }
 
-    res.json({ settings: JSON.parse(result.settings) });
+    const parsedSettings = JSON.parse(result.settings);
+    console.log('[Reading Settings API] 返回用户设置，字体:', parsedSettings.fontFamily);
+    res.json({ settings: parsedSettings });
   } catch (error: any) {
     console.error('获取阅读设置错误:', error);
     res.status(500).json({ error: '获取失败' });

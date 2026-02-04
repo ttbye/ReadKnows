@@ -13,6 +13,8 @@ import { useTranslation } from 'react-i18next';
 interface ReadingSettingsPanelProps {
   settings: ReadingSettings;
   bookType: BookData['file_type'];
+  /** 系统设置中上传的自定义字体，用于阅读字体选择 */
+  customFonts?: Array<{ id: string; name: string; file_name: string }>;
   onSettingsChange: (settings: ReadingSettings) => void;
   onClose: () => void;
   // 播放控制模式
@@ -28,6 +30,7 @@ interface ReadingSettingsPanelProps {
 export default function ReadingSettingsPanel({
   settings,
   bookType,
+  customFonts = [],
   onSettingsChange,
   onClose,
   isTTSMode = false,
@@ -116,7 +119,6 @@ export default function ReadingSettingsPanel({
       }
       
       if (needUpdate) {
-        console.log('[ReadingSettingsPanel] 从本地存储加载TTS设置并同步到settings');
         onSettingsChange(updatedSettings as ReadingSettings);
       }
     } catch (e) {
@@ -144,7 +146,6 @@ export default function ReadingSettingsPanel({
         } else if (!isNaN(speed) && speed > 0) {
           // 只有当 localStorage 的值与当前 state 不同时才更新
           if (speed !== currentSpeed && speed !== lastSyncedSpeedRef.current) {
-            console.log('[ReadingSettingsPanel] 从 localStorage 同步播放速度到 state:', speed, '当前:', currentSpeed);
             setCurrentSpeed(speed);
             lastSyncedSpeedRef.current = speed;
           }
@@ -216,7 +217,6 @@ export default function ReadingSettingsPanel({
         console.warn('[ReadingSettingsPanel] 获取系统语言设置失败，使用默认值（中文）', e);
       }
       
-      console.log(`[ReadingSettingsPanel] 获取音色列表: model=${modelId}, lang=${systemLang}`);
       const resp = await api.get('/tts/voices', { 
         params: { 
           model: modelId,
@@ -224,7 +224,6 @@ export default function ReadingSettingsPanel({
         } 
       });
       const voicesList = resp.data.voices || [];
-      console.log(`[ReadingSettingsPanel] 成功获取 ${voicesList.length} 个音色（已根据系统语言 ${systemLang} 筛选）`);
       setVoices(voicesList);
     } catch (e: any) {
       console.error('[ReadingSettingsPanel] 获取 voices 失败', e);
@@ -235,14 +234,12 @@ export default function ReadingSettingsPanel({
   };
 
   const handleModelChange = async (model: string) => {
-    console.log(`[ReadingSettingsPanel] 切换模型: ${currentModel} -> ${model}`);
     // 更新 state
     setCurrentModel(model);
     
     // 保存到本地存储
     try {
       localStorage.setItem('tts_default_model', model);
-      console.log('[ReadingSettingsPanel] TTS引擎已保存到本地存储:', model);
     } catch (e) {
       console.warn('[ReadingSettingsPanel] 保存TTS引擎到本地存储失败:', e);
     }
@@ -264,7 +261,6 @@ export default function ReadingSettingsPanel({
     // 保存到本地存储
     try {
       localStorage.setItem('tts_default_voice', voice);
-      console.log('[ReadingSettingsPanel] TTS音色已保存到本地存储:', voice);
     } catch (e) {
       console.warn('[ReadingSettingsPanel] 保存TTS音色到本地存储失败:', e);
     }
@@ -280,16 +276,13 @@ export default function ReadingSettingsPanel({
     // 确保速度值有效，默认为1.0
     const validSpeed = isNaN(speed) || speed <= 0 ? 1.0 : speed;
     
-    console.log('[ReadingSettingsPanel] handleSpeedChange 被调用，新速度:', validSpeed, '当前速度:', currentSpeed);
     
     // 先保存到本地存储（确保持久化）
     try {
       localStorage.setItem('tts_default_speed', validSpeed.toString());
-      console.log('[ReadingSettingsPanel] 播放速度已保存到本地存储:', validSpeed);
       
       // 验证保存是否成功
       const saved = localStorage.getItem('tts_default_speed');
-      console.log('[ReadingSettingsPanel] 验证保存结果:', saved, '期望值:', validSpeed.toString());
       
       if (saved !== validSpeed.toString()) {
         console.error('[ReadingSettingsPanel] 保存失败！保存的值与期望值不匹配');
@@ -327,7 +320,8 @@ export default function ReadingSettingsPanel({
         ...settings.keyboardShortcuts,
       },
     };
-    console.log(`[ReadingSettingsPanel] 更新设置 ${key}:`, value, '完整设置:', updatedSettings);
+    if (key === 'fontFamily') {
+    }
     // 立即调用 onSettingsChange，确保设置被保存
     onSettingsChange(updatedSettings);
   };
@@ -689,9 +683,13 @@ export default function ReadingSettingsPanel({
                 <div className="grid grid-cols-4 gap-1.5 md:gap-2">
                   {[
                     { value: 'default', label: t('reader.defaultFont') },
-                    { value: 'serif', label: t('reader.serifFont') },
-                    { value: 'sans-serif', label: t('reader.sansSerifFont') },
-                    { value: 'monospace', label: t('reader.monospaceFont') }
+                    { value: 'songti', label: t('reader.songFont') },
+                    { value: 'kaiti', label: t('reader.kaiFont') },
+                    { value: 'heiti', label: t('reader.heiFont') },
+                    { value: 'yahei', label: t('reader.fontYahei') },
+                    { value: 'fangsong', label: t('reader.fontFangsong') },
+                    { value: 'monospace', label: t('reader.monospaceFont') },
+                    ...customFonts.map((f) => ({ value: `custom:${f.id}`, label: f.name }))
                   ].map((font) => (
                     <button
                       key={font.value}

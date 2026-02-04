@@ -49,6 +49,19 @@ function PrivateRoute({ children }: { children: React.ReactNode }) {
   return isAuthenticated ? <>{children}</> : <Navigate to="/login" />;
 }
 
+function FriendsRouteGuard({ children }: { children: React.ReactNode }) {
+  const { user } = useAuthStore();
+  const canUseFriends = user?.can_use_friends !== undefined ? user.can_use_friends : true;
+
+  // 如果用户有书友权限或权限未定义（向后兼容），允许访问
+  if (canUseFriends) {
+    return <>{children}</>;
+  }
+
+  // 没有权限的用户重定向到首页
+  return <Navigate to="/" replace />;
+}
+
 function App() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -541,9 +554,11 @@ function App() {
           path="/groups"
           element={
             <PrivateRoute>
-              <Layout>
-                <GroupManagement />
-              </Layout>
+              <FriendsRouteGuard>
+                <Layout>
+                  <GroupManagement />
+                </Layout>
+              </FriendsRouteGuard>
             </PrivateRoute>
           }
         />
@@ -551,9 +566,11 @@ function App() {
           path="/group-invitations"
           element={
             <PrivateRoute>
-              <Layout>
-                <GroupInvitations />
-              </Layout>
+              <FriendsRouteGuard>
+                <Layout>
+                  <GroupInvitations />
+                </Layout>
+              </FriendsRouteGuard>
             </PrivateRoute>
           }
         />
@@ -561,9 +578,11 @@ function App() {
           path="/messages"
           element={
             <PrivateRoute>
-              <Layout>
-                <Messages />
-              </Layout>
+              <FriendsRouteGuard>
+                <Layout>
+                  <Messages />
+                </Layout>
+              </FriendsRouteGuard>
             </PrivateRoute>
           }
         />
@@ -571,7 +590,9 @@ function App() {
           path="/chat/:type/:conversationId"
           element={
             <PrivateRoute>
-              <ChatPage />
+              <FriendsRouteGuard>
+                <ChatPage />
+              </FriendsRouteGuard>
             </PrivateRoute>
           }
         />
