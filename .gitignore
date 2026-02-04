@@ -42,6 +42,8 @@ books/
 *.swp
 *.swo
 *~
+github-sync.sh
+github-sync-local.sh
 
 # 日志文件
 *.log
